@@ -37,9 +37,19 @@ Anything you type goes to the command line (`cd` is handled internally; other co
 | Ctrl/Cmd+R | symbols in file (LSP, keyword-scan fallback), live preview | `@` |
 | Ctrl/Cmd+Shift+R | symbols in project (LSP `workspace/symbol`) | `#` |
 | Ctrl+G | goto line | `:` |
-| Ctrl+B | switch open file | |
+| Ctrl/Cmd+E | switch open file | |
 
 You can type a prefix in any palette to switch modes, as in Sublime.
+
+The bottom bar always shows the keys for whatever has focus (panels, editor, sidebar,
+palette, prompt, completion list). The editor's tab bar shows a clock on the right.
+
+## Sidebar
+
+Ctrl/Cmd+B shows the project's file tree and focuses it, revealing the current file.
+Press it again while the tree has focus to hide it; Esc or Tab returns to the editor.
+In the tree: ↑/↓ move, → expand, ← collapse or jump to parent, Enter open, Space preview
+(open but stay in the tree), letters jump to the next matching name, Ctrl+H hidden files.
 
 ## Editor
 
@@ -63,6 +73,17 @@ Shift+F12 references · F2 rename · Alt+Shift+F format · F8 / Shift+F8 next/pr
 Ctrl+- jump back. Diagnostics show as gutter dots, colored underlines, and counts in the status bar.
 
 Set `FARSUB_LSP_LOG=/tmp/lsp.log` to trace all LSP traffic.
+
+Edits are sent to the server incrementally (only the changed ranges) when it supports that.
+
+## Performance notes
+
+- File-finder filtering narrows the previous match set as you type and scores large lists
+  on all cores (about 11 ms per keystroke over 200k paths, down from about 46 ms).
+- Highlighting works in 12 ms slices per frame, so jumping deep into a huge file never
+  freezes input; the rest fills in over the next few frames.
+- Dependencies are optimized even in debug builds (`[profile.dev.package."*"]`).
+- `cargo test --release bench_ -- --ignored --nocapture` prints the timings.
 
 ## Tests
 

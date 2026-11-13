@@ -27,6 +27,7 @@ const TAB: usize = 4;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    app.hl_pending = false;
     match app.view {
         View::Panels => draw_panels(f, app, area),
         View::Editor => draw_editor_view(f, app, area),
@@ -81,36 +82,7 @@ fn draw_panels(f: &mut Frame, app: &mut App, area: Rect) {
         f.set_cursor_position((x.min(rows[1].right().saturating_sub(1)), rows[1].y));
     }
 
-    // Function key bar.
-    let keys = [
-        ("1", "Cmds"),
-        ("2", ""),
-        ("3", "View"),
-        ("4", "Edit"),
-        ("5", "Copy"),
-        ("6", "RenMov"),
-        ("7", "MkFold"),
-        ("8", "Delete"),
-        ("9", ""),
-        ("10", "Quit"),
-    ];
-    let w = (area.width as usize / keys.len()).max(4);
-    let mut spans = vec![];
-    for (n, l) in keys {
-        spans.push(Span::styled(
-            n.to_string(),
-            Style::default().fg(Color::White).bg(Color::Black),
-        ));
-        let lw = w.saturating_sub(n.len());
-        spans.push(Span::styled(
-            format!("{:<lw$}", l.chars().take(lw).collect::<String>()),
-            Style::default().fg(Color::Black).bg(BAR_BG),
-        ));
-    }
-    f.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black)),
-        rows[2],
-    );
+    draw_hints(f, app, rows[2]);
 }
 
 fn draw_panel(f: &mut Frame, app: &mut App, idx: usize, area: Rect) {
@@ -307,9 +279,26 @@ fn draw_editor_view(f: &mut Frame, app: &mut App, area: Rect) {
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
+            Constraint::Length(1),
         ])
         .split(area);
-    let bg = app.syn.bg();
+    let (mut top, mut body) = (rows[0], rows[1]);
+    if app.tree_visible && area.width >= 40 {
+        let sw = (area.width / 4).clamp(18, 36);
+        let split = |r: Rect| {
+            let c = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(sw), Constraint::Min(1)])
+                .split(r);
+            (c[0], c[1])
+        };
+        let (st, mt) = split(rows[0]);
+        let (sb, mb) = split(rows[1]);
+        draw_sidebar(f, app, st, sb);
+        top = mt;
+        body = mb;
+    }
+    draw_tabs(f, app, top);
     if app.buffers.is_empty() {
         let p = Paragraph::new(vec![
             Line::from(""),
@@ -317,40 +306,187 @@ fn draw_editor_view(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(""),
             Line::from("  Ctrl/Cmd+P        open file (fuzzy)"),
             Line::from("  Ctrl/Cmd+Shift+P  command palette (also F1)"),
+            Line::from("  Ctrl/Cmd+B        file tree sidebar"),
             Line::from("  Ctrl/Cmd+O        back to file panels"),
         ])
-        .style(Style::default().bg(bg).fg(app.syn.fg()));
-        f.render_widget(p, area);
-        return;
+        .style(Style::default().bg(app.syn.bg()).fg(app.syn.fg()));
+        f.render_widget(p, body);
+        f.render_widget(
+            Paragraph::new("").style(Style::default().bg(STATUS_BG)),
+            rows[2],
+        );
+    } else {
+        draw_editor(f, app, body);
+        draw_status(f, app, rows[2]);
     }
-    draw_tabs(f, app, rows[0]);
-    draw_editor(f, app, rows[1]);
-    draw_status(f, app, rows[2]);
+    draw_hints(f, app, rows[3]);
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
+    const TAB_BG: Color = Color::Rgb(25, 25, 25);
+    let clock = format!(" {} ", chrono::Local::now().format("%H:%M"));
+    let clock_w = clock.chars().count();
+    let avail = (area.width as usize).saturating_sub(clock_w);
+    let tabs: Vec<(String, Style)> = app
+        .buffers
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            let name = format!(" {}{} ", b.name(), if b.modified { " ●" } else { "" });
+            let st = if i == app.cur {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(app.syn.bg())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(DIM).bg(TAB_BG)
+            };
+            (name, st)
+        })
+        .collect();
+    // Drop tabs from the left until the current one fits.
+    let width = |t: &[(String, Style)]| t.iter().map(|x| x.0.chars().count() + 1).sum::<usize>();
+    let mut first = 0;
+    while first < app.cur && width(&tabs[first..=app.cur]) > avail {
+        first += 1;
+    }
     let mut spans = vec![];
-    for (i, b) in app.buffers.iter().enumerate() {
-        let name = format!(" {}{} ", b.name(), if b.modified { " ●" } else { "" });
-        let st = if i == app.cur {
-            Style::default()
-                .fg(Color::White)
-                .bg(app.syn.bg())
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(DIM).bg(Color::Rgb(25, 25, 25))
-        };
-        spans.push(Span::styled(name, st));
+    let mut used = 0;
+    if first > 0 {
+        spans.push(Span::styled("‹", Style::default().fg(DIM).bg(TAB_BG)));
+        used += 1;
+    }
+    for (name, st) in &tabs[first..] {
+        let w = name.chars().count() + 1;
+        if used + w > avail {
+            break;
+        }
+        spans.push(Span::styled(name.clone(), *st));
         spans.push(Span::styled(
             "│",
-            Style::default()
-                .fg(Color::Rgb(60, 60, 60))
-                .bg(Color::Rgb(25, 25, 25)),
+            Style::default().fg(Color::Rgb(60, 60, 60)).bg(TAB_BG),
         ));
+        used += w;
+    }
+    spans.push(Span::styled(
+        " ".repeat(avail.saturating_sub(used)),
+        Style::default().bg(TAB_BG),
+    ));
+    spans.push(Span::styled(
+        clock,
+        Style::default()
+            .fg(Color::Black)
+            .bg(BAR_BG)
+            .add_modifier(Modifier::BOLD),
+    ));
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(TAB_BG)),
+        area,
+    );
+}
+
+const SIDEBAR_BG: Color = Color::Rgb(30, 31, 36);
+const STATUS_BG: Color = Color::Rgb(0, 95, 135);
+
+fn draw_sidebar(f: &mut Frame, app: &mut App, top: Rect, body: Rect) {
+    let focused = app.focus_tree && app.modal.is_none();
+    let current = app.buf().and_then(|b| b.path.clone());
+    let t = &mut app.tree;
+    let root = t
+        .root
+        .file_name()
+        .map(|s| s.to_string_lossy().to_uppercase())
+        .unwrap_or_default();
+    let w = top.width as usize;
+    let head = format!(" ▾ {root}");
+    let head: String = head.chars().take(w.saturating_sub(1)).collect();
+    let pad = w.saturating_sub(head.chars().count() + 1);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                head,
+                Style::default()
+                    .fg(if focused { ACCENT } else { DIM })
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" ".repeat(pad)),
+            Span::styled("│", Style::default().fg(Color::Rgb(55, 55, 62))),
+        ]))
+        .style(Style::default().bg(SIDEBAR_BG)),
+        top,
+    );
+    let h = body.height as usize;
+    if t.sel < t.scroll {
+        t.scroll = t.sel;
+    } else if t.sel >= t.scroll + h {
+        t.scroll = t.sel + 1 - h;
+    }
+    let inner_w = w.saturating_sub(1);
+    let mut lines = vec![];
+    for row in 0..h {
+        let i = t.scroll + row;
+        let mut spans = vec![];
+        let mut text_w = 0;
+        if let Some(n) = t.nodes.get(i) {
+            let marker = if n.is_dir {
+                if t.expanded.contains(&n.path) {
+                    "▾ "
+                } else {
+                    "▸ "
+                }
+            } else {
+                "  "
+            };
+            let label = format!(" {}{}{}", "  ".repeat(n.depth), marker, n.name);
+            let mut label: String = label.chars().take(inner_w).collect();
+            if label.chars().count() == inner_w && n.name.chars().count() > 1 {
+                label.pop();
+                label.push('…');
+            }
+            text_w = label.chars().count();
+            let is_cur = current.as_deref() == Some(n.path.as_path());
+            let mut st = Style::default().fg(if n.is_dir {
+                Color::Rgb(205, 205, 215)
+            } else {
+                Color::Rgb(170, 170, 175)
+            });
+            if n.is_dir {
+                st = st.add_modifier(Modifier::BOLD);
+            }
+            if is_cur {
+                st = st.fg(ACCENT);
+            }
+            let bg = if i == t.sel {
+                if focused {
+                    POP_SEL
+                } else {
+                    Color::Rgb(48, 50, 58)
+                }
+            } else {
+                SIDEBAR_BG
+            };
+            spans.push(Span::styled(label, st.bg(bg)));
+            spans.push(Span::styled(
+                " ".repeat(inner_w - text_w),
+                Style::default().bg(bg),
+            ));
+            text_w = inner_w;
+        }
+        if text_w < inner_w {
+            spans.push(Span::raw(" ".repeat(inner_w - text_w)));
+        }
+        spans.push(Span::styled(
+            "│",
+            Style::default().fg(Color::Rgb(55, 55, 62)),
+        ));
+        lines.push(Line::from(spans));
+    }
+    if t.nodes.is_empty() && h > 0 {
+        lines[0] = Line::from(Span::styled(" (empty)", Style::default().fg(DIM)));
     }
     f.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(25, 25, 25))),
-        area,
+        Paragraph::new(lines).style(Style::default().bg(SIDEBAR_BG)),
+        body,
     );
 }
 
@@ -367,11 +503,11 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     app.page = h.saturating_sub(2).max(1);
     let search = app.search.clone().filter(|s| !s.is_empty());
     let path = app.buffers[app.cur].path.clone();
-    let diags = path
+    let empty = Vec::new();
+    let diags: &Vec<crate::app::Diag> = path
         .as_ref()
         .and_then(|p| app.diagnostics.get(p))
-        .cloned()
-        .unwrap_or_default();
+        .unwrap_or(&empty);
     let b: &mut Buffer = &mut app.buffers[app.cur];
 
     let digits = b.lines.len().to_string().len().max(3);
@@ -391,7 +527,8 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
     } else if cur_dcol >= b.scroll_x + text_w {
         b.scroll_x = cur_dcol + 1 - text_w;
     }
-    b.hl.ensure(&app.syn, &b.lines, b.scroll_y + h);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(12);
+    let hl_done = b.hl.ensure(&app.syn, &b.lines, b.scroll_y + h, deadline);
 
     let sel = b.selection();
     let mut out: Vec<Line> = Vec::with_capacity(h);
@@ -545,10 +682,11 @@ fn draw_editor(f: &mut Frame, app: &mut App, area: Rect) {
 
     let cx = area.x + (gutter_w + cur_dcol - b.scroll_x) as u16;
     let cy = area.y + (b.cursor.line - b.scroll_y) as u16;
-    if app.modal.is_none() {
+    if app.modal.is_none() && !(app.focus_tree && app.tree_visible) {
         f.set_cursor_position((cx, cy));
     }
     let cursor_screen = (cx, cy);
+    app.hl_pending = !hl_done;
     draw_completion(f, app, area, cursor_screen);
     draw_hover(f, app, area, cursor_screen);
 }
@@ -635,7 +773,7 @@ fn draw_status(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::Rgb(220, 220, 220)),
     ));
     f.render_widget(
-        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(0, 95, 135))),
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(STATUS_BG)),
         area,
     );
 }
@@ -925,5 +1063,142 @@ fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
         .alignment(ratatui::layout::Alignment::Center)
         .block(block),
         r,
+    );
+}
+
+// ============================================================================ hint bar
+
+fn hints(app: &App) -> Vec<(&'static str, &'static str)> {
+    match &app.modal {
+        Some(Modal::Palette(p)) => match p.mode {
+            Mode::Files => vec![
+                ("Enter", "Open"),
+                ("↑↓", "Move"),
+                ("Esc", "Cancel"),
+                (">", "Commands"),
+                ("@", "Symbols"),
+                (":", "Line"),
+                ("#", "Project symbols"),
+                ("name:42", "Open at line"),
+            ],
+            Mode::Commands => vec![
+                ("Enter", "Run"),
+                ("↑↓", "Move"),
+                ("Esc", "Cancel"),
+                ("⌫", "Back to files"),
+            ],
+            Mode::Symbols => vec![
+                ("Enter", "Go"),
+                ("↑↓", "Preview"),
+                ("Esc", "Back"),
+                (">", "Commands"),
+                (":", "Line"),
+            ],
+            Mode::Line => vec![("Enter", "Go"), ("Esc", "Back"), ("@", "Symbols")],
+            Mode::WorkspaceSymbols => vec![("Enter", "Open"), ("↑↓", "Move"), ("Esc", "Cancel")],
+            Mode::Buffers | Mode::Locations => {
+                vec![("Enter", "Open"), ("↑↓", "Move"), ("Esc", "Cancel")]
+            }
+        },
+        Some(Modal::Prompt(p)) => match p.kind {
+            crate::app::PromptKind::Find { .. } => {
+                vec![
+                    ("Enter", "Done"),
+                    ("F3 ↓", "Next"),
+                    ("↑", "Previous"),
+                    ("Esc", "Cancel"),
+                ]
+            }
+            _ => vec![("Enter", "OK"), ("Esc", "Cancel"), ("^U", "Clear")],
+        },
+        Some(Modal::Confirm(_)) => vec![("Y", "Yes"), ("N", "No"), ("Esc", "Cancel")],
+        None => match app.view {
+            View::Panels => vec![
+                ("1", "Cmds"),
+                ("3", "View"),
+                ("4", "Edit"),
+                ("5", "Copy"),
+                ("6", "RenMov"),
+                ("7", "MkFold"),
+                ("8", "Delete"),
+                ("10", "Quit"),
+                ("^P", "Find file"),
+                ("^O", "Editor"),
+                ("^B", "Tree"),
+                ("Ins", "Mark"),
+                ("^H", "Hidden"),
+                ("^U", "Swap"),
+            ],
+            View::Editor if app.completion.is_some() => {
+                vec![
+                    ("Enter", "Accept"),
+                    ("Tab", "Accept"),
+                    ("↑↓", "Select"),
+                    ("Esc", "Close"),
+                ]
+            }
+            View::Editor if app.tree_visible && app.focus_tree => vec![
+                ("↑↓", "Move"),
+                ("←→", "Fold"),
+                ("Enter", "Open"),
+                ("Space", "Preview"),
+                ("Esc", "Editor"),
+                ("^B", "Hide"),
+                ("^H", "Hidden"),
+                ("a-z", "Jump"),
+            ],
+            View::Editor => {
+                let lsp = app.buf().is_some_and(|b| b.lsp_client.is_some());
+                let mut v = vec![
+                    ("^P", "Files"),
+                    ("^⇧P", "Cmds"),
+                    ("^R", "Symbol"),
+                    ("^S", "Save"),
+                    ("^F", "Find"),
+                    ("^D", "Next match"),
+                    ("^/", "Comment"),
+                ];
+                if lsp {
+                    v.extend([
+                        ("^Space", "Complete"),
+                        ("F12", "Definition"),
+                        ("^K", "Hover"),
+                        ("F2", "Rename"),
+                    ]);
+                }
+                v.extend([
+                    ("^B", "Tree"),
+                    ("^E", "Open files"),
+                    ("^W", "Close"),
+                    ("^O", "Panels"),
+                ]);
+                v
+            }
+        },
+    }
+}
+
+fn draw_hints(f: &mut Frame, app: &App, area: Rect) {
+    let key_st = Style::default()
+        .fg(Color::White)
+        .bg(Color::Black)
+        .add_modifier(Modifier::BOLD);
+    let label_st = Style::default().fg(Color::Black).bg(BAR_BG);
+    let width = area.width as usize;
+    let mut spans = vec![];
+    let mut used = 0;
+    for (k, l) in hints(app) {
+        let w = k.chars().count() + l.chars().count() + 2;
+        if used + w > width {
+            break;
+        }
+        spans.push(Span::styled(k, key_st));
+        spans.push(Span::styled(format!("{l} "), label_st));
+        spans.push(Span::styled(" ", Style::default().bg(Color::Black)));
+        used += w;
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Black)),
+        area,
     );
 }

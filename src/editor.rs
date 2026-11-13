@@ -96,6 +96,10 @@ pub struct Buffer {
     pub read_only: bool,
     pub version: i32,
     pub lsp_dirty: bool,
+    /// Edits since the last LSP sync, as (start, end, text) with columns in UTF-16 units.
+    pub lsp_changes: Vec<(Pos, Pos, String)>,
+    /// Too many edits were queued; send the full text instead.
+    pub lsp_full: bool,
     pub lsp_client: Option<usize>,
     pub lang: Option<&'static str>,
     pub hl: HlCache,
@@ -145,6 +149,8 @@ impl Buffer {
             read_only: false,
             version: 1,
             lsp_dirty: false,
+            lsp_changes: vec![],
+            lsp_full: false,
             lsp_client: None,
             lang,
             hl,
@@ -322,8 +328,31 @@ impl Buffer {
 
     // ---------- primitive edits ----------
 
+    fn u16pos(&self, p: Pos) -> Pos {
+        let col = self.lines[p.line]
+            .chars()
+            .take(p.col)
+            .map(char::len_utf16)
+            .sum();
+        Pos::new(p.line, col)
+    }
+
+    fn record_lsp(&mut self, a: Pos, b: Pos, text: &str) {
+        if self.lsp_full {
+            return;
+        }
+        if self.lsp_changes.len() >= 256 {
+            self.lsp_changes.clear();
+            self.lsp_full = true;
+            return;
+        }
+        let (ua, ub) = (self.u16pos(a), self.u16pos(b));
+        self.lsp_changes.push((ua, ub, text.to_string()));
+    }
+
     fn raw_insert(&mut self, pos: Pos, text: &str) -> Pos {
         self.hl.invalidate(pos.line);
+        self.record_lsp(pos, pos, text);
         let mut parts = text.split('\n');
         let first = parts.next().unwrap_or("");
         let rest: Vec<String> = parts.map(String::from).collect();
@@ -345,6 +374,7 @@ impl Buffer {
             return String::new();
         }
         self.hl.invalidate(a.line);
+        self.record_lsp(a, b, "");
         if a.line == b.line {
             let line = &mut self.lines[a.line];
             let (s, e) = (byte_idx(line, a.col), byte_idx(line, b.col));

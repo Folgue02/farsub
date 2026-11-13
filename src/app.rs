@@ -124,6 +124,12 @@ pub struct App {
     pub pending_shell: Option<(String, PathBuf)>,
     pub page: usize,
     pub panel_page: usize,
+    /// Highlighting didn't finish within the frame budget; redraw again soon.
+    pub hl_pending: bool,
+    pub tree: crate::tree::Tree,
+    pub tree_visible: bool,
+    pub focus_tree: bool,
+    tree_revealed: Option<PathBuf>,
     tx: Sender<AppEvent>,
 }
 
@@ -248,6 +254,11 @@ impl App {
             pending_shell: None,
             page: 20,
             panel_page: 20,
+            hl_pending: false,
+            tree: crate::tree::Tree::new(),
+            tree_visible: false,
+            focus_tree: false,
+            tree_revealed: None,
             tx,
         }
     }
@@ -286,6 +297,9 @@ impl App {
         let h = self.show_hidden;
         for p in &mut self.panels {
             p.reload(h);
+        }
+        if self.tree_visible {
+            self.tree.refresh();
         }
     }
 
@@ -373,7 +387,8 @@ impl App {
             (KeyCode::Char('r'), true, true) => GotoWorkspaceSymbol,
             (KeyCode::Char('r'), true, false) if ed => GotoSymbol,
             (KeyCode::Char('g'), true, false) if ed => GotoLine,
-            (KeyCode::Char('b'), true, false) => SwitchBuffer,
+            (KeyCode::Char('e'), true, false) => SwitchBuffer,
+            (KeyCode::Char('b'), true, false) => ToggleSidebar,
             (KeyCode::Char('o'), true, false) => TogglePanels,
             (KeyCode::Char('q'), true, false) => Quit,
             (KeyCode::Char('n'), true, false) => NewFile,
@@ -1139,6 +1154,7 @@ impl App {
             if focus {
                 self.cur = i;
                 self.view = View::Editor;
+                self.focus_tree = false;
             }
             return Some(i);
         }
@@ -1164,6 +1180,7 @@ impl App {
         if focus {
             self.cur = i;
             self.view = View::Editor;
+            self.focus_tree = false;
         }
         self.lsp_open(i);
         Some(i)
@@ -1226,10 +1243,7 @@ impl App {
                     );
                 }
                 self.msg(format!("Saved {name} ({lines} lines)"));
-                let h = self.show_hidden;
-                for p in &mut self.panels {
-                    p.reload(h);
-                }
+                self.reload_panels();
             }
             Err(e) => self.msg(format!("Save failed: {e}")),
         }
@@ -1257,7 +1271,72 @@ impl App {
 
     // ===================================================================== editor
 
+    fn show_tree(&mut self) {
+        let root = self.file_root();
+        self.tree.set_root(root, self.show_hidden);
+        let cur = self.buf().and_then(|b| b.path.clone());
+        if let Some(p) = cur {
+            if self.tree_revealed.as_ref() != Some(&p) || !self.tree_visible {
+                self.tree.reveal(&p);
+                self.tree_revealed = Some(p);
+            }
+        }
+        self.tree_visible = true;
+        self.focus_tree = true;
+        self.view = View::Editor;
+        self.completion = None;
+        self.hover = None;
+    }
+
+    fn tree_key(&mut self, k: Key) {
+        let page = self.page.max(1) as isize;
+        match k.code {
+            KeyCode::Up => self.tree.move_sel(-1),
+            KeyCode::Down => self.tree.move_sel(1),
+            KeyCode::PageUp => self.tree.move_sel(-page),
+            KeyCode::PageDown => self.tree.move_sel(page),
+            KeyCode::Home => self.tree.sel = 0,
+            KeyCode::End => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
+            KeyCode::Left => self.tree.collapse(),
+            KeyCode::Right => self.tree.expand(),
+            KeyCode::Enter | KeyCode::Char(' ') if !k.ctrl => {
+                let Some(n) = self.tree.selected() else {
+                    return;
+                };
+                if n.is_dir {
+                    self.tree.toggle();
+                } else {
+                    let path = n.path.clone();
+                    let keep_focus = k.code == KeyCode::Char(' ');
+                    if self.open_file(&path, true).is_some() {
+                        self.tree_revealed = Some(path);
+                        // Space previews the file and stays in the tree, Enter jumps to it.
+                        self.focus_tree = keep_focus;
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Tab => {
+                if self.buffers.is_empty() {
+                    self.view = View::Panels;
+                } else {
+                    self.focus_tree = false;
+                }
+            }
+            KeyCode::Char('h') if k.ctrl => self.run(Command::ToggleHidden),
+            _ => {
+                if let Some(cmd) = editor_binding(k) {
+                    self.run(cmd);
+                } else if let Some(c) = k.text_char() {
+                    self.tree.jump_char(c);
+                }
+            }
+        }
+    }
+
     fn editor_key(&mut self, k: Key) {
+        if self.tree_visible && self.focus_tree {
+            return self.tree_key(k);
+        }
         if self.buffers.is_empty() {
             if k.code == KeyCode::Esc {
                 self.view = View::Panels;
@@ -1362,7 +1441,7 @@ impl App {
             let trig = b
                 .lsp_client
                 .and_then(|c| self.lsp.clients.get(&c))
-                .map(|c| c.trigger_chars())
+                .map(|c| c.triggers.clone())
                 .unwrap_or_default();
             if trig.iter().any(|t| t.ends_with(ch)) && self.completion.is_none() {
                 self.request_completion();
@@ -1408,7 +1487,7 @@ impl App {
             }
             TogglePanels => {
                 self.view = match self.view {
-                    View::Panels if !self.buffers.is_empty() => View::Editor,
+                    View::Panels if !self.buffers.is_empty() || self.tree_visible => View::Editor,
                     View::Panels => {
                         self.msg("No open files — Ctrl+P or F4 to open one");
                         View::Panels
@@ -1442,9 +1521,21 @@ impl App {
                     self.completion = None;
                 }
             }
+            ToggleSidebar => {
+                if self.tree_visible && self.focus_tree && self.view == View::Editor {
+                    self.tree_visible = false;
+                    self.focus_tree = false;
+                } else {
+                    self.show_tree();
+                }
+            }
             ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
                 self.reload_panels();
+                let root = self.tree.root.clone();
+                if !root.as_os_str().is_empty() {
+                    self.tree.set_root(root, self.show_hidden);
+                }
                 let s = if self.show_hidden { "shown" } else { "hidden" };
                 self.msg(format!("Hidden files {s}"));
             }
@@ -1818,6 +1909,8 @@ impl App {
             Ok(cid) => {
                 b.lsp_client = Some(cid);
                 b.lsp_dirty = false;
+                b.lsp_changes.clear();
+                b.lsp_full = false;
                 let text = b.text();
                 let version = b.version;
                 if let Some(c) = self.lsp.clients.get_mut(&cid) {
@@ -1839,16 +1932,31 @@ impl App {
                 continue;
             }
             b.lsp_dirty = false;
+            let changes = std::mem::take(&mut b.lsp_changes);
+            let full = std::mem::replace(&mut b.lsp_full, false);
             let (Some(cid), Some(path)) = (b.lsp_client, &b.path) else {
                 continue;
             };
             let Some(c) = self.lsp.clients.get_mut(&cid) else {
                 continue;
             };
+            // Incremental sync sends only the edited ranges instead of the whole file.
+            let content: Vec<Value> = if c.ready && c.sync_kind == 2 && !full {
+                changes
+                    .into_iter()
+                    .map(|(a, z, text)| {
+                        json!({"range": {"start": {"line": a.line, "character": a.col},
+                                         "end": {"line": z.line, "character": z.col}},
+                               "text": text})
+                    })
+                    .collect()
+            } else {
+                vec![json!({"text": b.text()})]
+            };
             c.notify(
                 "textDocument/didChange",
                 json!({"textDocument": {"uri": path_to_uri(path), "version": b.version},
-                       "contentChanges": [{"text": b.text()}]}),
+                       "contentChanges": content}),
             );
         }
     }

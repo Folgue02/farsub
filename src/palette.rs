@@ -51,6 +51,8 @@ pub struct Palette {
     pub origin: Option<(usize, Pos, usize)>,
     pub loading: bool,
     pub ws_request: Option<i64>,
+    /// (needle, indices of items that matched it) for incremental narrowing.
+    narrow: Option<(String, Vec<usize>)>,
     matcher: SkimMatcherV2,
 }
 
@@ -70,6 +72,7 @@ impl Palette {
             origin: None,
             loading: false,
             ws_request: None,
+            narrow: None,
             matcher: SkimMatcherV2::default().smart_case(),
         }
     }
@@ -126,41 +129,79 @@ impl Palette {
 
     pub fn set_items(&mut self, items: Vec<Item>) {
         self.items = items;
+        self.narrow = None;
         self.refilter();
     }
 
     pub fn refilter(&mut self) {
         let needle = self.needle().to_string();
+        self.sel = 0;
+        self.scroll = 0;
         if needle.is_empty() {
+            self.narrow = None;
             self.shown = (0..self.items.len().min(5000))
                 .map(|i| (i, vec![]))
                 .collect();
-        } else {
-            let mut scored: Vec<(i64, usize, Vec<usize>)> = self
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(i, it)| {
-                    self.matcher
-                        .fuzzy_indices(&it.label, &needle)
-                        .map(|(s, idx)| {
-                            // Prefer matches in the file name part / shorter labels.
-                            let bonus = if self.mode == Mode::Files {
-                                let base = it.label.rfind('/').map(|p| p + 1).unwrap_or(0);
-                                idx.iter().filter(|&&c| c >= base).count() as i64 * 4
-                            } else {
-                                0
-                            };
-                            (s + bonus - it.label.len() as i64 / 8, i, idx)
-                        })
-                })
-                .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            scored.truncate(MAX_SHOWN);
-            self.shown = scored.into_iter().map(|(_, i, idx)| (i, idx)).collect();
+            return;
         }
-        self.sel = 0;
-        self.scroll = 0;
+        // Typing more characters can only shrink the match set, so only re-score the
+        // previous matches instead of the whole list.
+        let candidates: Vec<usize> = match self.narrow.take() {
+            Some((prev, hits)) if needle.starts_with(&prev) => hits,
+            _ => (0..self.items.len()).collect(),
+        };
+        // Pass 1: cheap score-only match, in parallel for big lists.
+        let items = &self.items;
+        let score_chunk = |chunk: &[usize]| -> Vec<(i64, usize)> {
+            let m = SkimMatcherV2::default().smart_case();
+            chunk
+                .iter()
+                .filter_map(|&i| {
+                    let l = &items[i].label;
+                    m.fuzzy_match(l, &needle)
+                        .map(|s| (s - l.len() as i64 / 8, i))
+                })
+                .collect()
+        };
+        let mut scored: Vec<(i64, usize)> = if candidates.len() > 20_000 {
+            let n = std::thread::available_parallelism()
+                .map_or(4, |n| n.get())
+                .min(8);
+            let size = candidates.len().div_ceil(n);
+            std::thread::scope(|sc| {
+                let hs: Vec<_> = candidates
+                    .chunks(size)
+                    .map(|c| sc.spawn(move || score_chunk(c)))
+                    .collect();
+                hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+            })
+        } else {
+            score_chunk(&candidates)
+        };
+        let mut hits: Vec<usize> = scored.iter().map(|s| s.1).collect();
+        hits.sort_unstable();
+        self.narrow = Some((needle.clone(), hits));
+        // Pass 2: match positions (for highlighting + file-name bonus) on the best few only.
+        scored.sort_unstable_by_key(|s| std::cmp::Reverse(s.0));
+        scored.truncate(MAX_SHOWN * 4);
+        let mut ranked: Vec<(i64, usize, Vec<usize>)> = scored
+            .into_iter()
+            .filter_map(|(base, i)| {
+                let label = &self.items[i].label;
+                let (_, idx) = self.matcher.fuzzy_indices(label, &needle)?;
+                let bonus = if self.mode == Mode::Files {
+                    let start = label.rfind('/').map(|p| p + 1).unwrap_or(0);
+                    let start = label[..start].chars().count();
+                    idx.iter().filter(|&&c| c >= start).count() as i64 * 4
+                } else {
+                    0
+                };
+                Some((base + bonus, i, idx))
+            })
+            .collect();
+        ranked.sort_by_key(|r| std::cmp::Reverse(r.0));
+        ranked.truncate(MAX_SHOWN);
+        self.shown = ranked.into_iter().map(|(_, i, idx)| (i, idx)).collect();
     }
 
     pub fn selected(&self) -> Option<&Item> {

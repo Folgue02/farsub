@@ -81,58 +81,90 @@ pub type Span = (usize, usize, Style);
 
 pub struct HlCache {
     pub syntax: String,
-    states: Vec<(ParseState, HighlightState)>,
+    /// Parser state at the start of every CHECKPOINT-th line.
+    checkpoints: Vec<(ParseState, HighlightState)>,
+    /// Running state at the start of line `lines.len()`.
+    frontier: Option<(ParseState, HighlightState)>,
     pub lines: Vec<Vec<Span>>,
 }
 
 const MAX_HL_LINE: usize = 4000;
+const CHECKPOINT: usize = 64;
 
 impl HlCache {
     pub fn new(syntax: String) -> Self {
         HlCache {
             syntax,
-            states: vec![],
+            checkpoints: vec![],
+            frontier: None,
             lines: vec![],
         }
     }
 
     pub fn reset(&mut self, syntax: String) {
         self.syntax = syntax;
-        self.states.clear();
+        self.checkpoints.clear();
+        self.frontier = None;
         self.lines.clear();
     }
 
     pub fn invalidate(&mut self, line: usize) {
-        self.states.truncate(line + 1);
-        self.lines.truncate(line);
+        if line >= self.lines.len() {
+            return;
+        }
+        let k = line / CHECKPOINT;
+        self.checkpoints.truncate(k + 1);
+        self.lines.truncate(k * CHECKPOINT);
+        self.frontier = None;
     }
 
-    pub fn ensure(&mut self, syn: &Syntax, text: &[String], upto: usize) {
+    /// Highlight lines up to `upto`, stopping at `deadline`. Returns true when done, so a
+    /// jump deep into a huge file never freezes the UI; the rest fills in over later frames.
+    pub fn ensure(
+        &mut self,
+        syn: &Syntax,
+        text: &[String],
+        upto: usize,
+        deadline: std::time::Instant,
+    ) -> bool {
         let upto = upto.min(text.len());
-        let hl = Highlighter::new(&syn.theme);
-        if self.states.is_empty() {
-            let sr = syn
-                .ss
-                .find_syntax_by_name(&self.syntax)
-                .unwrap_or_else(|| syn.ss.find_syntax_plain_text());
-            self.states.push((
-                ParseState::new(sr),
-                HighlightState::new(&hl, ScopeStack::new()),
-            ));
-            self.lines.clear();
+        if self.lines.len() >= upto {
+            return true;
         }
+        let hl = Highlighter::new(&syn.theme);
+        if self.frontier.is_none() {
+            self.frontier = Some(match self.checkpoints.get(self.lines.len() / CHECKPOINT) {
+                Some(st) => st.clone(),
+                None => {
+                    let sr = syn
+                        .ss
+                        .find_syntax_by_name(&self.syntax)
+                        .unwrap_or_else(|| syn.ss.find_syntax_plain_text());
+                    self.lines.clear();
+                    self.checkpoints.clear();
+                    (
+                        ParseState::new(sr),
+                        HighlightState::new(&hl, ScopeStack::new()),
+                    )
+                }
+            });
+        }
+        let (ps, hs) = self.frontier.as_mut().unwrap();
+        let mut line = String::new();
         while self.lines.len() < upto {
             let i = self.lines.len();
-            let (mut ps, mut hs) = self.states[i].clone();
+            if i % CHECKPOINT == 0 && self.checkpoints.len() == i / CHECKPOINT {
+                self.checkpoints.push((ps.clone(), hs.clone()));
+            }
             let src = &text[i];
             let mut spans = Vec::new();
             if src.len() <= MAX_HL_LINE {
-                let mut line = String::with_capacity(src.len() + 1);
+                line.clear();
                 line.push_str(src);
                 line.push('\n');
                 let ops = ps.parse_line(&line, &syn.ss).unwrap_or_default();
                 let mut off = 0;
-                for (style, piece) in HighlightIterator::new(&mut hs, &ops, &line, &hl) {
+                for (style, piece) in HighlightIterator::new(hs, &ops, &line, &hl) {
                     let end = (off + piece.len()).min(src.len());
                     if end > off {
                         spans.push((off, end, to_style(style)));
@@ -141,8 +173,11 @@ impl HlCache {
                 }
             }
             self.lines.push(spans);
-            self.states.push((ps, hs));
+            if i % 32 == 31 && std::time::Instant::now() > deadline {
+                return self.lines.len() >= upto;
+            }
         }
+        true
     }
 }
 

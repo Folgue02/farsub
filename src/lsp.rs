@@ -41,6 +41,9 @@ pub struct Client {
     queue: Vec<String>,
     pub caps: Value,
     pub progress: Option<String>,
+    /// textDocumentSync kind: 1 = full, 2 = incremental.
+    pub sync_kind: u8,
+    pub triggers: Vec<String>,
 }
 
 impl Client {
@@ -119,6 +122,8 @@ impl Client {
             queue: vec![],
             caps: Value::Null,
             progress: None,
+            sync_kind: 1,
+            triggers: vec![],
         };
         let params = initialize_params(root);
         c.request("initialize", params, Pending::Initialize);
@@ -160,6 +165,14 @@ impl Client {
     pub fn on_initialized(&mut self, caps: Value) {
         self.caps = caps;
         self.ready = true;
+        let sync = self.caps.get("textDocumentSync");
+        self.sync_kind = sync
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.get("change").and_then(|c| c.as_u64()))
+            })
+            .unwrap_or(1) as u8;
+        self.triggers = self.trigger_chars();
         self.raw_send(
             json!({"jsonrpc":"2.0","method":"initialized","params":{}}),
             true,

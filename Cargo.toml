@@ -17,3 +17,11 @@ syntect = "5"
 two-face = "0.5.2"
 unicode-width = "0.2"
 url = "2"
+
+# Syntax highlighting is regex-heavy: keep dependencies optimized even in debug builds.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

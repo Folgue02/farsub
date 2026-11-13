@@ -278,3 +278,189 @@ fn lsp_clangd_diagnostics_symbols_completion_definition() {
     assert!(pump(&mut app, &rx, 10, |a| a.hover.is_some()), "hover");
     app.lsp.shutdown();
 }
+
+/// Timing harness: `cargo test --release bench_ -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn bench_hot_paths() {
+    use crate::palette::{Action, Item, Mode, Palette};
+    // 1. Palette filtering over 200k paths, typed one char at a time.
+    let items: Vec<Item> = (0..200_000)
+        .map(|i| Item {
+            label: format!("crates/module_{}/src/sub_{}/file_{i}.rs", i % 97, i % 13),
+            detail: String::new(),
+            action: Action::None,
+        })
+        .collect();
+    let mut p = Palette::new(Mode::Files, "");
+    p.set_items(items);
+    let t = Instant::now();
+    for c in "mod5file12".chars() {
+        p.query.push(c);
+        p.refilter();
+    }
+    println!("palette: 10 keystrokes over 200k items: {:?}", t.elapsed());
+
+    // 2. Highlighting a 20k-line Rust file + rendering frames.
+    let src: String = (0..2000)
+        .map(|i| format!("/// doc {i}\npub fn f{i}(x: &str) -> Result<u32, String> {{\n    let v = x.len() as u32 * {i};\n    if v > 10 {{ Ok(v) }} else {{ Err(format!(\"{{}}\", v)) }}\n}}\n\nstruct S{i} {{ a: i32 }}\nimpl S{i} {{ fn g(&self) {{}} }}\n// end\n\n"))
+        .collect();
+    let (mut app, _rx, d) = setup("bench", &[("big.rs", &src)]);
+    app.open_file(&d.join("big.rs"), true);
+    let t = Instant::now();
+    screen(&mut app);
+    println!("first frame (top of file): {:?}", t.elapsed());
+    app.buffers[app.cur].goto(crate::editor::Pos::new(19_990, 0));
+    let t = Instant::now();
+    screen(&mut app);
+    println!("jump to end, first frame: {:?}", t.elapsed());
+    let mut frames = 1;
+    while app.hl_pending {
+        screen(&mut app);
+        frames += 1;
+    }
+    println!(
+        "jump to end, fully highlighted after {frames} frames: {:?}",
+        t.elapsed()
+    );
+    let t = Instant::now();
+    for _ in 0..50 {
+        screen(&mut app);
+    }
+    println!("steady frame: {:?}", t.elapsed() / 50);
+    // Typing at the top invalidates highlighting for the whole file.
+    app.buffers[app.cur].goto(crate::editor::Pos::new(0, 0));
+    let t = Instant::now();
+    for _ in 0..20 {
+        typ(&mut app, "x");
+        screen(&mut app);
+    }
+    println!("keystroke+frame near top: {:?}", t.elapsed() / 20);
+    let t = Instant::now();
+    for _ in 0..20 {
+        let _ = app.buffers[app.cur].text();
+    }
+    println!(
+        "full-text join (LSP full sync payload, {} bytes): {:?}",
+        src.len(),
+        t.elapsed() / 20
+    );
+}
+
+#[test]
+fn lsp_incremental_sync_matches_buffer() {
+    if !clangd_available() {
+        return;
+    }
+    let (mut app, rx, d) = setup("incr", &[("m.c", "int main() {\n    return 0;\n}\n")]);
+    let path = d.join("m.c");
+    app.open_file(&path, true);
+    let cid = app.buf().unwrap().lsp_client.unwrap();
+    assert!(pump(&mut app, &rx, 10, |a| a.lsp.clients[&cid].ready));
+    assert_eq!(
+        app.lsp.clients[&cid].sync_kind, 2,
+        "clangd supports incremental sync"
+    );
+    // Several kinds of edits, including multi-line and undo, then ask clangd for an error
+    // that only exists if its copy of the document matches ours.
+    let b = &mut app.buffers[app.cur];
+    b.goto(crate::editor::Pos::new(1, 4));
+    b.insert_text("int é = 1;\n    ");
+    b.delete_line();
+    b.insert_text("int zz = nope;\n    ");
+    b.duplicate();
+    b.undo();
+    app.sync_lsp();
+    let lines = &app.buf().unwrap().lines;
+    let line = lines.iter().position(|l| l.contains("nope")).unwrap();
+    let col = lines[line].chars().count() - "nope;".len();
+    let want = crate::editor::Pos::new(line, col);
+    assert!(
+        pump(&mut app, &rx, 10, |a| a.diagnostics.get(&path).is_some_and(
+            |d| d
+                .iter()
+                .any(|x| x.message.contains("nope") && x.start == want)
+        )),
+        "diagnostics should point at line 2: {:?} / {:?}",
+        app.diagnostics.get(&path),
+        app.buf().unwrap().lines
+    );
+    app.lsp.shutdown();
+}
+
+#[test]
+fn hint_bar_clock_and_sidebar() {
+    let (mut app, _rx, d) = setup(
+        "sidebar",
+        &[
+            ("src/main.rs", "fn main() {}\n"),
+            ("src/lib.rs", "pub fn x() {}\n"),
+            ("notes.txt", "hi\n"),
+        ],
+    );
+    std::fs::create_dir_all(d.join(".git")).unwrap();
+    let s = screen(&mut app);
+    let last = s.lines().last().unwrap();
+    assert!(
+        last.contains("Delete") && last.contains("Find file") && last.contains("Editor"),
+        "{last}"
+    );
+
+    app.open_file(&d.join("src/main.rs"), true);
+    let s = screen(&mut app);
+    let first = s.lines().next().unwrap();
+    let clock = chrono::Local::now().format("%H:%M").to_string();
+    assert!(
+        first.contains("main.rs") && first.trim_end().ends_with(&clock),
+        "{first}"
+    );
+    let last = s.lines().last().unwrap();
+    assert!(
+        last.contains("Files") && last.contains("Save") && last.contains("Tree"),
+        "{last}"
+    );
+
+    // Ctrl+B: show + focus the tree with the current file revealed.
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert!(app.tree_visible && app.focus_tree);
+    assert_eq!(
+        app.tree.selected_path(),
+        Some(d.join("src/main.rs").as_path())
+    );
+    let s = screen(&mut app);
+    assert!(
+        s.contains("▾ FARSUB-TEST-SIDEBAR")
+            && s.contains("▾ src")
+            && s.contains("lib.rs")
+            && s.contains("notes.txt"),
+        "{s}"
+    );
+    assert!(s.lines().last().unwrap().contains("Preview"));
+
+    // Up to lib.rs, Enter opens it and focuses the editor.
+    key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.buf().unwrap().name(), "lib.rs");
+    assert!(!app.focus_tree && app.tree_visible);
+    // Typing goes to the editor, not the tree.
+    typ(&mut app, "z");
+    assert!(app.buf().unwrap().lines[0].starts_with('z'));
+
+    // Left on a file jumps to its folder; Left again collapses it.
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    assert_eq!(app.tree.selected().unwrap().name, "src");
+    key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    assert_eq!(app.tree.nodes.len(), 2);
+    // Type-to-jump.
+    typ(&mut app, "n");
+    assert_eq!(app.tree.selected().unwrap().name, "notes.txt");
+    // Ctrl+B while focused hides it.
+    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert!(!app.tree_visible);
+
+    // Palette shows its own hints.
+    key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    let s = screen(&mut app);
+    assert!(s.lines().last().unwrap().contains("Symbols"), "{s}");
+}

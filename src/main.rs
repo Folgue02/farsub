@@ -12,6 +12,7 @@ mod palette;
 mod panels;
 #[cfg(test)]
 mod tests;
+mod tree;
 mod ui;
 
 use std::io::{self, Write};
@@ -140,7 +141,8 @@ fn event_loop(
             last_draw = Instant::now();
             redraw = false;
         }
-        if event::poll(Duration::from_millis(30))? {
+        let wait = if app.hl_pending { 0 } else { 30 };
+        if event::poll(Duration::from_millis(wait))? {
             loop {
                 app.on_event(event::read()?);
                 if app.quit || !event::poll(Duration::ZERO)? {
@@ -154,7 +156,7 @@ fn event_loop(
             redraw = true;
         }
         app.sync_lsp();
-        redraw |= app.tick();
+        redraw |= app.tick() || app.hl_pending;
         if let Some((cmd, dir)) = app.pending_shell.take() {
             run_shell(term, enhanced, &cmd, &dir)?;
             app.reload_panels();
