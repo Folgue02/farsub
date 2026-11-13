@@ -14,6 +14,7 @@ pub struct EditorConfig {
     pub use_tabs: bool,
     pub theme: String,
     pub show_sidebar: bool,
+    pub show_menu_bar: bool,
 }
 
 impl Default for EditorConfig {
@@ -24,6 +25,7 @@ impl Default for EditorConfig {
             use_tabs: false,
             theme: "Monokai Extended".into(),
             show_sidebar: true,
+            show_menu_bar: true,
         }
     }
 }
@@ -276,6 +278,7 @@ font_size = 14.0
 tab_size = 4
 use_tabs = false
 show_sidebar = true
+show_menu_bar = true
 # Any theme bundled with bat/two-face, e.g. "Monokai Extended", "OneHalfDark", "Nord",
 # "Dracula", "Solarized (dark)", "GitHub", "Visual Studio Dark+".
 theme = "Monokai Extended"

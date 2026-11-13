@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::editor::{Buffer, Pos};
 use crate::highlight::Span;
 use crate::keys::Key;
+use crate::menu;
 use crate::palette::Mode;
 
 const TAB: usize = 4;
@@ -25,6 +26,8 @@ const STATUS_H: f32 = 24.0;
 const PANEL_H: f32 = 36.0;
 const SIDEBAR_W: f32 = 250.0;
 const ROW_H: f32 = 24.0;
+const MENU_H: f32 = 26.0;
+const MENU_ROW: f32 = 26.0;
 
 struct Palette {
     bg: Color32,
@@ -86,6 +89,7 @@ pub struct Gui {
     last_tree_sel: Option<usize>,
     last_title: String,
     find_count: Option<(String, i32, usize)>,
+    pub menu_titles: Vec<Rect>,
 }
 
 impl Gui {
@@ -112,6 +116,7 @@ impl Gui {
             last_tree_sel: None,
             last_title: String::new(),
             find_count: None,
+            menu_titles: vec![],
         }
     }
 
@@ -198,6 +203,12 @@ impl Gui {
         painter.rect_filled(full, 0.0, c.bg);
 
         let mut rest = full;
+        let show_bar = self.app.menu_bar_visible || self.app.menu.is_some();
+        let bar = show_bar.then(|| {
+            let r = Rect::from_min_size(full.min, Vec2::new(full.width(), MENU_H));
+            rest.min.y = r.bottom();
+            r
+        });
         let status = Rect::from_min_max(Pos2::new(full.left(), full.bottom() - STATUS_H), full.max);
         rest.max.y = status.top();
         let panel = matches!(&self.app.modal, Some(Modal::Prompt(_))).then(|| {
@@ -228,7 +239,12 @@ impl Gui {
         match &self.app.modal {
             Some(Modal::Palette(_)) => self.draw_palette(ui, &over, full, &c),
             Some(Modal::Confirm(_)) => self.draw_confirm(&over, full, &c),
+            Some(Modal::Keymap(_)) => self.draw_keymap(ui, &over, full, &c),
             _ => {}
+        }
+        if let Some(r) = bar {
+            self.draw_menu_bar(ui, &painter, r, &c);
+            self.draw_menu_dropdown(ui, &over, full, &c);
         }
 
         if self.app.hl_pending {
@@ -1075,6 +1091,353 @@ impl Gui {
                 pal.sel = i;
             }
             self.app.on_key(Key::new(crate::keys::KeyCode::Enter));
+        }
+    }
+
+    fn draw_menu_bar(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
+        p.rect_filled(r, 0.0, c.chrome);
+        p.line_segment(
+            [r.left_bottom(), r.right_bottom()],
+            Stroke::new(1.0, c.border),
+        );
+        let font = FontId::proportional(UI_SIZE);
+        let open = self.app.menu.map(|m| m.menu);
+        let mut x = r.left() + 6.0;
+        self.menu_titles.clear();
+        let mut action: Option<Option<usize>> = None;
+        for (i, (title, _)) in menu::MENUS.iter().enumerate() {
+            let w = ui.ctx().fonts_mut(|f| {
+                f.layout_no_wrap(title.to_string(), font.clone(), c.fg)
+                    .size()
+                    .x
+            }) + 20.0;
+            let tr = Rect::from_min_size(Pos2::new(x, r.top()), Vec2::new(w, r.height()));
+            x += w;
+            self.menu_titles.push(tr);
+            let resp = ui.interact(tr, Id::unique(("menu", i)), Sense::click());
+            if open == Some(i) {
+                p.rect_filled(tr.shrink2(Vec2::new(0.0, 2.0)), 3.0, c.pop_sel);
+            } else if resp.hovered() {
+                p.rect_filled(
+                    tr.shrink2(Vec2::new(0.0, 2.0)),
+                    3.0,
+                    mix(c.chrome, c.fg, 0.08),
+                );
+            }
+            p.text(
+                tr.center(),
+                Align2::CENTER_CENTER,
+                *title,
+                font.clone(),
+                if open == Some(i) {
+                    c.fg
+                } else {
+                    mix(c.fg, c.chrome, 0.15)
+                },
+            );
+            if resp.clicked() {
+                action = Some(if open == Some(i) { None } else { Some(i) });
+            } else if open.is_some() && open != Some(i) && resp.hovered() {
+                action = Some(Some(i));
+            }
+        }
+        p.text(
+            Pos2::new(r.right() - 10.0, r.center().y),
+            Align2::RIGHT_CENTER,
+            "F10 menu   ·   Cmd+Shift+/ shortcuts".replace(
+                "Cmd",
+                if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                },
+            ),
+            FontId::proportional(11.0),
+            c.dim,
+        );
+        if let Some(a) = action {
+            self.app.set_menu(a);
+        }
+    }
+
+    fn draw_menu_dropdown(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
+        let Some(m) = self.app.menu else { return };
+        let Some(title) = self.menu_titles.get(m.menu).copied() else {
+            return;
+        };
+        let items = menu::items(m.menu);
+        let font = FontId::proportional(UI_SIZE);
+        let small = FontId::proportional(12.0);
+        let mut label_w: f32 = 120.0;
+        let mut key_w: f32 = 0.0;
+        for it in items.iter().flatten() {
+            let lw = ui.ctx().fonts_mut(|f| {
+                f.layout_no_wrap(menu::label(*it), font.clone(), c.fg)
+                    .size()
+                    .x
+            });
+            let kw = ui.ctx().fonts_mut(|f| {
+                f.layout_no_wrap(crate::keymap::shortcut(*it), small.clone(), c.dim)
+                    .size()
+                    .x
+            });
+            label_w = label_w.max(lw);
+            key_w = key_w.max(kw);
+        }
+        let w = label_w + key_w + 64.0;
+        let h: f32 = items
+            .iter()
+            .map(|i| if i.is_some() { MENU_ROW } else { 9.0 })
+            .sum::<f32>()
+            + 8.0;
+        let x = title.left().min(full.right() - w - 4.0);
+        let r = Rect::from_min_size(Pos2::new(x, title.bottom()), Vec2::new(w, h));
+        p.rect_filled(
+            r.translate(Vec2::new(0.0, 4.0)),
+            6.0,
+            Color32::from_black_alpha(90),
+        );
+        p.rect_filled(r, 5.0, c.pop);
+        p.rect_stroke(r, 5.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+        let mut y = r.top() + 4.0;
+        let mut hovered = None;
+        let mut clicked = None;
+        for (i, it) in items.iter().enumerate() {
+            let Some(cmd) = it else {
+                p.line_segment(
+                    [
+                        Pos2::new(r.left() + 10.0, y + 4.5),
+                        Pos2::new(r.right() - 10.0, y + 4.5),
+                    ],
+                    Stroke::new(1.0, c.border),
+                );
+                y += 9.0;
+                continue;
+            };
+            let rr =
+                Rect::from_min_size(Pos2::new(r.left() + 4.0, y), Vec2::new(w - 8.0, MENU_ROW));
+            y += MENU_ROW;
+            let enabled = self.app.enabled(*cmd);
+            if i == m.item && enabled {
+                p.rect_filled(rr, 4.0, c.pop_sel);
+            }
+            let col = if enabled { c.fg } else { mix(c.fg, c.pop, 0.6) };
+            p.text(
+                Pos2::new(rr.left() + 12.0, rr.center().y),
+                Align2::LEFT_CENTER,
+                menu::label(*cmd),
+                font.clone(),
+                col,
+            );
+            p.text(
+                Pos2::new(rr.right() - 12.0, rr.center().y),
+                Align2::RIGHT_CENTER,
+                crate::keymap::shortcut(*cmd),
+                small.clone(),
+                if enabled {
+                    c.dim
+                } else {
+                    mix(c.dim, c.pop, 0.5)
+                },
+            );
+            let resp = ui.interact(rr, Id::unique(("menuitem", m.menu, i)), Sense::click());
+            if resp.hovered() && enabled {
+                hovered = Some(i);
+            }
+            if resp.clicked() && enabled {
+                clicked = Some(i);
+            }
+        }
+        if let Some(i) = clicked {
+            self.app.menu_activate(m.menu, i);
+            return;
+        }
+        if let Some(i) = hovered
+            && let Some(ms) = &mut self.app.menu
+        {
+            ms.item = i;
+        }
+        // Clicking anywhere else closes the menu.
+        let (pressed, pos) = ui
+            .ctx()
+            .input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos()));
+        if pressed
+            && let Some(pos) = pos
+            && !r.contains(pos)
+            && !self.menu_titles.iter().any(|t| t.contains(pos))
+        {
+            self.app.menu = None;
+        }
+    }
+
+    fn draw_keymap(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
+        let Some(Modal::Keymap(v)) = &self.app.modal else {
+            return;
+        };
+        let rows = crate::app::keymap_rows(&v.query);
+        p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
+        let r = Rect::from_center_size(
+            full.center(),
+            Vec2::new(
+                (full.width() * 0.75).clamp(480.0, 920.0),
+                full.height() * 0.84,
+            ),
+        );
+        p.rect_filled(
+            r.translate(Vec2::new(0.0, 5.0)),
+            8.0,
+            Color32::from_black_alpha(90),
+        );
+        p.rect_filled(r, 6.0, c.pop);
+        p.rect_stroke(r, 6.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+        let font = FontId::proportional(UI_SIZE);
+        p.text(
+            Pos2::new(r.left() + 18.0, r.top() + 22.0),
+            Align2::LEFT_CENTER,
+            "Keyboard Shortcuts",
+            FontId::proportional(16.0),
+            c.fg,
+        );
+        p.text(
+            Pos2::new(r.right() - 18.0, r.top() + 22.0),
+            Align2::RIGHT_CENTER,
+            "type to filter · Up/Down select · Enter runs the command · Esc closes",
+            FontId::proportional(11.5),
+            c.dim,
+        );
+        let input = Rect::from_min_size(
+            Pos2::new(r.left() + 14.0, r.top() + 42.0),
+            Vec2::new(r.width() - 28.0, 30.0),
+        );
+        p.rect_filled(input, 4.0, c.bg);
+        let tr = p.text(
+            Pos2::new(input.left() + 10.0, input.center().y),
+            Align2::LEFT_CENTER,
+            if v.query.is_empty() {
+                "Search shortcuts or actions…"
+            } else {
+                &v.query
+            },
+            FontId::proportional(14.0),
+            if v.query.is_empty() { c.dim } else { c.fg },
+        );
+        let cx = if v.query.is_empty() {
+            input.left() + 10.0
+        } else {
+            tr.right() + 1.0
+        };
+        p.rect_filled(
+            Rect::from_min_size(Pos2::new(cx, input.top() + 6.0), Vec2::new(2.0, 18.0)),
+            0.0,
+            c.accent,
+        );
+
+        // Flatten into lines: section headers + rows.
+        let mut lines: Vec<(Option<&str>, Option<usize>)> = vec![];
+        let mut last = "";
+        for (i, row) in rows.iter().enumerate() {
+            if row.section != last {
+                lines.push((Some(row.section), None));
+                last = row.section;
+            }
+            lines.push((None, Some(i)));
+        }
+        let list = Rect::from_min_max(
+            Pos2::new(r.left() + 8.0, input.bottom() + 8.0),
+            Pos2::new(r.right() - 8.0, r.bottom() - 8.0),
+        );
+        let lh = 26.0;
+        let n_vis = ((list.height() / lh).floor() as usize).max(1);
+        let sel = v.sel.min(rows.len().saturating_sub(1));
+        let sel_line = lines.iter().position(|l| l.1 == Some(sel)).unwrap_or(0);
+        let mut scroll = v.scroll;
+        if sel_line < scroll + 1 {
+            scroll = sel_line.saturating_sub(1);
+        } else if sel_line >= scroll + n_vis {
+            scroll = sel_line + 1 - n_vis;
+        }
+        let resp = ui.interact(list, Id::unique("keymap-list"), Sense::click());
+        let wheel = if resp.hovered() {
+            ui.ctx().input(|i| i.smooth_scroll_delta.y)
+        } else {
+            0.0
+        };
+        let mut new_sel = None;
+        if wheel != 0.0 {
+            let max = lines.len().saturating_sub(n_vis);
+            scroll = ((scroll as f32 - wheel / lh).round().max(0.0) as usize).min(max);
+        }
+        let key_col = list.left() + list.width() * 0.62;
+        let clip = p.with_clip_rect(list);
+        for (row, (header, idx)) in lines.iter().enumerate().skip(scroll).take(n_vis) {
+            let y = list.top() + (row - scroll) as f32 * lh;
+            let rr = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), lh));
+            if let Some(h) = header {
+                clip.text(
+                    Pos2::new(rr.left() + 10.0, rr.center().y + 3.0),
+                    Align2::LEFT_CENTER,
+                    h.to_uppercase(),
+                    FontId::proportional(11.0),
+                    c.accent,
+                );
+                continue;
+            }
+            let i = idx.unwrap();
+            let it = &rows[i];
+            if i == sel {
+                clip.rect_filled(rr, 4.0, c.pop_sel);
+            }
+            clip.text(
+                Pos2::new(rr.left() + 18.0, rr.center().y),
+                Align2::LEFT_CENTER,
+                &it.desc,
+                font.clone(),
+                c.fg,
+            );
+            // Keys drawn as little caps.
+            let mut kx = key_col;
+            for (j, k) in it.keys.split(", ").filter(|k| !k.is_empty()).enumerate() {
+                if j > 0 {
+                    kx += 8.0;
+                }
+                let g = p
+                    .ctx()
+                    .fonts_mut(|f| f.layout_no_wrap(k.to_string(), FontId::monospace(12.0), c.fg));
+                let kr = Rect::from_min_size(
+                    Pos2::new(kx, rr.center().y - 10.0),
+                    Vec2::new(g.size().x + 12.0, 20.0),
+                );
+                if kr.right() > rr.right() - 4.0 {
+                    break;
+                }
+                clip.rect_filled(kr, 4.0, c.bg);
+                clip.rect_stroke(kr, 4.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+                clip.galley(
+                    Pos2::new(kr.left() + 6.0, kr.center().y - g.size().y / 2.0),
+                    g,
+                    c.fg,
+                );
+                kx = kr.right();
+            }
+            if resp.clicked()
+                && let Some(pos) = resp.interact_pointer_pos()
+                && rr.contains(pos)
+            {
+                new_sel = Some(i);
+            }
+        }
+        if rows.is_empty() {
+            clip.text(
+                Pos2::new(list.left() + 18.0, list.top() + 16.0),
+                Align2::LEFT_CENTER,
+                "No matching shortcuts",
+                font,
+                c.dim,
+            );
+        }
+        if let Some(Modal::Keymap(v)) = &mut self.app.modal {
+            v.scroll = scroll;
+            v.sel = new_sel.unwrap_or(sel);
         }
     }
 

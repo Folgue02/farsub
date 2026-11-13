@@ -10,6 +10,21 @@ cargo run --release -- [folder-or-file]
 
 "Cmd" below means Cmd on macOS and Ctrl elsewhere; both always work.
 
+## Menu bar and keymap
+
+The menu bar (File, Edit, Selection, Find, Goto, Sidebar, View, Tools, Help) shows each
+item's shortcut and greys out items that can't run right now. It works from the keyboard
+too: **F10** opens it, Left/Right switch menus, Up/Down move, Enter runs, a letter jumps to
+the item starting with it, and Esc closes. View → Toggle Menu Bar hides it (F10 still
+works), or set `show_menu_bar = false`.
+
+**Cmd+Shift+/** (Cmd+?) or Help → Keyboard Shortcuts opens a searchable list of every
+shortcut, grouped by where it applies (general, editor, sidebar, palette, find panel,
+menus). Select a row and press Enter to run that command.
+
+All shortcuts are defined in one table ([src/keymap.rs](src/keymap.rs)). Key handling, the
+menus, the command palette's hints and the keymap list are all generated from it.
+
 ## Palettes
 
 | Key | Palette | Prefix |

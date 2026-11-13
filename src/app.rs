@@ -15,8 +15,10 @@ use crate::config::{self, Config};
 use crate::editor::{Buffer, Pos, char_len, is_word};
 use crate::fileops;
 use crate::highlight::{HlCache, Syntax};
+use crate::keymap::{self, Ctx};
 use crate::keys::{Key, KeyCode};
 use crate::lsp::{Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
+use crate::menu::{self, MenuState};
 use crate::palette::{Action, Item, Mode, Palette};
 use crate::tree::Tree;
 
@@ -113,6 +115,75 @@ pub enum Modal {
     Palette(Palette),
     Prompt(Prompt),
     Confirm(Confirm),
+    Keymap(KeymapView),
+}
+
+/// The keyboard-shortcut reference (Help → Keyboard Shortcuts).
+pub struct KeymapView {
+    pub query: String,
+    pub sel: usize,
+    pub scroll: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct KeymapRow {
+    pub section: &'static str,
+    pub keys: String,
+    pub desc: String,
+    pub cmd: Option<Command>,
+}
+
+/// All shortcuts grouped by where they apply, filtered by a search string.
+pub fn keymap_rows(query: &str) -> Vec<KeymapRow> {
+    let mut rows = vec![];
+    for (ctx, section) in [
+        (Ctx::Global, "General"),
+        (Ctx::Editor, "Editor"),
+        (Ctx::Sidebar, "Sidebar (when focused)"),
+    ] {
+        for (cmd, name, _) in COMMANDS {
+            let keys: Vec<String> = keymap::BINDINGS
+                .iter()
+                .filter(|b| b.1 == *cmd && b.2 == ctx)
+                .map(|b| keymap::display(b.0))
+                .collect();
+            if !keys.is_empty() {
+                rows.push(KeymapRow {
+                    section,
+                    keys: keys.join(", "),
+                    desc: name.to_string(),
+                    cmd: Some(*cmd),
+                });
+            }
+        }
+    }
+    for (section, keys, desc) in keymap::DOC_KEYS {
+        rows.push(KeymapRow {
+            section,
+            keys: keymap::display(keys),
+            desc: desc.to_string(),
+            cmd: None,
+        });
+    }
+    for (cmd, name, in_palette) in COMMANDS {
+        if *in_palette && keymap::keys_for(*cmd).is_empty() {
+            rows.push(KeymapRow {
+                section: "No shortcut (use the command palette)",
+                keys: String::new(),
+                desc: name.to_string(),
+                cmd: Some(*cmd),
+            });
+        }
+    }
+    let q = query.trim().to_lowercase();
+    if !q.is_empty() {
+        rows.retain(|r| {
+            r.desc.to_lowercase().contains(&q)
+                || r.keys.to_lowercase().contains(&q)
+                || r.section.to_lowercase().contains(&q)
+        });
+    }
+    rows
 }
 
 #[derive(Clone, Debug)]
@@ -185,6 +256,9 @@ pub struct App {
     pub tree: Tree,
     tree_revealed: Option<PathBuf>,
     theme_before: Option<String>,
+    /// Open menu (menu bar navigation), if any.
+    pub menu: Option<MenuState>,
+    pub menu_bar_visible: bool,
     tx: EventTx,
 }
 
@@ -314,6 +388,8 @@ impl App {
             tree,
             tree_revealed: None,
             theme_before: None,
+            menu: None,
+            menu_bar_visible: config.editor.show_menu_bar,
             config,
             tx,
         };
@@ -407,6 +483,10 @@ impl App {
         if k.is_text_key() {
             return false;
         }
+        if self.menu.is_some() {
+            self.menu_key(k);
+            return true;
+        }
         if self.modal.is_some() {
             self.modal_key(k);
             return true;
@@ -415,7 +495,13 @@ impl App {
             self.hover = None;
             return true;
         }
-        if let Some(cmd) = global_binding(k) {
+        let sidebar = self.focus == Focus::Sidebar && self.sidebar_visible;
+        let own = if sidebar {
+            keymap::lookup(k, Ctx::Sidebar)
+        } else {
+            None
+        };
+        if let Some(cmd) = own.or_else(|| keymap::lookup(k, Ctx::Global)) {
             self.run(cmd);
             return true;
         }
@@ -427,8 +513,8 @@ impl App {
             }
             return true;
         }
-        if self.focus == Focus::Sidebar && self.sidebar_visible {
-            return self.tree_key(k);
+        if sidebar {
+            return false;
         }
         self.editor_key(k)
     }
@@ -436,7 +522,16 @@ impl App {
     /// Typed text (already composed by the OS: shifted chars, dead keys, IME).
     pub fn on_text(&mut self, s: &str) {
         for c in s.chars().filter(|c| !c.is_control()) {
+            if self.menu.is_some() {
+                self.menu_char(c);
+                continue;
+            }
             match &mut self.modal {
+                Some(Modal::Keymap(v)) => {
+                    v.query.push(c);
+                    v.sel = 0;
+                    v.scroll = 0;
+                }
                 Some(Modal::Palette(p)) => {
                     p.query.push(c);
                     self.palette_query_changed();
@@ -561,6 +656,7 @@ impl App {
                 self.palette_key(k);
             }
             Some(Modal::Prompt(p)) => self.prompt_key(k, p),
+            Some(Modal::Keymap(v)) => self.keymap_key(k, v),
             Some(Modal::Confirm(c)) => match k.code {
                 KeyCode::Enter => self.confirm(c.kind),
                 KeyCode::Esc => {}
@@ -862,32 +958,42 @@ impl App {
         }
     }
 
-    fn tree_key(&mut self, k: Key) -> bool {
+    /// Single-letter sidebar commands (arrive as text so Shift+A gives 'A').
+    fn tree_char(&mut self, c: char) {
+        if let Some(cmd) = keymap::lookup(keymap::key_for_char(c), Ctx::Sidebar) {
+            self.run(cmd);
+        }
+    }
+
+    fn sidebar_nav(&mut self, cmd: Command) {
+        use Command::*;
         let page = self.page.max(1) as isize;
-        match k.code {
-            KeyCode::Up | KeyCode::Down => {
-                if k.shift {
-                    if self.tree.marked.is_empty() {
-                        self.tree.toggle_mark();
-                    }
-                    self.tree
-                        .move_sel(if k.code == KeyCode::Up { -1 } else { 1 });
-                    if let Some(p) = self.tree.selected_path().map(Path::to_path_buf) {
-                        self.tree.marked.insert(p);
-                    }
-                } else {
-                    self.tree
-                        .move_sel(if k.code == KeyCode::Up { -1 } else { 1 });
+        match cmd {
+            SidebarUp => self.tree.move_sel(-1),
+            SidebarDown => self.tree.move_sel(1),
+            SidebarPageUp => self.tree.move_sel(-page),
+            SidebarPageDown => self.tree.move_sel(page),
+            SidebarTop => self.tree.sel = 0,
+            SidebarBottom => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
+            SidebarExpand => self.tree.expand(),
+            SidebarCollapse => self.tree.collapse(),
+            SidebarOpen => self.tree_open(false),
+            SidebarOpenKeepFocus => self.tree_open(true),
+            SidebarMark => {
+                self.tree.toggle_mark();
+                self.tree.move_sel(1);
+            }
+            SidebarMarkUp | SidebarMarkDown => {
+                if self.tree.marked.is_empty() {
+                    self.tree.toggle_mark();
+                }
+                self.tree
+                    .move_sel(if cmd == SidebarMarkUp { -1 } else { 1 });
+                if let Some(p) = self.tree.selected_path().map(Path::to_path_buf) {
+                    self.tree.marked.insert(p);
                 }
             }
-            KeyCode::PageUp => self.tree.move_sel(-page),
-            KeyCode::PageDown => self.tree.move_sel(page),
-            KeyCode::Home => self.tree.sel = 0,
-            KeyCode::End => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
-            KeyCode::Left => self.tree.collapse(),
-            KeyCode::Right => self.tree.expand(),
-            KeyCode::Enter => self.tree_open(k.alt),
-            KeyCode::Esc => {
+            SidebarEscape => {
                 if !self.tree.marked.is_empty() {
                     self.tree.marked.clear();
                 } else if self.file_clip.is_some() {
@@ -896,49 +1002,6 @@ impl App {
                     self.focus = Focus::Editor;
                 }
             }
-            KeyCode::Tab => self.focus = Focus::Editor,
-            KeyCode::Delete => self.run(Command::SidebarDelete),
-            KeyCode::Backspace if k.ctrl => self.run(Command::SidebarDelete),
-            KeyCode::F(2) => self.run(Command::SidebarRename),
-            KeyCode::F(5) => self.run(Command::RefreshSidebar),
-            KeyCode::Char('n') if k.ctrl && !k.shift => self.run(Command::SidebarNewFile),
-            KeyCode::Char('n') if k.ctrl && k.shift => self.run(Command::SidebarNewFolder),
-            _ => {
-                if let Some(cmd) = editor_binding(k) {
-                    self.run(cmd);
-                } else {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
-    /// Single-letter sidebar commands (arrive as text so Shift+A gives 'A').
-    fn tree_char(&mut self, c: char) {
-        match c {
-            'j' => self.tree.move_sel(1),
-            'k' => self.tree.move_sel(-1),
-            'h' => self.tree.collapse(),
-            'l' => self.tree.expand(),
-            'o' => self.tree_open(false),
-            ' ' => {
-                self.tree.toggle_mark();
-                self.tree.move_sel(1);
-            }
-            'a' => self.run(Command::SidebarNewFile),
-            'A' => self.run(Command::SidebarNewFolder),
-            'r' => self.run(Command::SidebarRename),
-            'd' => self.run(Command::SidebarDelete),
-            'c' => self.run(Command::SidebarCopy),
-            'x' => self.run(Command::SidebarCut),
-            'p' | 'v' => self.run(Command::SidebarPaste),
-            'D' => self.run(Command::SidebarDuplicate),
-            'y' => self.run(Command::SidebarCopyPath),
-            '.' => self.run(Command::ToggleHidden),
-            'R' => self.run(Command::RefreshSidebar),
-            'g' => self.tree.sel = 0,
-            'G' => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
             _ => {}
         }
     }
@@ -1277,9 +1340,10 @@ impl App {
             }
             Mode::Commands => COMMANDS
                 .iter()
-                .map(|(c, name, key)| Item {
+                .filter(|c| c.2)
+                .map(|(c, name, _)| Item {
                     label: name.to_string(),
-                    detail: key.to_string(),
+                    detail: keymap::shortcut(*c),
                     action: Action::Command(*c),
                 })
                 .collect(),
@@ -1664,7 +1728,7 @@ impl App {
         if self.hover.take().is_some() && k.code == KeyCode::Esc {
             return;
         }
-        if let Some(cmd) = editor_binding(k) {
+        if let Some(cmd) = keymap::lookup(k, Ctx::Editor) {
             self.run(cmd);
             return;
         }
@@ -1747,6 +1811,148 @@ impl App {
                 }
             }
         }
+    }
+
+    // ===================================================================== menu & keymap
+
+    /// Whether a command can do anything right now (menus grey out the rest).
+    pub fn enabled(&self, cmd: Command) -> bool {
+        use Command::*;
+        let has_buf = !self.buffers.is_empty();
+        let lsp = self.buf().is_some_and(|b| b.lsp_client.is_some());
+        match cmd {
+            Save | SaveAs | CloseBuffer | Undo | Redo | Copy | Cut | Paste | SelectAll
+            | SelectLine | SelectWord | DeleteLine | DuplicateLine | MoveLineUp | MoveLineDown
+            | ToggleComment | Indent | Outdent | InsertLineAfter | InsertLineBefore | JoinLines
+            | UpperCase | LowerCase | SortLines | Find | FindNext | FindPrev | Replace
+            | GotoSymbol | GotoLine | NextBuffer | PrevBuffer | SwitchBuffer | NextDiagnostic
+            | PrevDiagnostic | RevealInSidebar => has_buf,
+            Completion | Hover | GotoDefinition | FindReferences | Rename | Format => lsp,
+            SaveAll => self.any_modified(),
+            ReopenClosed => !self.closed.is_empty(),
+            JumpBack => !self.jumps.is_empty(),
+            SidebarPaste => self.file_clip.is_some(),
+            _ => true,
+        }
+    }
+
+    /// Open a menu by index (mouse), or close it with `None`.
+    pub fn set_menu(&mut self, menu: Option<usize>) {
+        self.menu = menu.map(|m| MenuState {
+            menu: m,
+            item: first_enabled(self, m),
+        });
+    }
+
+    pub fn menu_activate(&mut self, menu: usize, item: usize) {
+        if let Some(Some(cmd)) = menu::items(menu).get(item).copied() {
+            if self.enabled(cmd) {
+                self.menu = None;
+                self.run(cmd);
+            }
+        }
+    }
+
+    fn menu_key(&mut self, k: Key) {
+        let Some(mut m) = self.menu else { return };
+        let n_menus = menu::MENUS.len();
+        let items = menu::items(m.menu);
+        let step = |m: &MenuState, d: isize| -> usize {
+            let n = items.len() as isize;
+            let mut i = m.item as isize;
+            for _ in 0..n {
+                i = (i + d).rem_euclid(n);
+                if let Some(Some(c)) = items.get(i as usize)
+                    && self.enabled(*c)
+                {
+                    return i as usize;
+                }
+            }
+            m.item
+        };
+        match k.code {
+            KeyCode::Esc | KeyCode::F(10) => self.menu = None,
+            KeyCode::Left => {
+                m.menu = (m.menu + n_menus - 1) % n_menus;
+                m.item = first_enabled(self, m.menu);
+                self.menu = Some(m);
+            }
+            KeyCode::Right => {
+                m.menu = (m.menu + 1) % n_menus;
+                m.item = first_enabled(self, m.menu);
+                self.menu = Some(m);
+            }
+            KeyCode::Up => {
+                m.item = step(&m, -1);
+                self.menu = Some(m);
+            }
+            KeyCode::Down => {
+                m.item = step(&m, 1);
+                self.menu = Some(m);
+            }
+            KeyCode::Home => {
+                m.item = first_enabled(self, m.menu);
+                self.menu = Some(m);
+            }
+            KeyCode::Enter => self.menu_activate(m.menu, m.item),
+            _ => {}
+        }
+    }
+
+    /// Typing a letter in an open menu jumps to (and runs) the item starting with it.
+    fn menu_char(&mut self, c: char) {
+        let Some(m) = self.menu else { return };
+        let c = c.to_ascii_lowercase();
+        let hits: Vec<usize> = menu::items(m.menu)
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| {
+                it.is_some_and(|cmd| {
+                    self.enabled(cmd) && menu::label(cmd).to_lowercase().starts_with(c)
+                })
+            })
+            .map(|(i, _)| i)
+            .collect();
+        match hits.as_slice() {
+            [] => {}
+            [one] => self.menu_activate(m.menu, *one),
+            many => {
+                let next = many.iter().find(|&&i| i > m.item).unwrap_or(&many[0]);
+                self.menu = Some(MenuState {
+                    menu: m.menu,
+                    item: *next,
+                });
+            }
+        }
+    }
+
+    fn keymap_key(&mut self, k: Key, mut v: KeymapView) {
+        let n = keymap_rows(&v.query).len();
+        match k.code {
+            KeyCode::Esc => return,
+            KeyCode::Enter => {
+                if let Some(cmd) = keymap_rows(&v.query).get(v.sel).and_then(|r| r.cmd) {
+                    self.run(cmd);
+                    return;
+                }
+            }
+            KeyCode::Up => v.sel = v.sel.saturating_sub(1),
+            KeyCode::Down => v.sel = (v.sel + 1).min(n.saturating_sub(1)),
+            KeyCode::PageUp => v.sel = v.sel.saturating_sub(15),
+            KeyCode::PageDown => v.sel = (v.sel + 15).min(n.saturating_sub(1)),
+            KeyCode::Home => v.sel = 0,
+            KeyCode::End => v.sel = n.saturating_sub(1),
+            KeyCode::Backspace => {
+                if k.ctrl {
+                    v.query.clear();
+                } else {
+                    v.query.pop();
+                }
+                v.sel = 0;
+            }
+            _ => {}
+        }
+        self.modal = Some(Modal::Keymap(v));
     }
 
     // ===================================================================== commands
@@ -1872,6 +2078,38 @@ impl App {
                 self.refresh_tree();
                 self.msg("Sidebar refreshed");
             }
+            SidebarUp | SidebarDown | SidebarPageUp | SidebarPageDown | SidebarTop
+            | SidebarBottom | SidebarExpand | SidebarCollapse | SidebarOpen
+            | SidebarOpenKeepFocus | SidebarMark | SidebarMarkUp | SidebarMarkDown
+            | SidebarEscape => {
+                if !self.sidebar_visible || self.focus != Focus::Sidebar {
+                    self.focus_sidebar();
+                }
+                self.sidebar_nav(cmd);
+            }
+            ShowKeymap => {
+                self.completion = None;
+                self.hover = None;
+                self.modal = Some(Modal::Keymap(KeymapView {
+                    query: String::new(),
+                    sel: 0,
+                    scroll: 0,
+                }));
+            }
+            OpenMenu => {
+                self.completion = None;
+                self.hover = None;
+                self.menu = Some(MenuState {
+                    menu: 0,
+                    item: first_enabled(self, 0),
+                });
+            }
+            ToggleMenuBar => {
+                self.menu_bar_visible = !self.menu_bar_visible;
+                if !self.menu_bar_visible {
+                    self.msg("Menu bar hidden — F10 still opens it");
+                }
+            }
             SidebarNewFile | SidebarNewFolder | SidebarRename | SidebarDelete | SidebarCopy
             | SidebarCut | SidebarPaste | SidebarDuplicate | SidebarCopyPath => {
                 if !self.sidebar_visible {
@@ -1930,7 +2168,8 @@ impl App {
         if self.buffers.is_empty() {
             return false;
         }
-        if matches!(k.code, KeyCode::Char(_)) && !k.ctrl && editor_binding(k).is_none() {
+        if matches!(k.code, KeyCode::Char(_)) && !k.ctrl && keymap::lookup(k, Ctx::Editor).is_none()
+        {
             return false;
         }
         self.editor_key_inner(k);
@@ -3142,77 +3381,11 @@ fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
     out
 }
 
-/// Shortcuts that work no matter which pane has focus.
-fn global_binding(k: Key) -> Option<Command> {
-    use Command::*;
-    use KeyCode::*;
-    Some(match (k.code, k.ctrl, k.shift, k.alt) {
-        (Char('p'), true, false, false) => GotoFile,
-        (Char('p'), true, true, false) | (F(1), _, _, _) => ShowCommands,
-        (Char('r'), true, false, false) => GotoSymbol,
-        (Char('r'), true, true, false) => GotoWorkspaceSymbol,
-        (Char('g'), true, false, false) => GotoLine,
-        (Char('e'), true, false, false) => SwitchBuffer,
-        (Char('e'), true, true, false) => RevealInSidebar,
-        (Char('o'), true, false, false) => OpenFolder,
-        (Char(','), true, false, false) => OpenSettings,
-        (Char('t'), true, true, false) => ReopenClosed,
-        (Char('w'), true, false, false) => CloseBuffer,
-        (Char('s'), true, false, false) => Save,
-        (Char('s'), true, true, false) => SaveAs,
-        (Char('s'), true, false, true) => SaveAll,
-        (Char('b'), true, false, false) => ToggleSidebar,
-        (Char('0'), true, false, false) => FocusSidebar,
-        (Tab, true, false, _) | (PageDown, true, _, _) | (Right, true, false, true) => NextBuffer,
-        (Tab, true, true, _) | (PageUp, true, _, _) | (Left, true, false, true) => PrevBuffer,
-        (Char('='), true, _, false) => ZoomIn,
-        (Char('-'), true, false, false) => ZoomOut,
-        (Char('-'), false, false, true) => JumpBack,
-        (Char('q'), true, false, false) => Quit,
-        _ => return None,
-    })
-}
-
-/// Editor shortcuts (Sublime Text defaults, Cmd or Ctrl).
-fn editor_binding(k: Key) -> Option<Command> {
-    use Command::*;
-    use KeyCode::*;
-    Some(match (k.code, k.ctrl, k.shift, k.alt) {
-        (Char('n'), true, false, false) => NewFile,
-        (Char('z'), true, false, _) => Undo,
-        (Char('z'), true, true, _) | (Char('y'), true, _, _) => Redo,
-        (Char('c'), true, false, false) => Copy,
-        (Char('x'), true, false, false) => Cut,
-        (Char('v'), true, false, false) => Paste,
-        (Char('a'), true, false, false) => SelectAll,
-        (Char('l'), true, false, false) => SelectLine,
-        (Char('d'), true, false, false) => SelectWord,
-        (Char('d'), true, true, false) => DuplicateLine,
-        (Char('k'), true, true, false) => DeleteLine,
-        (Char('i'), true, false, false) => Hover,
-        (Char('/'), true, _, _) => ToggleComment,
-        (Char(']'), true, false, false) => Indent,
-        (Char('['), true, false, false) => Outdent,
-        (Char('j'), true, false, false) => JoinLines,
-        (Char('f'), true, false, false) => Find,
-        (Char('f'), true, false, true) => Replace,
-        (Char('h'), true, false, false) => Replace,
-        (Char('f'), false, true, true) => Format,
-        (Char(' '), true, _, _) => Completion,
-        (Up, false, false, true) | (Up, true, true, false) => MoveLineUp,
-        (Down, false, false, true) | (Down, true, true, false) => MoveLineDown,
-        (Enter, true, false, _) => InsertLineAfter,
-        (Enter, true, true, _) => InsertLineBefore,
-        (F(2), _, _, _) => Rename,
-        (F(3), _, false, _) => FindNext,
-        (F(3), _, true, _) => FindPrev,
-        (F(8), _, false, _) => NextDiagnostic,
-        (F(8), _, true, _) => PrevDiagnostic,
-        (F(9), _, _, _) => SortLines,
-        (F(12), _, false, _) => GotoDefinition,
-        (F(12), _, true, _) => FindReferences,
-        _ => return None,
-    })
+fn first_enabled(app: &App, menu: usize) -> usize {
+    menu::items(menu)
+        .iter()
+        .position(|c| c.is_some_and(|c| app.enabled(c)))
+        .unwrap_or(0)
 }
 
 /// Shell-style Tab completion for path prompts.

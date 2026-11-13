@@ -7,8 +7,10 @@ mod editor;
 mod fileops;
 mod gui;
 mod highlight;
+mod keymap;
 mod keys;
 mod lsp;
+mod menu;
 mod palette;
 #[cfg(test)]
 mod tests;

@@ -398,3 +398,94 @@ fn lsp_through_the_gui() {
     shot(&mut h, "hover");
     h.state_mut().app.lsp.shutdown();
 }
+
+fn click(h: &mut Harness<'static, Gui>, pos: egui::Pos2) {
+    h.event(Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+    }
+    steps(h, 2);
+}
+
+#[test]
+fn menu_bar_keyboard_and_mouse() {
+    let d = project("menu", &[("a.txt", "one\ntwo\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+
+    // F10 opens File; arrows move between menus; Esc closes.
+    press(&mut h, Modifiers::NONE, Key::F10);
+    assert_eq!(h.state().app.menu.map(|m| m.menu), Some(0));
+    press(&mut h, Modifiers::NONE, Key::ArrowRight);
+    press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    assert_eq!(h.state().app.menu.map(|m| m.menu), Some(1));
+    shot(&mut h, "menu_edit");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert!(h.state().app.menu.is_none());
+
+    // Typing a letter runs the item: File → "New File".
+    let n = h.state().app.buffers.len();
+    press(&mut h, Modifiers::NONE, Key::F10);
+    typ(&mut h, "n");
+    assert_eq!(h.state().app.buffers.len(), n + 1);
+    assert!(h.state().app.menu.is_none());
+
+    // Left from File wraps to Help; Enter runs its first item (Keyboard Shortcuts).
+    press(&mut h, Modifiers::NONE, Key::F10);
+    press(&mut h, Modifiers::NONE, Key::ArrowLeft);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(matches!(h.state().app.modal, Some(Modal::Keymap(_))));
+    press(&mut h, Modifiers::NONE, Key::Escape);
+
+    // Disabled items are skipped: Edit's first enabled item on an untitled empty buffer is Undo.
+    // Mouse: clicking a title opens that menu, clicking it again closes it.
+    let file = h.state().menu_titles[3].center();
+    click(&mut h, file);
+    assert_eq!(h.state().app.menu.map(|m| m.menu), Some(3));
+    click(&mut h, file);
+    assert!(h.state().app.menu.is_none());
+
+    // View → Toggle Menu Bar hides it; F10 still works.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::ToggleMenuBar);
+    steps(&mut h, 2);
+    assert!(!h.state().app.menu_bar_visible);
+    press(&mut h, Modifiers::NONE, Key::F10);
+    assert!(h.state().app.menu.is_some());
+}
+
+#[test]
+fn keymap_viewer_search_and_run() {
+    let d = project("keymap", &[("a.txt", "one\ntwo\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Slash);
+    assert!(matches!(h.state().app.modal, Some(Modal::Keymap(_))));
+    // Every bound command and the sidebar keys are listed.
+    let all = crate::app::keymap_rows("");
+    assert!(all.iter().any(|r| r.section.starts_with("Sidebar")
+        && r.desc.contains("New Folder")
+        && r.keys.contains("Shift+A")));
+    assert!(all.iter().any(|r| r.desc.contains("Goto Anything")));
+    shot(&mut h, "keymap");
+    typ(&mut h, "duplicate line");
+    let rows = crate::app::keymap_rows("duplicate line");
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].keys.contains("Shift+D"));
+    shot(&mut h, "keymap_filtered");
+    // Enter runs it.
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(h.state().app.modal.is_none());
+    assert_eq!(
+        h.state().app.buf().unwrap().lines[..2],
+        ["one".to_string(), "one".to_string()]
+    );
+}
