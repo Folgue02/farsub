@@ -10,7 +10,8 @@ use std::thread;
 
 use serde_json::{Value, json};
 
-use crate::app::AppEvent;
+use crate::app::{AppEvent, EventTx};
+use crate::config::LanguageConfig;
 use crate::editor::{Pos, char_len};
 
 #[derive(Clone, Debug)]
@@ -44,19 +45,29 @@ pub struct Client {
     /// textDocumentSync kind: 1 = full, 2 = incremental.
     pub sync_kind: u8,
     pub triggers: Vec<String>,
+    /// Answers for `workspace/configuration`, keyed by section.
+    pub settings: Value,
 }
 
 impl Client {
     fn spawn(
         id: usize,
-        lang: &str,
+        lang: &LanguageConfig,
         cmd: &Path,
-        args: &[&str],
         root: &Path,
-        tx: Sender<AppEvent>,
+        tx: EventTx,
     ) -> io::Result<Client> {
+        let server = lang.server.clone().unwrap_or_default();
+        let to_json = |v: &Option<toml::Value>| {
+            v.as_ref()
+                .and_then(|v| serde_json::to_value(v).ok())
+                .unwrap_or(Value::Null)
+        };
+        let init_opts = to_json(&server.initialization_options);
+        let settings = to_json(&server.settings);
         let mut child = Command::new(cmd)
-            .args(args)
+            .args(&server.args)
+            .envs(&server.env)
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -94,7 +105,7 @@ impl Client {
                         if let Some(f) = log_r.lock().unwrap().as_mut() {
                             let _ = writeln!(f, "<-- {v}");
                         }
-                        if tx.send(AppEvent::Lsp(id, v)).is_err() {
+                        if !tx.send(AppEvent::Lsp(id, v)) {
                             return;
                         }
                     }
@@ -106,7 +117,7 @@ impl Client {
             }
         });
         let mut c = Client {
-            lang: lang.to_string(),
+            lang: lang.name.clone(),
             cmd: cmd
                 .file_name()
                 .unwrap_or_default()
@@ -124,8 +135,12 @@ impl Client {
             progress: None,
             sync_kind: 1,
             triggers: vec![],
+            settings,
         };
-        let params = initialize_params(root);
+        let mut params = initialize_params(root);
+        if !init_opts.is_null() {
+            params["initializationOptions"] = init_opts;
+        }
         c.request("initialize", params, Pending::Initialize);
         Ok(c)
     }
@@ -180,6 +195,21 @@ impl Client {
         for s in std::mem::take(&mut self.queue) {
             let _ = self.writer.send(s);
         }
+    }
+
+    /// Value for a `workspace/configuration` section like "rust-analyzer" or "python.analysis".
+    pub fn setting(&self, section: Option<&str>) -> Value {
+        let Some(section) = section else {
+            return self.settings.clone();
+        };
+        let mut v = &self.settings;
+        for part in section.split('.') {
+            match v.get(part) {
+                Some(x) => v = x,
+                None => return Value::Null,
+            }
+        }
+        v.clone()
     }
 
     pub fn has_cap(&self, name: &str) -> bool {
@@ -309,75 +339,23 @@ pub fn from_lsp(lines: &[String], line: u32, character: u32) -> Pos {
     Pos::new(l, col)
 }
 
-pub fn lang_for_path(p: &Path) -> Option<&'static str> {
-    let ext = p.extension()?.to_str()?.to_ascii_lowercase();
-    Some(match ext.as_str() {
-        "rs" => "rust",
-        "py" | "pyi" => "python",
-        "js" | "mjs" | "cjs" => "javascript",
-        "jsx" => "javascriptreact",
-        "ts" | "mts" | "cts" => "typescript",
-        "tsx" => "typescriptreact",
-        "go" => "go",
-        "c" | "h" => "c",
-        "cc" | "cpp" | "cxx" | "hpp" | "hh" | "hxx" => "cpp",
-        "m" => "objective-c",
-        "lua" => "lua",
-        "zig" => "zig",
-        "swift" => "swift",
-        "rb" => "ruby",
-        "java" => "java",
-        "json" => "json",
-        "toml" => "toml",
-        "sh" | "bash" | "zsh" => "shellscript",
-        "nix" => "nix",
-        "hs" => "haskell",
-        "ex" | "exs" => "elixir",
-        "css" | "scss" => "css",
-        "html" | "htm" => "html",
-        "yaml" | "yml" => "yaml",
-        _ => return None,
-    })
-}
-
-fn servers(lang: &str) -> &'static [(&'static str, &'static [&'static str])] {
-    match lang {
-        "rust" => &[("rust-analyzer", &[])],
-        "python" => &[
-            ("pyright-langserver", &["--stdio"]),
-            ("basedpyright-langserver", &["--stdio"]),
-            ("pylsp", &[]),
-            ("jedi-language-server", &[]),
-        ],
-        "javascript" | "javascriptreact" | "typescript" | "typescriptreact" => {
-            &[("typescript-language-server", &["--stdio"])]
-        }
-        "go" => &[("gopls", &[])],
-        "c" | "cpp" | "objective-c" => &[("clangd", &[])],
-        "lua" => &[("lua-language-server", &[])],
-        "zig" => &[("zls", &[])],
-        "swift" => &[("sourcekit-lsp", &[])],
-        "ruby" => &[("ruby-lsp", &[]), ("solargraph", &["stdio"])],
-        "java" => &[("jdtls", &[])],
-        "json" => &[("vscode-json-language-server", &["--stdio"])],
-        "toml" => &[("taplo", &["lsp", "stdio"])],
-        "shellscript" => &[("bash-language-server", &["start"])],
-        "nix" => &[("nil", &[]), ("nixd", &[])],
-        "haskell" => &[("haskell-language-server-wrapper", &["--lsp"])],
-        "elixir" => &[("elixir-ls", &[])],
-        "css" => &[("vscode-css-language-server", &["--stdio"])],
-        "html" => &[("vscode-html-language-server", &["--stdio"])],
-        "yaml" => &[("yaml-language-server", &["--stdio"])],
-        _ => &[],
-    }
-}
-
 fn which(cmd: &str) -> Option<PathBuf> {
+    let p = Path::new(cmd);
+    if p.is_absolute() || cmd.contains('/') {
+        return p.is_file().then(|| p.to_path_buf());
+    }
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
+    // GUI apps launched from Finder/Dock get a minimal PATH; check the usual places too.
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
-        for d in [".cargo/bin", ".local/bin", "go/bin", ".rustup/toolchains"] {
+        for d in [
+            ".cargo/bin",
+            ".local/bin",
+            "go/bin",
+            ".npm-global/bin",
+            ".bun/bin",
+        ] {
             dirs.push(home.join(d));
         }
     }
@@ -387,64 +365,44 @@ fn which(cmd: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file())
 }
 
-fn find_server(lang: &str) -> Option<(PathBuf, &'static [&'static str])> {
-    for (cmd, args) in servers(lang) {
-        if let Some(p) = which(cmd) {
-            return Some((p, args));
-        }
+fn find_server(cmd: &str) -> Option<PathBuf> {
+    if let Some(p) = which(cmd) {
+        return Some(p);
     }
     // macOS ships clangd / sourcekit-lsp inside the Xcode toolchain.
     if cfg!(target_os = "macos") {
-        for (cmd, args) in servers(lang) {
-            if let Ok(out) = Command::new("xcrun")
-                .args(["--find", cmd])
-                .stderr(Stdio::null())
-                .output()
-            {
-                let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-                if out.status.success() && p.is_file() {
-                    return Some((p, args));
-                }
+        if let Ok(out) = Command::new("xcrun")
+            .args(["--find", cmd])
+            .stderr(Stdio::null())
+            .output()
+        {
+            let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
+            if out.status.success() && p.is_file() {
+                return Some(p);
             }
         }
     }
     None
 }
 
-const ROOT_MARKERS: &[&str] = &[
-    "Cargo.toml",
-    "package.json",
-    "go.mod",
-    "pyproject.toml",
-    "setup.py",
-    "compile_commands.json",
-    "CMakeLists.txt",
-    "Package.swift",
-    "build.zig",
-    "Gemfile",
-    "pom.xml",
-    "build.gradle",
-    "flake.nix",
-    "mix.exs",
-    "tsconfig.json",
-];
-
-pub fn find_root(file: &Path) -> PathBuf {
+/// Nearest ancestor containing one of the language's root markers, else the git root,
+/// else the file's directory.
+pub fn find_root(file: &Path, markers: &[String]) -> PathBuf {
     let start = if file.is_dir() {
         file
     } else {
         file.parent().unwrap_or(file)
     };
-    let mut marker_hit: Option<PathBuf> = None;
+    let mut git: Option<PathBuf> = None;
     for dir in start.ancestors() {
-        if dir.join(".git").exists() {
+        if markers.iter().any(|m| dir.join(m).exists()) {
             return dir.to_path_buf();
         }
-        if marker_hit.is_none() && ROOT_MARKERS.iter().any(|m| dir.join(m).exists()) {
-            marker_hit = Some(dir.to_path_buf());
+        if git.is_none() && dir.join(".git").exists() {
+            git = Some(dir.to_path_buf());
         }
     }
-    marker_hit.unwrap_or_else(|| start.to_path_buf())
+    git.unwrap_or_else(|| start.to_path_buf())
 }
 
 pub struct Manager {
@@ -452,11 +410,11 @@ pub struct Manager {
     next: usize,
     keys: HashMap<(String, PathBuf), usize>,
     failed: HashSet<String>,
-    tx: Sender<AppEvent>,
+    tx: EventTx,
 }
 
 impl Manager {
-    pub fn new(tx: Sender<AppEvent>) -> Self {
+    pub fn new(tx: EventTx) -> Self {
         Manager {
             clients: HashMap::new(),
             next: 0,
@@ -467,9 +425,12 @@ impl Manager {
     }
 
     /// Get (or lazily start) the server for a file. Returns `Err` with a reason if unavailable.
-    pub fn client_for(&mut self, lang: &str, file: &Path) -> Result<usize, String> {
-        let root = find_root(file);
-        let key = (lang.to_string(), root.clone());
+    pub fn client_for(&mut self, lang: &LanguageConfig, file: &Path) -> Result<usize, String> {
+        let Some(server) = &lang.server else {
+            return Err(format!("no language server configured for {}", lang.name));
+        };
+        let root = find_root(file, &lang.roots);
+        let key = (lang.name.clone(), root.clone());
         if let Some(&i) = self.keys.get(&key) {
             return match self.clients.get(&i) {
                 Some(c) if c.alive => Ok(i),
@@ -477,28 +438,26 @@ impl Manager {
                 None => Err("server gone".into()),
             };
         }
-        if self.failed.contains(lang) {
-            return Err(format!("no language server for {lang}"));
+        if self.failed.contains(&lang.name) {
+            return Err(format!("{} is not available", server.command));
         }
-        let Some((cmd, args)) = find_server(lang) else {
-            self.failed.insert(lang.to_string());
-            let names: Vec<&str> = servers(lang).iter().map(|s| s.0).collect();
-            return Err(if names.is_empty() {
-                format!("no language server configured for {lang}")
-            } else {
-                format!("install {} for LSP support", names.join(" or "))
-            });
+        let Some(cmd) = find_server(&server.command) else {
+            self.failed.insert(lang.name.clone());
+            return Err(format!(
+                "install `{}` for {} LSP support (or set another server in the config)",
+                server.command, lang.name
+            ));
         };
         let id = self.next;
         self.next += 1;
-        match Client::spawn(id, lang, &cmd, args, &root, self.tx.clone()) {
+        match Client::spawn(id, lang, &cmd, &root, self.tx.clone()) {
             Ok(c) => {
                 self.clients.insert(id, c);
                 self.keys.insert(key, id);
                 Ok(id)
             }
             Err(e) => {
-                self.failed.insert(lang.to_string());
+                self.failed.insert(lang.name.clone());
                 Err(format!("failed to start {}: {e}", cmd.display()))
             }
         }

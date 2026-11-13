@@ -18,6 +18,7 @@ pub enum Mode {
     WorkspaceSymbols,
     Buffers,
     Locations,
+    Themes,
 }
 
 #[derive(Clone, Debug)]
@@ -26,6 +27,7 @@ pub enum Action {
     Command(Command),
     Goto(Pos),
     Buffer(usize),
+    Theme(String),
     #[allow(dead_code)]
     None,
 }
@@ -62,7 +64,7 @@ impl Palette {
     pub fn new(mode: Mode, query: &str) -> Self {
         Palette {
             mode,
-            fixed: matches!(mode, Mode::Buffers | Mode::Locations),
+            fixed: matches!(mode, Mode::Buffers | Mode::Locations | Mode::Themes),
             title: String::new(),
             query: query.to_string(),
             items: vec![],

@@ -1,22 +1,24 @@
-//! Application state and all input/command handling.
+//! Application state and all input/command handling, independent of the GUI toolkit.
+//! The GUI (gui.rs) feeds keys/text/clipboard events in and renders this state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyCode, KeyEventKind};
 use lsp_types as lt;
 use serde_json::{Value, json};
 
-use crate::clipboard;
 use crate::commands::{COMMANDS, Command};
+use crate::config::{self, Config};
 use crate::editor::{Buffer, Pos, char_len, is_word};
+use crate::fileops;
 use crate::highlight::{HlCache, Syntax};
-use crate::keys::Key;
-use crate::lsp::{self, Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
+use crate::keys::{Key, KeyCode};
+use crate::lsp::{Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
 use crate::palette::{Action, Item, Mode, Palette};
-use crate::panels::{self, Panel};
+use crate::tree::Tree;
 
 pub enum AppEvent {
     Lsp(usize, Value),
@@ -24,22 +26,63 @@ pub enum AppEvent {
     Files(PathBuf, Vec<String>),
 }
 
+/// Event sender that also wakes the GUI so background results show up immediately.
+#[derive(Clone)]
+pub struct EventTx {
+    tx: Sender<AppEvent>,
+    wake: Arc<OnceLock<Box<dyn Fn() + Send + Sync>>>,
+}
+
+impl EventTx {
+    pub fn new(tx: Sender<AppEvent>) -> Self {
+        EventTx {
+            tx,
+            wake: Arc::new(OnceLock::new()),
+        }
+    }
+
+    pub fn set_waker(&self, f: impl Fn() + Send + Sync + 'static) {
+        let _ = self.wake.set(Box::new(f));
+    }
+
+    pub fn send(&self, ev: AppEvent) -> bool {
+        let ok = self.tx.send(ev).is_ok();
+        if let Some(w) = self.wake.get() {
+            w();
+        }
+        ok
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum View {
-    Panels,
+pub enum Focus {
     Editor,
+    Sidebar,
 }
 
 pub enum PromptKind {
-    Copy(Vec<PathBuf>),
-    Move(Vec<PathBuf>),
-    Mkdir,
-    NewFile,
+    NewFile(PathBuf),
+    NewFolder(PathBuf),
+    RenameMove(PathBuf),
     SaveAs,
+    OpenPath,
     Find { origin: Pos },
     ReplaceFind,
     ReplaceWith(String),
-    Rename,
+    RenameSymbol,
+}
+
+impl PromptKind {
+    fn is_path(&self) -> bool {
+        matches!(
+            self,
+            PromptKind::NewFile(_)
+                | PromptKind::NewFolder(_)
+                | PromptKind::RenameMove(_)
+                | PromptKind::SaveAs
+                | PromptKind::OpenPath
+        )
+    }
 }
 
 pub struct Prompt {
@@ -49,8 +92,14 @@ pub struct Prompt {
     pub kind: PromptKind,
 }
 
+impl Prompt {
+    pub fn kind_is_path(&self) -> bool {
+        self.kind.is_path()
+    }
+}
+
 pub enum ConfirmKind {
-    Delete(Vec<PathBuf>),
+    Trash(Vec<PathBuf>),
     CloseBuffer(usize),
     Quit,
 }
@@ -99,10 +148,11 @@ pub struct Hover {
 }
 
 pub struct App {
-    pub view: View,
-    pub panels: [Panel; 2],
-    pub active: usize,
-    pub cmdline: String,
+    /// Project folder shown in the sidebar and searched by Goto Anything.
+    pub root: PathBuf,
+    pub config: Config,
+    pub focus: Focus,
+    pub sidebar_visible: bool,
     pub show_hidden: bool,
     pub buffers: Vec<Buffer>,
     pub cur: usize,
@@ -113,24 +163,29 @@ pub struct App {
     pub hover: Option<Hover>,
     pub status: Option<(String, Instant)>,
     pub lsp: Manager,
+    lsp_warned: HashSet<String>,
     pub diagnostics: HashMap<PathBuf, Vec<Diag>>,
     pub files: HashMap<PathBuf, Vec<String>>,
     indexing: Option<PathBuf>,
     pub search: Option<String>,
     clip: String,
     clip_line: bool,
+    /// Text the GUI should put on the system clipboard.
+    pub pending_copy: Option<String>,
+    /// Sidebar clipboard: paths and whether they were cut.
+    pub file_clip: Option<(Vec<PathBuf>, bool)>,
     jumps: Vec<(PathBuf, Pos)>,
+    closed: Vec<PathBuf>,
     pub quit: bool,
-    pub pending_shell: Option<(String, PathBuf)>,
+    /// Visible editor lines (set by the GUI), for paging and centering.
     pub page: usize,
-    pub panel_page: usize,
+    pub font_size: f32,
     /// Highlighting didn't finish within the frame budget; redraw again soon.
     pub hl_pending: bool,
-    pub tree: crate::tree::Tree,
-    pub tree_visible: bool,
-    pub focus_tree: bool,
+    pub tree: Tree,
     tree_revealed: Option<PathBuf>,
-    tx: Sender<AppEvent>,
+    theme_before: Option<String>,
+    tx: EventTx,
 }
 
 fn kind_name(k: i64) -> &'static str {
@@ -223,50 +278,60 @@ fn markdown_to_lines(s: &str) -> Vec<String> {
 }
 
 impl App {
-    pub fn new(start: PathBuf, tx: Sender<AppEvent>) -> Self {
-        let show_hidden = false;
-        App {
-            view: View::Panels,
-            panels: [
-                Panel::new(start.clone(), show_hidden),
-                Panel::new(start, show_hidden),
-            ],
-            active: 0,
-            cmdline: String::new(),
-            show_hidden,
+    pub fn new(root: PathBuf, config: Config, tx: EventTx) -> Self {
+        let syn = Syntax::load(&config.editor.theme);
+        let mut tree = Tree::new();
+        tree.set_root(root.clone(), false);
+        let mut app = App {
+            root,
+            focus: Focus::Editor,
+            sidebar_visible: config.editor.show_sidebar,
+            show_hidden: false,
             buffers: vec![],
             cur: 0,
             next_buf_id: 1,
-            syn: Syntax::load(),
+            syn,
             modal: None,
             completion: None,
             hover: None,
             status: None,
             lsp: Manager::new(tx.clone()),
+            lsp_warned: HashSet::new(),
             diagnostics: HashMap::new(),
             files: HashMap::new(),
             indexing: None,
             search: None,
             clip: String::new(),
             clip_line: false,
+            pending_copy: None,
+            file_clip: None,
             jumps: vec![],
+            closed: vec![],
             quit: false,
-            pending_shell: None,
-            page: 20,
-            panel_page: 20,
+            page: 30,
+            font_size: config.editor.font_size,
             hl_pending: false,
-            tree: crate::tree::Tree::new(),
-            tree_visible: false,
-            focus_tree: false,
+            tree,
             tree_revealed: None,
+            theme_before: None,
+            config,
             tx,
+        };
+        if let Some(e) = app.config.error.clone() {
+            app.msg(format!("Config error: {e}"));
         }
+        app
+    }
+
+    pub fn event_tx(&self) -> EventTx {
+        self.tx.clone()
     }
 
     pub fn msg(&mut self, s: impl Into<String>) {
         self.status = Some((s.into(), Instant::now()));
     }
 
+    /// Expire the status message; returns true if the UI needs a repaint.
     pub fn tick(&mut self) -> bool {
         if let Some((_, t)) = &self.status
             && t.elapsed() > Duration::from_secs(6)
@@ -281,7 +346,7 @@ impl App {
         self.buffers.get(self.cur)
     }
 
-    fn buf_mut(&mut self) -> Option<&mut Buffer> {
+    pub fn buf_mut(&mut self) -> Option<&mut Buffer> {
         self.buffers.get_mut(self.cur)
     }
 
@@ -289,52 +354,165 @@ impl App {
         self.buffers.iter().position(|b| b.id == id)
     }
 
-    pub fn panel(&mut self) -> &mut Panel {
-        &mut self.panels[self.active]
-    }
-
-    pub fn reload_panels(&mut self) {
-        let h = self.show_hidden;
-        for p in &mut self.panels {
-            p.reload(h);
-        }
-        if self.tree_visible {
-            self.tree.refresh();
+    pub fn title(&self) -> String {
+        let root = self.root.file_name().unwrap_or_default().to_string_lossy();
+        match self.buf() {
+            Some(b) => format!(
+                "{}{} — {root}",
+                b.name(),
+                if b.modified { " •" } else { "" }
+            ),
+            None => format!("{root} — farsub"),
         }
     }
 
-    // ===================================================================== events
+    pub fn any_modified(&self) -> bool {
+        self.buffers.iter().any(|b| b.modified)
+    }
 
-    pub fn on_event(&mut self, ev: Event) {
-        match ev {
-            Event::Key(k) if k.kind != KeyEventKind::Release => self.on_key(Key::from_event(&k)),
-            Event::Paste(s) => self.on_paste(&s),
-            _ => {}
+    fn refresh_tree(&mut self) {
+        self.tree.refresh();
+        self.files.clear();
+    }
+
+    fn rel(&self, p: &Path) -> String {
+        p.strip_prefix(&self.root)
+            .unwrap_or(p)
+            .display()
+            .to_string()
+    }
+
+    fn resolve(&self, base: &Path, s: &str) -> PathBuf {
+        let s = s.trim();
+        if s == "~" {
+            return std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+        }
+        if let Some(rest) = s.strip_prefix("~/") {
+            return std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default()
+                .join(rest);
+        }
+        let p = PathBuf::from(s);
+        if p.is_absolute() { p } else { base.join(p) }
+    }
+
+    // ===================================================================== input entry points
+
+    /// A non-text key press. Returns false if nothing handled it (so an Alt+letter can
+    /// still produce its character via the text event).
+    pub fn on_key(&mut self, k: Key) -> bool {
+        if k.is_text_key() {
+            return false;
+        }
+        if self.modal.is_some() {
+            self.modal_key(k);
+            return true;
+        }
+        if self.hover.is_some() && k.code == KeyCode::Esc {
+            self.hover = None;
+            return true;
+        }
+        if let Some(cmd) = global_binding(k) {
+            self.run(cmd);
+            return true;
+        }
+        if let (KeyCode::Char(c @ '1'..='9'), true, false) = (k.code, k.ctrl, k.shift) {
+            let i = c as usize - '1' as usize;
+            if i < self.buffers.len() {
+                self.cur = i;
+                self.focus = Focus::Editor;
+            }
+            return true;
+        }
+        if self.focus == Focus::Sidebar && self.sidebar_visible {
+            return self.tree_key(k);
+        }
+        self.editor_key(k)
+    }
+
+    /// Typed text (already composed by the OS: shifted chars, dead keys, IME).
+    pub fn on_text(&mut self, s: &str) {
+        for c in s.chars().filter(|c| !c.is_control()) {
+            match &mut self.modal {
+                Some(Modal::Palette(p)) => {
+                    p.query.push(c);
+                    self.palette_query_changed();
+                }
+                Some(Modal::Prompt(p)) => {
+                    let b = crate::editor::byte_idx(&p.input, p.cursor);
+                    p.input.insert(b, c);
+                    p.cursor += 1;
+                    self.prompt_changed();
+                }
+                Some(Modal::Confirm(_)) => {
+                    let Some(Modal::Confirm(cf)) = self.modal.take() else {
+                        return;
+                    };
+                    match c {
+                        'y' | 'Y' => self.confirm(cf.kind),
+                        'n' | 'N' => {}
+                        _ => self.modal = Some(Modal::Confirm(cf)),
+                    }
+                }
+                None if self.focus == Focus::Sidebar && self.sidebar_visible => self.tree_char(c),
+                None => self.editor_text(c),
+            }
         }
     }
 
-    fn on_paste(&mut self, s: &str) {
+    pub fn on_paste(&mut self, s: &str) {
         match &mut self.modal {
             Some(Modal::Prompt(p)) => {
                 let line = s.lines().next().unwrap_or("");
                 let b = crate::editor::byte_idx(&p.input, p.cursor);
                 p.input.insert_str(b, line);
                 p.cursor += char_len(line);
+                self.prompt_changed();
             }
             Some(Modal::Palette(p)) => {
                 p.query.push_str(s.lines().next().unwrap_or(""));
                 self.palette_query_changed();
             }
             Some(_) => {}
-            None => match self.view {
-                View::Editor => {
-                    if let Some(b) = self.buf_mut() {
-                        b.insert_text(s);
-                    }
-                }
-                View::Panels => self.cmdline.push_str(s.lines().next().unwrap_or("")),
-            },
+            None if self.focus == Focus::Sidebar && self.sidebar_visible => {
+                self.run(Command::SidebarPaste)
+            }
+            None => self.paste_text(s.to_string()),
         }
+    }
+
+    pub fn on_copy(&mut self, cut: bool) {
+        if self.modal.is_some() {
+            return;
+        }
+        let cmd = match (self.focus == Focus::Sidebar && self.sidebar_visible, cut) {
+            (true, false) => Command::SidebarCopy,
+            (true, true) => Command::SidebarCut,
+            (false, false) => Command::Copy,
+            (false, true) => Command::Cut,
+        };
+        self.run(cmd);
+    }
+
+    fn paste_text(&mut self, text: String) {
+        let line_mode = self.clip_line && text == self.clip;
+        let Some(b) = self.buf_mut() else { return };
+        if b.read_only {
+            return;
+        }
+        if line_mode && b.selection().is_none() {
+            // A whole line copied without selection is pasted above the current line.
+            let c = b.cursor;
+            b.goto(Pos::new(c.line, 0));
+            b.insert_text(&text);
+            b.goto(Pos::new(c.line + 1, c.col));
+        } else {
+            b.insert_text(&text);
+        }
+        self.completion = None;
     }
 
     pub fn on_app_event(&mut self, ev: AppEvent) {
@@ -363,209 +541,11 @@ impl App {
         }
     }
 
-    fn on_key(&mut self, k: Key) {
-        if self.modal.is_some() {
-            self.modal_key(k);
-            return;
-        }
-        if let Some(cmd) = self.global_binding(k) {
-            self.run(cmd);
-            return;
-        }
-        match self.view {
-            View::Panels => self.panels_key(k),
-            View::Editor => self.editor_key(k),
-        }
-    }
-
-    fn global_binding(&self, k: Key) -> Option<Command> {
-        use Command::*;
-        let ed = self.view == View::Editor;
-        Some(match (k.code, k.ctrl, k.shift) {
-            (KeyCode::Char('p'), true, false) => GotoFile,
-            (KeyCode::Char('p'), true, true) | (KeyCode::F(1), _, _) => CommandPalette,
-            (KeyCode::Char('r'), true, true) => GotoWorkspaceSymbol,
-            (KeyCode::Char('r'), true, false) if ed => GotoSymbol,
-            (KeyCode::Char('g'), true, false) if ed => GotoLine,
-            (KeyCode::Char('e'), true, false) => SwitchBuffer,
-            (KeyCode::Char('b'), true, false) => ToggleSidebar,
-            (KeyCode::Char('o'), true, false) => TogglePanels,
-            (KeyCode::Char('q'), true, false) => Quit,
-            (KeyCode::Char('n'), true, false) => NewFile,
-            (KeyCode::PageDown, true, _) => NextBuffer,
-            (KeyCode::PageUp, true, _) => PrevBuffer,
-            (KeyCode::Char('-'), true, _) => JumpBack,
-            (KeyCode::Char('-'), _, _) if k.alt => JumpBack,
-            _ => return None,
-        })
-    }
-
-    // ===================================================================== panels
-
-    fn panels_key(&mut self, k: Key) {
-        let h = self.show_hidden;
-        let page = self.panel_page.max(1) as isize;
-        match (k.code, k.ctrl, k.shift) {
-            (KeyCode::Tab, false, false) => self.active ^= 1,
-            (KeyCode::Up, _, s) => {
-                if s {
-                    self.panel().toggle_mark();
-                }
-                self.panel().move_sel(-1)
-            }
-            (KeyCode::Down, _, s) => {
-                if s {
-                    self.panel().toggle_mark();
-                }
-                self.panel().move_sel(1)
-            }
-            (KeyCode::PageUp, false, _) => self.panel().move_sel(-page),
-            (KeyCode::PageDown, false, _) => self.panel().move_sel(page),
-            (KeyCode::Home, _, _) if self.cmdline.is_empty() => self.panel().sel = 0,
-            (KeyCode::End, _, _) if self.cmdline.is_empty() => {
-                let n = self.panel().entries.len();
-                self.panel().sel = n.saturating_sub(1)
-            }
-            (KeyCode::Insert, _, _) | (KeyCode::Char(' '), true, _) => {
-                self.panel().toggle_mark();
-                self.panel().move_sel(1);
-            }
-            (KeyCode::Enter, _, _) => {
-                if !self.cmdline.trim().is_empty() {
-                    let cmd = std::mem::take(&mut self.cmdline);
-                    self.exec_cmdline(cmd.trim().to_string());
-                } else {
-                    self.panel_enter();
-                }
-            }
-            (KeyCode::Backspace, _, _) => {
-                if self.cmdline.pop().is_none()
-                    && let Some(parent) = self.panel().dir.parent().map(|p| p.to_path_buf())
-                {
-                    self.panel().chdir(parent, h);
-                }
-            }
-            (KeyCode::Esc, _, _) => self.cmdline.clear(),
-            (KeyCode::F(3), _, _) => self.panel_open(true),
-            (KeyCode::F(4), _, false) => self.panel_open(false),
-            (KeyCode::F(4), _, true) => self.run(Command::NewFile),
-            (KeyCode::F(5), _, _) => self.panel_copy_move(false),
-            (KeyCode::F(6), _, _) => self.panel_copy_move(true),
-            (KeyCode::F(7), _, _) => {
-                self.prompt("Make folder", "", PromptKind::Mkdir);
-            }
-            (KeyCode::F(8), _, _) => {
-                let t = self.panel().targets();
-                if !t.is_empty() {
-                    let what = if t.len() == 1 {
-                        t[0].file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned()
-                    } else {
-                        format!("{} items", t.len())
-                    };
-                    self.modal = Some(Modal::Confirm(Confirm {
-                        message: format!("Delete {what}? This cannot be undone."),
-                        kind: ConfirmKind::Delete(t),
-                    }));
-                }
-            }
-            (KeyCode::F(10), _, _) => self.run(Command::Quit),
-            (KeyCode::Char('h'), true, _) => self.run(Command::ToggleHidden),
-            (KeyCode::Char('r'), true, false) => self.run(Command::RefreshPanels),
-            (KeyCode::Char('u'), true, _) => self.run(Command::SwapPanels),
-            _ => {
-                if let Some(c) = k.text_char() {
-                    self.cmdline.push(c);
-                }
-            }
-        }
-    }
-
-    fn panel_enter(&mut self) {
-        let h = self.show_hidden;
-        let Some(e) = self.panel().current().cloned() else {
-            return;
-        };
-        if e.is_dir {
-            self.panel().chdir(e.path, h);
-        } else {
-            self.open_file(&e.path, true);
-        }
-    }
-
-    fn panel_open(&mut self, view_only: bool) {
-        let Some(e) = self.panel().current().cloned() else {
-            return;
-        };
-        if e.is_dir {
-            return;
-        }
-        if let Some(i) = self.open_file(&e.path, true) {
-            self.buffers[i].read_only = view_only && !self.buffers[i].modified;
-            if !view_only {
-                self.buffers[i].read_only = false;
-            }
-        }
-    }
-
-    fn panel_copy_move(&mut self, mv: bool) {
-        let t = self.panel().targets();
-        if t.is_empty() {
-            return;
-        }
-        let other = self.panels[self.active ^ 1].dir.clone();
-        let label = if mv { "Rename/Move" } else { "Copy" };
-        let title = if t.len() == 1 {
-            format!(
-                "{label} {} to",
-                t[0].file_name().unwrap_or_default().to_string_lossy()
-            )
-        } else {
-            format!("{label} {} items to", t.len())
-        };
-        let mut def = other.to_string_lossy().into_owned();
-        if mv && t.len() == 1 && other == self.panel().dir {
-            def = t[0].to_string_lossy().into_owned();
-        }
-        let kind = if mv {
-            PromptKind::Move(t)
-        } else {
-            PromptKind::Copy(t)
-        };
-        self.prompt(&title, &def, kind);
-    }
-
-    fn exec_cmdline(&mut self, cmd: String) {
-        let h = self.show_hidden;
-        let dir = self.panel().dir.clone();
-        if cmd == "cd" || cmd.starts_with("cd ") {
-            let arg = cmd[2..].trim();
-            let target = if arg.is_empty() || arg == "~" {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or(dir.clone())
-            } else if let Some(rest) = arg.strip_prefix("~/") {
-                std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
-                    .join(rest)
-            } else {
-                dir.join(arg)
-            };
-            match target.canonicalize() {
-                Ok(p) if p.is_dir() => self.panel().chdir(p, h),
-                _ => self.msg(format!("cd: no such directory: {arg}")),
-            }
-            return;
-        }
-        self.pending_shell = Some((cmd, dir));
-    }
-
     // ===================================================================== modal
 
     fn prompt(&mut self, title: &str, def: &str, kind: PromptKind) {
+        self.completion = None;
+        self.hover = None;
         self.modal = Some(Modal::Prompt(Prompt {
             title: title.to_string(),
             input: def.to_string(),
@@ -582,8 +562,8 @@ impl App {
             }
             Some(Modal::Prompt(p)) => self.prompt_key(k, p),
             Some(Modal::Confirm(c)) => match k.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.confirm(c.kind),
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {}
+                KeyCode::Enter => self.confirm(c.kind),
+                KeyCode::Esc => {}
                 _ => self.modal = Some(Modal::Confirm(c)),
             },
             None => {}
@@ -592,21 +572,14 @@ impl App {
 
     fn confirm(&mut self, kind: ConfirmKind) {
         match kind {
-            ConfirmKind::Delete(paths) => {
-                let mut n = 0;
-                for p in &paths {
-                    match panels::delete_path(p) {
-                        Ok(()) => n += 1,
-                        Err(e) => self.msg(format!("delete {}: {e}", p.display())),
-                    }
+            ConfirmKind::Trash(paths) => match fileops::trash(&paths) {
+                Ok(()) => {
+                    self.tree.marked.clear();
+                    self.refresh_tree();
+                    self.msg(format!("Moved {} item(s) to the Trash", paths.len()));
                 }
-                self.panel().marked.clear();
-                self.reload_panels();
-                self.files.clear();
-                if n == paths.len() {
-                    self.msg(format!("Deleted {n} item(s)"));
-                }
-            }
+                Err(e) => self.msg(format!("Move to Trash failed: {e}")),
+            },
             ConfirmKind::CloseBuffer(id) => {
                 if let Some(i) = self.buf_index(id) {
                     self.close_buffer_at(i);
@@ -617,6 +590,7 @@ impl App {
     }
 
     fn prompt_key(&mut self, k: Key, mut p: Prompt) {
+        let is_find = matches!(p.kind, PromptKind::Find { .. });
         match k.code {
             KeyCode::Esc => {
                 if let PromptKind::Find { origin } = p.kind
@@ -626,15 +600,30 @@ impl App {
                 }
                 return;
             }
-            KeyCode::Enter => {
-                self.prompt_accept(p);
-                return;
+            KeyCode::Enter if is_find => {
+                // Sublime: Enter = next match, Shift+Enter = previous; the panel stays open.
+                self.search = Some(p.input.clone());
+                self.find_next(!k.shift);
             }
+            KeyCode::Enter => return self.prompt_accept(p),
             KeyCode::Backspace => {
                 if p.cursor > 0 {
-                    let b = crate::editor::byte_idx(&p.input, p.cursor - 1);
-                    p.input.remove(b);
-                    p.cursor -= 1;
+                    let n = if k.ctrl || k.alt {
+                        // Delete back to the previous path separator / word.
+                        let chars: Vec<char> = p.input.chars().take(p.cursor).collect();
+                        let mut i = p.cursor - 1;
+                        while i > 0 && !matches!(chars[i - 1], '/' | ' ') {
+                            i -= 1;
+                        }
+                        p.cursor - i
+                    } else {
+                        1
+                    };
+                    for _ in 0..n {
+                        let b = crate::editor::byte_idx(&p.input, p.cursor - 1);
+                        p.input.remove(b);
+                        p.cursor -= 1;
+                    }
                 }
             }
             KeyCode::Delete => {
@@ -647,189 +636,149 @@ impl App {
             KeyCode::Right => p.cursor = (p.cursor + 1).min(char_len(&p.input)),
             KeyCode::Home => p.cursor = 0,
             KeyCode::End => p.cursor = char_len(&p.input),
+            KeyCode::Char('a') if k.ctrl => p.cursor = 0,
             KeyCode::Char('u') if k.ctrl => {
                 p.input.clear();
                 p.cursor = 0;
             }
-            KeyCode::F(3) | KeyCode::Down if matches!(p.kind, PromptKind::Find { .. }) => {
+            KeyCode::Tab if p.kind.is_path() => {
+                let base = match &p.kind {
+                    PromptKind::NewFile(d) | PromptKind::NewFolder(d) => d.clone(),
+                    _ => self.root.clone(),
+                };
+                p.input = complete_path(&base, &p.input);
+                p.cursor = char_len(&p.input);
+            }
+            KeyCode::F(3) | KeyCode::Down if is_find => {
                 self.search = Some(p.input.clone());
                 self.find_next(!k.shift);
             }
-            KeyCode::Up if matches!(p.kind, PromptKind::Find { .. }) => {
+            KeyCode::Up if is_find => {
                 self.search = Some(p.input.clone());
                 self.find_next(false);
             }
-            _ => {
-                if let Some(c) = k.text_char() {
-                    let b = crate::editor::byte_idx(&p.input, p.cursor);
-                    p.input.insert(b, c);
-                    p.cursor += 1;
-                }
-            }
+            _ => {}
         }
-        // Incremental find.
-        if let PromptKind::Find { origin } = p.kind
-            && !matches!(k.code, KeyCode::F(3) | KeyCode::Up | KeyCode::Down)
-        {
-            let q = p.input.clone();
-            self.search = Some(q.clone());
-            if let Some(b) = self.buf_mut() {
-                if let Some((s, e)) = b.find(&q, origin, true, false) {
-                    b.anchor = Some(s);
-                    b.cursor = e;
-                } else {
-                    b.goto(origin);
-                }
-            }
-        }
+        let changed = matches!(
+            k.code,
+            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char('u')
+        );
         self.modal = Some(Modal::Prompt(p));
+        if changed {
+            self.prompt_changed();
+        }
+    }
+
+    /// Incremental find while typing in the find panel.
+    fn prompt_changed(&mut self) {
+        let Some(Modal::Prompt(p)) = &self.modal else {
+            return;
+        };
+        let PromptKind::Find { origin } = p.kind else {
+            return;
+        };
+        let q = p.input.clone();
+        self.search = Some(q.clone());
+        let pg = self.page;
+        if let Some(b) = self.buf_mut() {
+            if let Some((s, e)) = b.find(&q, origin, true, false) {
+                b.anchor = Some(s);
+                b.cursor = e;
+                if b.cursor.line < b.scroll_y || b.cursor.line >= b.scroll_y + pg {
+                    center(b, pg);
+                }
+            } else {
+                b.goto(origin);
+            }
+        }
     }
 
     fn prompt_accept(&mut self, p: Prompt) {
         let input = p.input.trim().to_string();
-        let h = self.show_hidden;
-        let resolve = |base: &Path, s: &str| -> PathBuf {
-            if let Some(rest) = s.strip_prefix("~/") {
-                return std::env::var_os("HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or_default()
-                    .join(rest);
-            }
-            let p = PathBuf::from(s);
-            if p.is_absolute() { p } else { base.join(p) }
-        };
-        let dir = self.panels[self.active].dir.clone();
         match p.kind {
-            PromptKind::Copy(srcs) | PromptKind::Move(srcs) if input.is_empty() => {
-                let _ = srcs;
+            PromptKind::NewFile(dir) | PromptKind::NewFolder(dir) if input.is_empty() => {
+                let _ = dir;
             }
-            PromptKind::Copy(srcs) => {
-                let dest = resolve(&dir, &input);
-                let multi = srcs.len() > 1;
-                let mut ok = 0;
-                for s in &srcs {
-                    let d = panels::dest_for(s, &dest, multi);
-                    match panels::copy_recursive(s, &d) {
-                        Ok(()) => ok += 1,
-                        Err(e) => self.msg(format!("copy {}: {e}", s.display())),
-                    }
+            PromptKind::NewFile(dir) => {
+                let path = self.resolve(&dir, &input);
+                if path.exists() {
+                    return self.msg(format!("{} already exists", self.rel(&path)));
                 }
-                self.panel().marked.clear();
-                self.reload_panels();
-                self.files.clear();
-                if ok == srcs.len() {
-                    self.msg(format!("Copied {ok} item(s)"));
+                if let Some(parent) = path.parent()
+                    && let Err(e) = std::fs::create_dir_all(parent)
+                {
+                    return self.msg(format!("Create folder failed: {e}"));
                 }
-            }
-            PromptKind::Move(srcs) => {
-                let dest = resolve(&dir, &input);
-                let multi = srcs.len() > 1;
-                let mut ok = 0;
-                for s in &srcs {
-                    let d = panels::dest_for(s, &dest, multi);
-                    match panels::move_path(s, &d) {
-                        Ok(()) => {
-                            ok += 1;
-                            for b in &mut self.buffers {
-                                if b.path.as_deref() == Some(s.as_path()) {
-                                    b.set_path(d.clone());
-                                }
-                            }
-                        }
-                        Err(e) => self.msg(format!("move {}: {e}", s.display())),
-                    }
+                if let Err(e) = std::fs::write(&path, "") {
+                    return self.msg(format!("Create file failed: {e}"));
                 }
-                self.panel().marked.clear();
-                self.reload_panels();
-                self.files.clear();
-                if ok == srcs.len() {
-                    self.msg(format!("Moved {ok} item(s)"));
-                }
-            }
-            PromptKind::Mkdir => {
-                if input.is_empty() {
-                    return;
-                }
-                let d = resolve(&dir, &input);
-                match std::fs::create_dir_all(&d) {
-                    Ok(()) => {
-                        self.reload_panels();
-                        let name = d
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned();
-                        self.panel().select_name(&name);
-                    }
-                    Err(e) => self.msg(format!("mkdir: {e}")),
-                }
-                let _ = h;
-            }
-            PromptKind::NewFile => {
-                if input.is_empty() {
-                    let id = self.next_buf_id;
-                    self.next_buf_id += 1;
-                    let b = Buffer::from_text(id, None, "", HlCache::new("Plain Text".into()));
-                    self.buffers.push(b);
-                    self.cur = self.buffers.len() - 1;
-                    self.view = View::Editor;
-                    return;
-                }
-                let base = if self.view == View::Editor {
-                    self.buf()
-                        .and_then(|b| b.path.as_ref())
-                        .and_then(|p| p.parent())
-                        .map(|p| p.to_path_buf())
-                        .unwrap_or(dir)
-                } else {
-                    dir
-                };
-                let path = resolve(&base, &input);
-                if !path.exists() {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&path, "") {
-                        self.msg(format!("create: {e}"));
-                        return;
-                    }
-                }
-                self.files.clear();
-                self.reload_panels();
+                self.refresh_tree();
+                self.tree.reveal(&path);
                 self.open_file(&path, true);
+            }
+            PromptKind::NewFolder(dir) => {
+                let path = self.resolve(&dir, &input);
+                match std::fs::create_dir_all(&path) {
+                    Ok(()) => {
+                        self.refresh_tree();
+                        self.tree.reveal(&path);
+                        self.tree.expanded.insert(path);
+                        self.tree.rebuild();
+                    }
+                    Err(e) => self.msg(format!("Create folder failed: {e}")),
+                }
+            }
+            PromptKind::RenameMove(src) => {
+                if input.is_empty() {
+                    return;
+                }
+                let dst = self.resolve(&self.root.clone(), &input);
+                if dst == src {
+                    return;
+                }
+                if dst.exists() {
+                    return self.msg(format!("{} already exists", self.rel(&dst)));
+                }
+                match fileops::move_path(&src, &dst) {
+                    Ok(()) => {
+                        self.rebind_paths(&src, &dst);
+                        self.refresh_tree();
+                        self.tree.reveal(&dst);
+                        self.msg(format!("Moved to {}", self.rel(&dst)));
+                    }
+                    Err(e) => self.msg(format!("Rename failed: {e}")),
+                }
             }
             PromptKind::SaveAs => {
                 if input.is_empty() {
                     return;
                 }
-                let base = self
-                    .buf()
-                    .and_then(|b| b.path.as_ref())
-                    .and_then(|p| p.parent())
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or(dir);
-                let path = resolve(&base, &input);
-                let first = self.buf().map(|b| b.lines[0].clone()).unwrap_or_default();
-                let syntax = self.syn.detect(Some(&path), &first);
-                if let Some(b) = self.buf_mut() {
-                    b.set_path(path);
-                    b.hl.reset(syntax);
-                    b.lsp_client = None;
+                let path = self.resolve(&self.root.clone(), &input);
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
                 }
-                self.save_current();
                 let cur = self.cur;
+                self.close_lsp_doc(cur);
+                self.set_buffer_path(cur, path);
+                self.save_current();
                 self.lsp_open(cur);
-                self.files.clear();
-                self.reload_panels();
+                self.refresh_tree();
             }
-            PromptKind::Find { .. } => {
-                self.search = Some(p.input.clone());
-                if let Some(b) = self.buf_mut()
-                    && b.selection().is_none()
-                {
-                    self.msg("Not found");
+            PromptKind::OpenPath => {
+                if input.is_empty() {
+                    return;
+                }
+                let path = self.resolve(&self.root.clone(), &input);
+                let path = path.canonicalize().unwrap_or(path);
+                if path.is_dir() {
+                    self.set_root(path);
+                } else if path.is_file() {
+                    self.open_file(&path, true);
+                } else {
+                    self.msg(format!("No such file or folder: {input}"));
                 }
             }
+            PromptKind::Find { .. } => {}
             PromptKind::ReplaceFind => {
                 if !input.is_empty() {
                     let f = p.input.clone();
@@ -847,7 +796,7 @@ impl App {
                     .unwrap_or(0);
                 self.msg(format!("Replaced {n} occurrence(s)"));
             }
-            PromptKind::Rename => {
+            PromptKind::RenameSymbol => {
                 if input.is_empty() {
                     return;
                 }
@@ -861,12 +810,394 @@ impl App {
         }
     }
 
-    // ===================================================================== palette
+    pub fn set_root(&mut self, root: PathBuf) {
+        self.root = root.clone();
+        self.tree.set_root(root, self.show_hidden);
+        self.tree_revealed = None;
+        self.sidebar_visible = true;
+        self.msg(format!("Opened folder {}", self.root.display()));
+    }
+
+    // ===================================================================== sidebar
+
+    fn focus_sidebar(&mut self) {
+        self.sidebar_visible = true;
+        self.focus = Focus::Sidebar;
+        self.completion = None;
+        self.hover = None;
+        self.tree.set_root(self.root.clone(), self.show_hidden);
+        let cur = self.buf().and_then(|b| b.path.clone());
+        if let Some(p) = cur
+            && self.tree_revealed.as_ref() != Some(&p)
+        {
+            self.tree.reveal(&p);
+            self.tree_revealed = Some(p);
+        }
+    }
+
+    pub fn tree_click(&mut self, i: usize, open: bool) {
+        self.focus = Focus::Sidebar;
+        if i < self.tree.nodes.len() {
+            self.tree.sel = i;
+            if open {
+                self.tree_open(false);
+            }
+        }
+    }
+
+    fn tree_open(&mut self, keep_focus: bool) {
+        let Some(n) = self.tree.selected() else {
+            return;
+        };
+        if n.is_dir {
+            self.tree.toggle();
+            return;
+        }
+        let path = n.path.clone();
+        if self.open_file(&path, true).is_some() {
+            self.tree_revealed = Some(path);
+            if keep_focus {
+                self.focus = Focus::Sidebar;
+            }
+        }
+    }
+
+    fn tree_key(&mut self, k: Key) -> bool {
+        let page = self.page.max(1) as isize;
+        match k.code {
+            KeyCode::Up | KeyCode::Down => {
+                if k.shift {
+                    if self.tree.marked.is_empty() {
+                        self.tree.toggle_mark();
+                    }
+                    self.tree
+                        .move_sel(if k.code == KeyCode::Up { -1 } else { 1 });
+                    if let Some(p) = self.tree.selected_path().map(Path::to_path_buf) {
+                        self.tree.marked.insert(p);
+                    }
+                } else {
+                    self.tree
+                        .move_sel(if k.code == KeyCode::Up { -1 } else { 1 });
+                }
+            }
+            KeyCode::PageUp => self.tree.move_sel(-page),
+            KeyCode::PageDown => self.tree.move_sel(page),
+            KeyCode::Home => self.tree.sel = 0,
+            KeyCode::End => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
+            KeyCode::Left => self.tree.collapse(),
+            KeyCode::Right => self.tree.expand(),
+            KeyCode::Enter => self.tree_open(k.alt),
+            KeyCode::Esc => {
+                if !self.tree.marked.is_empty() {
+                    self.tree.marked.clear();
+                } else if self.file_clip.is_some() {
+                    self.file_clip = None;
+                } else {
+                    self.focus = Focus::Editor;
+                }
+            }
+            KeyCode::Tab => self.focus = Focus::Editor,
+            KeyCode::Delete => self.run(Command::SidebarDelete),
+            KeyCode::Backspace if k.ctrl => self.run(Command::SidebarDelete),
+            KeyCode::F(2) => self.run(Command::SidebarRename),
+            KeyCode::F(5) => self.run(Command::RefreshSidebar),
+            KeyCode::Char('n') if k.ctrl && !k.shift => self.run(Command::SidebarNewFile),
+            KeyCode::Char('n') if k.ctrl && k.shift => self.run(Command::SidebarNewFolder),
+            _ => {
+                if let Some(cmd) = editor_binding(k) {
+                    self.run(cmd);
+                } else {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Single-letter sidebar commands (arrive as text so Shift+A gives 'A').
+    fn tree_char(&mut self, c: char) {
+        match c {
+            'j' => self.tree.move_sel(1),
+            'k' => self.tree.move_sel(-1),
+            'h' => self.tree.collapse(),
+            'l' => self.tree.expand(),
+            'o' => self.tree_open(false),
+            ' ' => {
+                self.tree.toggle_mark();
+                self.tree.move_sel(1);
+            }
+            'a' => self.run(Command::SidebarNewFile),
+            'A' => self.run(Command::SidebarNewFolder),
+            'r' => self.run(Command::SidebarRename),
+            'd' => self.run(Command::SidebarDelete),
+            'c' => self.run(Command::SidebarCopy),
+            'x' => self.run(Command::SidebarCut),
+            'p' | 'v' => self.run(Command::SidebarPaste),
+            'D' => self.run(Command::SidebarDuplicate),
+            'y' => self.run(Command::SidebarCopyPath),
+            '.' => self.run(Command::ToggleHidden),
+            'R' => self.run(Command::RefreshSidebar),
+            'g' => self.tree.sel = 0,
+            'G' => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    fn run_sidebar(&mut self, cmd: Command) {
+        use Command::*;
+        let dir = self.tree.target_dir();
+        let rel_dir = |app: &App| {
+            let r = app.rel(&dir);
+            if r.is_empty() {
+                "./".to_string()
+            } else {
+                format!("{r}/")
+            }
+        };
+        match cmd {
+            SidebarNewFile => {
+                let t = format!(
+                    "New file in {}  (use a/b.txt for subfolders)",
+                    rel_dir(self)
+                );
+                self.prompt(&t, "", PromptKind::NewFile(dir.clone()));
+            }
+            SidebarNewFolder => {
+                let t = format!("New folder in {}", rel_dir(self));
+                self.prompt(&t, "", PromptKind::NewFolder(dir.clone()));
+            }
+            SidebarRename => {
+                let Some(src) = self.tree.selected_path().map(Path::to_path_buf) else {
+                    return;
+                };
+                let rel = self.rel(&src);
+                self.prompt(
+                    "Rename / move to (relative to the project)",
+                    &rel,
+                    PromptKind::RenameMove(src),
+                );
+                // Put the cursor before the extension, like Sublime/VS Code.
+                if let Some(Modal::Prompt(p)) = &mut self.modal
+                    && let Some(dot) = p.input.rfind('.')
+                    && p.input.rfind('/').is_none_or(|s| s < dot)
+                    && dot > 0
+                {
+                    p.cursor = char_len(&p.input[..dot]);
+                }
+            }
+            SidebarDelete => {
+                let t = self.tree.targets();
+                if t.is_empty() {
+                    return;
+                }
+                let what = if t.len() == 1 {
+                    self.rel(&t[0])
+                } else {
+                    format!("{} items", t.len())
+                };
+                self.modal = Some(Modal::Confirm(Confirm {
+                    message: format!("Move {what} to the Trash?"),
+                    kind: ConfirmKind::Trash(t),
+                }));
+            }
+            SidebarCopy | SidebarCut => {
+                let t = self.tree.targets();
+                if t.is_empty() {
+                    return;
+                }
+                let cut = cmd == SidebarCut;
+                self.msg(format!(
+                    "{} {} item(s) — select a folder and press p to paste",
+                    if cut { "Cut" } else { "Copied" },
+                    t.len()
+                ));
+                self.file_clip = Some((t, cut));
+                self.tree.marked.clear();
+            }
+            SidebarPaste => {
+                let Some((srcs, cut)) = self.file_clip.clone() else {
+                    return self.msg("Nothing to paste — copy (c) or cut (x) files first");
+                };
+                let mut last = None;
+                let mut n = 0;
+                for src in &srcs {
+                    let name = src
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    if cut && src.parent() == Some(dir.as_path()) {
+                        continue;
+                    }
+                    let dst = fileops::unique_dest(&dir, &name);
+                    let res = if cut {
+                        fileops::move_path(src, &dst).map(|_| self.rebind_paths(src, &dst))
+                    } else {
+                        fileops::copy_recursive(src, &dst)
+                    };
+                    match res {
+                        Ok(()) => {
+                            n += 1;
+                            last = Some(dst);
+                        }
+                        Err(e) => self.msg(format!("{}: {e}", self.rel(src))),
+                    }
+                }
+                if cut {
+                    self.file_clip = None;
+                }
+                self.tree.expand_path(&dir);
+                self.tree.expanded.insert(dir.clone());
+                self.refresh_tree();
+                if let Some(p) = last {
+                    self.tree.reveal(&p);
+                }
+                self.msg(format!(
+                    "{} {n} item(s) into {}",
+                    if cut { "Moved" } else { "Pasted" },
+                    rel_dir(self)
+                ));
+            }
+            SidebarDuplicate => {
+                let t = self.tree.targets();
+                let mut last = None;
+                for src in &t {
+                    let parent = src.parent().unwrap_or(&self.root).to_path_buf();
+                    let name = src
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    let dst = fileops::unique_dest(&parent, &name);
+                    match fileops::copy_recursive(src, &dst) {
+                        Ok(()) => last = Some(dst),
+                        Err(e) => self.msg(format!("Duplicate failed: {e}")),
+                    }
+                }
+                self.tree.marked.clear();
+                self.refresh_tree();
+                if let Some(p) = last {
+                    self.tree.reveal(&p);
+                }
+            }
+            SidebarCopyPath => {
+                let t = self.tree.targets();
+                let s = t
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !s.is_empty() {
+                    self.msg(format!("Copied path: {s}"));
+                    self.pending_copy = Some(s);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Point open buffers at a file's new location after a rename/move (also for folders).
+    fn rebind_paths(&mut self, src: &Path, dst: &Path) {
+        for i in 0..self.buffers.len() {
+            let Some(p) = self.buffers[i].path.clone() else {
+                continue;
+            };
+            if let Ok(rest) = p.strip_prefix(src) {
+                let np = if rest.as_os_str().is_empty() {
+                    dst.to_path_buf()
+                } else {
+                    dst.join(rest)
+                };
+                self.close_lsp_doc(i);
+                self.set_buffer_path(i, np);
+                self.lsp_open(i);
+            }
+        }
+        if let Some(r) = &self.tree_revealed
+            && r.starts_with(src)
+        {
+            self.tree_revealed = None;
+        }
+    }
+
+    fn set_buffer_path(&mut self, i: usize, path: PathBuf) {
+        let first = self.buffers[i].lines[0].clone();
+        let lang = self.config.language_for(&path).cloned();
+        let syntax = lang
+            .as_ref()
+            .and_then(|l| l.syntax.as_deref())
+            .and_then(|s| self.syn.find_by_name(s))
+            .unwrap_or_else(|| self.syn.detect(Some(&path), &first));
+        let b = &mut self.buffers[i];
+        b.set_path(path);
+        b.apply_language(lang.as_ref(), &self.config.editor);
+        b.hl.reset(syntax);
+    }
+
+    // ===================================================================== settings
+
+    fn open_settings(&mut self) {
+        let Some(path) = self.config.path.clone().or_else(config::config_path) else {
+            return self.msg("No config location (set $HOME or $FARSUB_CONFIG)");
+        };
+        if !path.exists() {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Err(e) = std::fs::write(&path, config::TEMPLATE) {
+                return self.msg(format!("Could not create {}: {e}", path.display()));
+            }
+        }
+        self.open_file(&path, true);
+    }
+
+    fn reload_config(&mut self) {
+        let new = Config::load_from(self.config.path.clone());
+        if let Some(e) = &new.error {
+            return self.msg(format!("Config error: {e}"));
+        }
+        let langs_changed =
+            format!("{:?}", new.languages) != format!("{:?}", self.config.languages);
+        self.config = new;
+        if !self.syn.set_theme(&self.config.editor.theme) {
+            self.msg(format!("Unknown theme '{}'", self.config.editor.theme));
+        }
+        for b in &mut self.buffers {
+            b.hl.invalidate(0);
+        }
+        self.font_size = self.config.editor.font_size;
+        for i in 0..self.buffers.len() {
+            if let Some(p) = self.buffers[i].path.clone() {
+                let lang = self.config.language_for(&p).cloned();
+                let b = &mut self.buffers[i];
+                b.apply_language(lang.as_ref(), &self.config.editor);
+            }
+        }
+        if langs_changed {
+            self.restart_lsp();
+        }
+        if self
+            .status
+            .as_ref()
+            .is_none_or(|s| !s.0.starts_with("Unknown theme"))
+        {
+            self.msg("Settings reloaded");
+        }
+    }
+
+    fn restart_lsp(&mut self) {
+        self.lsp.restart();
+        self.lsp_warned.clear();
+        self.diagnostics.clear();
+        for i in 0..self.buffers.len() {
+            self.buffers[i].lsp_client = None;
+            self.lsp_open(i);
+        }
+    }
 
     fn open_palette(&mut self, mode: Mode) {
         let mut p = Palette::new(mode, Palette::prefix(mode));
         if matches!(mode, Mode::Symbols | Mode::Line)
-            && self.view == View::Editor
             && let Some(b) = self.buf()
         {
             p.origin = Some((self.cur, b.cursor, b.scroll_y));
@@ -883,19 +1214,7 @@ impl App {
     }
 
     fn file_root(&self) -> PathBuf {
-        if self.view == View::Editor
-            && let Some(p) = self.buf().and_then(|b| b.path.as_ref())
-        {
-            return lsp::find_root(p);
-        }
-        let d = &self.panels[self.active].dir;
-        let r = lsp::find_root(d);
-        // Only climb to a project root if the panel is inside a real project.
-        if r.join(".git").exists() || r != *d {
-            r
-        } else {
-            d.clone()
-        }
+        self.root.clone()
     }
 
     fn file_items(root: &Path, files: &[String]) -> Vec<Item> {
@@ -944,7 +1263,10 @@ impl App {
         let items: Vec<Item> = match mode {
             Mode::Files => {
                 let root = self.file_root();
-                title = format!("Files in {}", root.display());
+                title = format!(
+                    "Files in {}",
+                    root.file_name().unwrap_or_default().to_string_lossy()
+                );
                 if let Some(list) = self.files.get(&root) {
                     Self::file_items(&root, list)
                 } else {
@@ -964,7 +1286,7 @@ impl App {
             Mode::Symbols => {
                 title = "Symbols".into();
                 let items = self.buf().map(heuristic_symbols).unwrap_or_default();
-                if self.view == View::Editor && self.request_doc_symbols() {
+                if self.request_doc_symbols() {
                     loading = true;
                 }
                 items
@@ -988,10 +1310,26 @@ impl App {
                         .as_ref()
                         .map(|p| p.display().to_string())
                         .unwrap_or_default()
-                        + if b.modified { " ●" } else { "" },
+                        + if b.modified { "  (modified)" } else { "" },
                     action: Action::Buffer(i),
                 })
                 .collect(),
+            Mode::Themes => {
+                let cur = self.config.editor.theme.clone();
+                self.syn
+                    .theme_names()
+                    .into_iter()
+                    .map(|n| Item {
+                        detail: if n == cur {
+                            "current".into()
+                        } else {
+                            String::new()
+                        },
+                        action: Action::Theme(n.clone()),
+                        label: n,
+                    })
+                    .collect()
+            }
             Mode::Locations => return,
         };
         if let Some(p) = self.palette() {
@@ -1025,6 +1363,12 @@ impl App {
         let Some(Modal::Palette(p)) = &self.modal else {
             return;
         };
+        if p.mode == Mode::Themes {
+            if let Some(Action::Theme(n)) = p.selected().map(|i| i.action.clone()) {
+                self.apply_theme(&n);
+            }
+            return;
+        }
         let target = match p.mode {
             Mode::Symbols => match p.selected().map(|i| &i.action) {
                 Some(Action::Goto(pos)) => Some(*pos),
@@ -1050,7 +1394,15 @@ impl App {
         let Some(p) = self.palette() else { return };
         match k.code {
             KeyCode::Esc => {
-                if let Some((bi, pos, sy)) = p.origin
+                let origin = p.origin;
+                if p.mode == Mode::Themes
+                    && let Some(t) = self.theme_before.take()
+                {
+                    self.apply_theme(&t);
+                    self.modal = None;
+                    return;
+                }
+                if let Some((bi, pos, sy)) = origin
                     && let Some(b) = self.buffers.get_mut(bi)
                 {
                     b.goto(pos);
@@ -1083,18 +1435,17 @@ impl App {
                 p.move_sel(10);
                 self.palette_preview();
             }
-            KeyCode::Backspace => {
+            KeyCode::Backspace if !k.ctrl => {
                 if p.query.pop().is_none() && p.fixed {
                     return;
                 }
                 self.palette_query_changed();
             }
-            _ => {
-                if let Some(c) = k.text_char() {
-                    p.query.push(c);
-                    self.palette_query_changed();
-                }
+            KeyCode::Backspace if k.ctrl => {
+                p.query.clear();
+                self.palette_query_changed();
             }
+            _ => {}
         }
     }
 
@@ -1122,6 +1473,7 @@ impl App {
                 self.goto_location(&path, pos);
             }
             Action::Goto(pos) => {
+                self.focus = Focus::Editor;
                 self.push_jump();
                 if let Some((bi, _, _)) = p.origin {
                     self.cur = bi;
@@ -1135,8 +1487,16 @@ impl App {
             Action::Buffer(i) => {
                 if i < self.buffers.len() {
                     self.cur = i;
-                    self.view = View::Editor;
+                    self.focus = Focus::Editor;
                 }
+            }
+            Action::Theme(n) => {
+                self.apply_theme(&n);
+                self.theme_before = None;
+                self.msg(format!(
+                    "Theme: {n} (set theme = \"{n}\" in settings to keep it)"
+                ));
+                self.config.editor.theme = n;
             }
             Action::None => {}
         }
@@ -1153,8 +1513,7 @@ impl App {
         {
             if focus {
                 self.cur = i;
-                self.view = View::Editor;
-                self.focus_tree = false;
+                self.focus = Focus::Editor;
             }
             return Some(i);
         }
@@ -1174,13 +1533,18 @@ impl App {
         let syntax = self.syn.detect(Some(&path), first);
         let id = self.next_buf_id;
         self.next_buf_id += 1;
-        let b = Buffer::from_text(id, Some(path), &text, HlCache::new(syntax));
+        let b = Buffer::from_text(id, Some(path.clone()), &text, HlCache::new(syntax));
         self.buffers.push(b);
         let i = self.buffers.len() - 1;
+        self.set_buffer_path(i, path);
+        if std::fs::metadata(&self.buffers[i].path.clone().unwrap())
+            .is_ok_and(|m| m.permissions().readonly())
+        {
+            self.buffers[i].read_only = true;
+        }
         if focus {
             self.cur = i;
-            self.view = View::Editor;
-            self.focus_tree = false;
+            self.focus = Focus::Editor;
         }
         self.lsp_open(i);
         Some(i)
@@ -1190,10 +1554,11 @@ impl App {
         let syntax = self.syn.detect(Some(&path), "");
         let id = self.next_buf_id;
         self.next_buf_id += 1;
-        let b = Buffer::from_text(id, Some(path), "", HlCache::new(syntax));
+        let b = Buffer::from_text(id, Some(path.clone()), "", HlCache::new(syntax));
         self.buffers.push(b);
         self.cur = self.buffers.len() - 1;
-        self.view = View::Editor;
+        self.set_buffer_path(self.cur, path);
+        self.focus = Focus::Editor;
     }
 
     fn goto_location(&mut self, path: &Path, pos: Option<Pos>) {
@@ -1231,6 +1596,7 @@ impl App {
         match b.save() {
             Ok(()) => {
                 let name = b.name();
+                let saved = b.path.clone();
                 let lines = b.lines.len();
                 let uri = path_to_uri(b.path.as_ref().unwrap());
                 let cid = b.lsp_client;
@@ -1243,7 +1609,10 @@ impl App {
                     );
                 }
                 self.msg(format!("Saved {name} ({lines} lines)"));
-                self.reload_panels();
+                if saved.is_some() && saved == self.config.path {
+                    self.reload_config();
+                }
+                self.tree.refresh();
             }
             Err(e) => self.msg(format!("Save failed: {e}")),
         }
@@ -1251,6 +1620,9 @@ impl App {
 
     fn close_buffer_at(&mut self, i: usize) {
         let b = self.buffers.remove(i);
+        if let Some(p) = &b.path {
+            self.closed.push(p.clone());
+        }
         if let (Some(cid), Some(path)) = (b.lsp_client, &b.path)
             && let Some(c) = self.lsp.clients.get_mut(&cid)
         {
@@ -1263,7 +1635,6 @@ impl App {
         self.hover = None;
         if self.buffers.is_empty() {
             self.cur = 0;
-            self.view = View::Panels;
         } else if self.cur >= self.buffers.len() || self.cur > i {
             self.cur = self.cur.saturating_sub(1).min(self.buffers.len() - 1);
         }
@@ -1271,76 +1642,8 @@ impl App {
 
     // ===================================================================== editor
 
-    fn show_tree(&mut self) {
-        let root = self.file_root();
-        self.tree.set_root(root, self.show_hidden);
-        let cur = self.buf().and_then(|b| b.path.clone());
-        if let Some(p) = cur {
-            if self.tree_revealed.as_ref() != Some(&p) || !self.tree_visible {
-                self.tree.reveal(&p);
-                self.tree_revealed = Some(p);
-            }
-        }
-        self.tree_visible = true;
-        self.focus_tree = true;
-        self.view = View::Editor;
-        self.completion = None;
-        self.hover = None;
-    }
-
-    fn tree_key(&mut self, k: Key) {
-        let page = self.page.max(1) as isize;
-        match k.code {
-            KeyCode::Up => self.tree.move_sel(-1),
-            KeyCode::Down => self.tree.move_sel(1),
-            KeyCode::PageUp => self.tree.move_sel(-page),
-            KeyCode::PageDown => self.tree.move_sel(page),
-            KeyCode::Home => self.tree.sel = 0,
-            KeyCode::End => self.tree.sel = self.tree.nodes.len().saturating_sub(1),
-            KeyCode::Left => self.tree.collapse(),
-            KeyCode::Right => self.tree.expand(),
-            KeyCode::Enter | KeyCode::Char(' ') if !k.ctrl => {
-                let Some(n) = self.tree.selected() else {
-                    return;
-                };
-                if n.is_dir {
-                    self.tree.toggle();
-                } else {
-                    let path = n.path.clone();
-                    let keep_focus = k.code == KeyCode::Char(' ');
-                    if self.open_file(&path, true).is_some() {
-                        self.tree_revealed = Some(path);
-                        // Space previews the file and stays in the tree, Enter jumps to it.
-                        self.focus_tree = keep_focus;
-                    }
-                }
-            }
-            KeyCode::Esc | KeyCode::Tab => {
-                if self.buffers.is_empty() {
-                    self.view = View::Panels;
-                } else {
-                    self.focus_tree = false;
-                }
-            }
-            KeyCode::Char('h') if k.ctrl => self.run(Command::ToggleHidden),
-            _ => {
-                if let Some(cmd) = editor_binding(k) {
-                    self.run(cmd);
-                } else if let Some(c) = k.text_char() {
-                    self.tree.jump_char(c);
-                }
-            }
-        }
-    }
-
-    fn editor_key(&mut self, k: Key) {
-        if self.tree_visible && self.focus_tree {
-            return self.tree_key(k);
-        }
+    fn editor_key_inner(&mut self, k: Key) {
         if self.buffers.is_empty() {
-            if k.code == KeyCode::Esc {
-                self.view = View::Panels;
-            }
             return;
         }
         // Completion popup navigation.
@@ -1369,7 +1672,7 @@ impl App {
         let Some(b) = self.buf_mut() else { return };
         let sel = k.shift;
         let word = k.alt || (k.ctrl && !k.sup);
-        let mut typed: Option<char> = None;
+        let typed: Option<char> = None;
         match k.code {
             KeyCode::Left if k.sup => b.move_home(sel),
             KeyCode::Right if k.sup => b.move_end(sel),
@@ -1410,16 +1713,7 @@ impl App {
                 b.anchor = None;
                 self.completion = None;
             }
-            _ => {
-                if let Some(c) = k.text_char() {
-                    if b.read_only {
-                        self.msg("Read-only (F4 in panels to edit)");
-                        return;
-                    }
-                    b.insert_char(c);
-                    typed = Some(c);
-                }
-            }
+            _ => {}
         }
         self.after_editor_key(typed);
     }
@@ -1455,17 +1749,19 @@ impl App {
         }
     }
 
+    // ===================================================================== commands
+
     pub fn run(&mut self, cmd: Command) {
         use Command::*;
         let page = self.page;
         match cmd {
             GotoFile => self.open_palette(Mode::Files),
-            CommandPalette => self.open_palette(Mode::Commands),
+            ShowCommands => self.open_palette(Mode::Commands),
             GotoSymbol => {
                 if self.buffers.is_empty() {
                     return self.msg("No open file");
                 }
-                self.view = View::Editor;
+                self.focus = Focus::Editor;
                 self.open_palette(Mode::Symbols)
             }
             GotoWorkspaceSymbol => self.open_palette(Mode::WorkspaceSymbols),
@@ -1473,7 +1769,7 @@ impl App {
                 if self.buffers.is_empty() {
                     return;
                 }
-                self.view = View::Editor;
+                self.focus = Focus::Editor;
                 self.open_palette(Mode::Line)
             }
             SwitchBuffer => {
@@ -1485,19 +1781,45 @@ impl App {
                 self.modal = Some(Modal::Palette(p));
                 self.populate_palette();
             }
-            TogglePanels => {
-                self.view = match self.view {
-                    View::Panels if !self.buffers.is_empty() || self.tree_visible => View::Editor,
-                    View::Panels => {
-                        self.msg("No open files — Ctrl+P or F4 to open one");
-                        View::Panels
-                    }
-                    View::Editor => View::Panels,
-                };
-                self.completion = None;
-                self.hover = None;
+            SelectTheme => {
+                self.theme_before = Some(self.config.editor.theme.clone());
+                let mut p = Palette::new(Mode::Themes, "");
+                p.title = "arrows preview, Enter applies".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+                let cur = self.config.editor.theme.clone();
+                if let Some(Modal::Palette(p)) = &mut self.modal
+                    && let Some(i) = p.shown.iter().position(|(i, _)| p.items[*i].label == cur)
+                {
+                    p.sel = i;
+                }
             }
-            NewFile => self.prompt("New file (empty = untitled)", "", PromptKind::NewFile),
+            NewFile => {
+                let id = self.next_buf_id;
+                self.next_buf_id += 1;
+                let b = Buffer::from_text(id, None, "", HlCache::new("Plain Text".into()));
+                self.buffers.push(b);
+                self.cur = self.buffers.len() - 1;
+                self.focus = Focus::Editor;
+            }
+            OpenFolder => {
+                let def = format!("{}/", self.root.display());
+                self.prompt(
+                    "Open folder or file  (Tab completes)",
+                    &def,
+                    PromptKind::OpenPath,
+                );
+            }
+            OpenSettings => self.open_settings(),
+            ReopenClosed => {
+                while let Some(p) = self.closed.pop() {
+                    if p.is_file() {
+                        self.open_file(&p, true);
+                        return;
+                    }
+                }
+                self.msg("No recently closed files");
+            }
             Quit => {
                 let n = self.buffers.iter().filter(|b| b.modified).count();
                 if n > 0 {
@@ -1517,33 +1839,49 @@ impl App {
                     } else {
                         (self.cur + n - 1) % n
                     };
-                    self.view = View::Editor;
+                    self.focus = Focus::Editor;
                     self.completion = None;
+                    self.hover = None;
                 }
             }
             ToggleSidebar => {
-                if self.tree_visible && self.focus_tree && self.view == View::Editor {
-                    self.tree_visible = false;
-                    self.focus_tree = false;
-                } else {
-                    self.show_tree();
+                self.sidebar_visible = !self.sidebar_visible;
+                if !self.sidebar_visible {
+                    self.focus = Focus::Editor;
                 }
+            }
+            FocusSidebar => {
+                if self.focus == Focus::Sidebar && self.sidebar_visible {
+                    self.focus = Focus::Editor;
+                } else {
+                    self.focus_sidebar();
+                }
+            }
+            FocusEditor => self.focus = Focus::Editor,
+            RevealInSidebar => {
+                self.tree_revealed = None;
+                self.focus_sidebar();
             }
             ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
-                self.reload_panels();
-                let root = self.tree.root.clone();
-                if !root.as_os_str().is_empty() {
-                    self.tree.set_root(root, self.show_hidden);
-                }
+                self.tree.set_root(self.root.clone(), self.show_hidden);
                 let s = if self.show_hidden { "shown" } else { "hidden" };
                 self.msg(format!("Hidden files {s}"));
             }
-            RefreshPanels => {
-                self.reload_panels();
-                self.files.clear();
+            RefreshSidebar => {
+                self.refresh_tree();
+                self.msg("Sidebar refreshed");
             }
-            SwapPanels => self.panels.swap(0, 1),
+            SidebarNewFile | SidebarNewFolder | SidebarRename | SidebarDelete | SidebarCopy
+            | SidebarCut | SidebarPaste | SidebarDuplicate | SidebarCopyPath => {
+                if !self.sidebar_visible {
+                    self.focus_sidebar();
+                }
+                self.run_sidebar(cmd);
+            }
+            ZoomIn => self.font_size = (self.font_size + 1.0).min(40.0),
+            ZoomOut => self.font_size = (self.font_size - 1.0).max(8.0),
+            ZoomReset => self.font_size = self.config.editor.font_size,
             JumpBack => {
                 if let Some((path, pos)) = self.jumps.pop()
                     && let Some(i) = self.open_file(&path, true)
@@ -1554,12 +1892,7 @@ impl App {
                 }
             }
             RestartLsp => {
-                self.lsp.restart();
-                self.diagnostics.clear();
-                for i in 0..self.buffers.len() {
-                    self.buffers[i].lsp_client = None;
-                    self.lsp_open(i);
-                }
+                self.restart_lsp();
                 self.msg("Language servers restarted");
             }
             SaveAll => {
@@ -1576,9 +1909,84 @@ impl App {
         }
     }
 
+    fn apply_theme(&mut self, name: &str) {
+        self.syn.set_theme(name);
+        for b in &mut self.buffers {
+            b.hl.invalidate(0);
+        }
+    }
+
+    fn editor_text(&mut self, c: char) {
+        let Some(b) = self.buf_mut() else { return };
+        if b.read_only {
+            return;
+        }
+        b.insert_char(c);
+        self.hover = None;
+        self.after_editor_key(Some(c));
+    }
+
+    fn editor_key(&mut self, k: Key) -> bool {
+        if self.buffers.is_empty() {
+            return false;
+        }
+        if matches!(k.code, KeyCode::Char(_)) && !k.ctrl && editor_binding(k).is_none() {
+            return false;
+        }
+        self.editor_key_inner(k);
+        true
+    }
+
+    fn close_lsp_doc(&mut self, i: usize) {
+        let b = &mut self.buffers[i];
+        if let (Some(cid), Some(path)) = (b.lsp_client.take(), &b.path)
+            && let Some(c) = self.lsp.clients.get_mut(&cid)
+        {
+            c.notify(
+                "textDocument/didClose",
+                json!({"textDocument": {"uri": path_to_uri(path)}}),
+            );
+        }
+    }
+
+    /// Editor mouse click / drag: `clicks` 1 = place, 2 = word, 3 = line.
+    pub fn editor_click(&mut self, pos: Pos, clicks: u32, extend: bool) {
+        self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
+        let Some(b) = self.buf_mut() else { return };
+        let pos = b.clamp(pos);
+        match clicks {
+            2 => {
+                if let Some((s, e)) = b.word_bounds(pos) {
+                    b.anchor = Some(s);
+                    b.cursor = e;
+                } else {
+                    b.goto(pos);
+                }
+            }
+            3 => {
+                b.goto(Pos::new(pos.line, 0));
+                b.select_line();
+            }
+            _ => {
+                b.set_cursor(pos, extend);
+                b.want_col = b.cursor.col;
+            }
+        }
+    }
+
+    pub fn editor_drag(&mut self, pos: Pos) {
+        if let Some(b) = self.buf_mut() {
+            let pos = b.clamp(pos);
+            b.set_cursor(pos, true);
+            b.want_col = b.cursor.col;
+        }
+    }
+
     fn run_editor(&mut self, cmd: Command) {
         use Command::*;
-        if self.buffers.is_empty() || self.view != View::Editor {
+        if self.buffers.is_empty() {
             if self.buffers.is_empty() {
                 self.msg("No open file");
             }
@@ -1620,25 +2028,12 @@ impl App {
                         b.insert_text("");
                     }
                 }
-                clipboard::set(&text);
+                self.pending_copy = Some(text.clone());
                 self.clip = text;
                 self.clip_line = line;
                 return;
             }
-            Paste => {
-                let text = clipboard::get().unwrap_or_else(|| self.clip.clone());
-                let line_mode = self.clip_line && text == self.clip;
-                let b = &mut self.buffers[self.cur];
-                if line_mode && b.selection().is_none() {
-                    let c = b.cursor;
-                    b.goto(Pos::new(c.line, 0));
-                    b.insert_text(&text);
-                    b.goto(Pos::new(c.line + 1, c.col));
-                } else {
-                    b.insert_text(&text);
-                }
-                return;
-            }
+            Paste => return self.paste_text(self.clip.clone()),
             Find => {
                 let b = &self.buffers[self.cur];
                 let def = b
@@ -1655,7 +2050,7 @@ impl App {
                     .filter(|t| !t.contains('\n'))
                     .or_else(|| self.search.clone())
                     .unwrap_or_default();
-                return self.prompt("Replace all: find", &def, PromptKind::ReplaceFind);
+                return self.prompt("Replace all — find", &def, PromptKind::ReplaceFind);
             }
             FindNext => return self.find_next(true),
             FindPrev => return self.find_next(false),
@@ -1695,7 +2090,7 @@ impl App {
                     .word_bounds(b.cursor)
                     .map(|(a, e)| b.text_range(a, e))
                     .unwrap_or_default();
-                return self.prompt("Rename symbol to", &w, PromptKind::Rename);
+                return self.prompt("Rename symbol to", &w, PromptKind::RenameSymbol);
             }
             Format => {
                 self.sync_lsp();
@@ -1901,12 +2296,19 @@ impl App {
     // ===================================================================== LSP plumbing
 
     fn lsp_open(&mut self, i: usize) {
-        let b = &mut self.buffers[i];
-        let (Some(path), Some(lang)) = (b.path.clone(), b.lang) else {
+        let b = &self.buffers[i];
+        let (Some(path), Some(lang)) = (b.path.clone(), b.lang.clone()) else {
             return;
         };
-        match self.lsp.client_for(lang, &path) {
+        let Some(cfg) = self.config.language(&lang).cloned() else {
+            return;
+        };
+        if cfg.server.is_none() {
+            return;
+        }
+        match self.lsp.client_for(&cfg, &path) {
             Ok(cid) => {
+                let b = &mut self.buffers[i];
                 b.lsp_client = Some(cid);
                 b.lsp_dirty = false;
                 b.lsp_changes.clear();
@@ -1916,12 +2318,16 @@ impl App {
                 if let Some(c) = self.lsp.clients.get_mut(&cid) {
                     c.notify(
                         "textDocument/didOpen",
-                        json!({"textDocument": {"uri": path_to_uri(&path), "languageId": lang,
+                        json!({"textDocument": {"uri": path_to_uri(&path), "languageId": cfg.language_id(),
                                "version": version, "text": text}}),
                     );
                 }
             }
-            Err(e) => self.msg(format!("LSP: {e}")),
+            Err(e) => {
+                if self.lsp_warned.insert(lang) {
+                    self.msg(format!("LSP: {e}"));
+                }
+            }
         }
     }
 
@@ -2088,12 +2494,21 @@ impl App {
     fn on_server_request(&mut self, cid: usize, id: Value, method: &str, params: Value) {
         let result = match method {
             "workspace/configuration" => {
-                let n = params
+                let items = params
                     .get("items")
                     .and_then(|i| i.as_array())
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                Value::Array(vec![Value::Null; n])
+                    .cloned()
+                    .unwrap_or_default();
+                let c = self.lsp.clients.get(&cid);
+                Value::Array(
+                    items
+                        .iter()
+                        .map(|it| {
+                            let section = it.get("section").and_then(|s| s.as_str());
+                            c.map(|c| c.setting(section)).unwrap_or(Value::Null)
+                        })
+                        .collect(),
+                )
             }
             "workspace/applyEdit" => {
                 if let Some(edit) = params.get("edit").cloned()
@@ -2190,7 +2605,7 @@ impl App {
                 let Some(bi) = self.buf_index(buf) else {
                     return;
                 };
-                if bi != self.cur || self.view != View::Editor || self.modal.is_some() {
+                if bi != self.cur || self.focus != Focus::Editor || self.modal.is_some() {
                     return;
                 }
                 let b = &self.buffers[bi];
@@ -2581,7 +2996,7 @@ impl App {
             None => {}
         }
         let (mut n, files) = (0, per_file.len());
-        let (cur, view) = (self.cur, self.view);
+        let (cur, focus) = (self.cur, self.focus);
         for (path, edits) in per_file {
             let Some(i) = self.open_file(&path, false) else {
                 continue;
@@ -2601,7 +3016,7 @@ impl App {
             b.apply_edits(es);
         }
         self.cur = cur.min(self.buffers.len().saturating_sub(1));
-        self.view = view;
+        self.focus = focus;
         (n, files)
     }
 
@@ -2645,48 +3060,6 @@ fn parse_locations(v: Value) -> Vec<(PathBuf, u32, u32)> {
 
 pub fn center(b: &mut Buffer, page: usize) {
     b.scroll_y = b.cursor.line.saturating_sub(page / 3);
-}
-
-fn editor_binding(k: Key) -> Option<Command> {
-    use Command::*;
-    use KeyCode::*;
-    Some(match (k.code, k.ctrl, k.shift, k.alt) {
-        (Char('s'), true, false, _) => Save,
-        (Char('s'), true, true, _) => SaveAs,
-        (Char('z'), true, false, _) => Undo,
-        (Char('z'), true, true, _) | (Char('y'), true, _, _) => Redo,
-        (Char('c'), true, false, _) => Copy,
-        (Char('x'), true, false, _) => Cut,
-        (Char('v'), true, false, _) => Paste,
-        (Char('a'), true, false, _) => SelectAll,
-        (Char('l'), true, false, _) => SelectLine,
-        (Char('d'), true, false, _) => SelectWord,
-        (Char('d'), true, true, _) => DuplicateLine,
-        (Char('k'), true, true, _) => DeleteLine,
-        (Char('k'), true, false, _) => Hover,
-        (Char('/'), true, _, _) => ToggleComment,
-        (Char(']'), true, _, _) => Indent,
-        (Char('j'), true, false, _) => JoinLines,
-        (Char('f'), true, false, false) => Find,
-        (Char('f'), _, true, true) => Format,
-        (Char('h'), true, _, _) => Replace,
-        (Char(' '), true, _, _) => Completion,
-        (Char('w'), true, false, _) => CloseBuffer,
-        (Up, false, false, true) | (Up, true, true, false) => MoveLineUp,
-        (Down, false, false, true) | (Down, true, true, false) => MoveLineDown,
-        (Enter, true, false, _) => InsertLineAfter,
-        (Enter, true, true, _) => InsertLineBefore,
-        (F(2), _, _, _) => Rename,
-        (F(3), _, false, _) => FindNext,
-        (F(3), _, true, _) => FindPrev,
-        (F(8), _, false, _) => NextDiagnostic,
-        (F(8), _, true, _) => PrevDiagnostic,
-        (F(9), _, _, _) => SortLines,
-        (F(10), _, _, _) => CloseBuffer,
-        (F(12), _, false, _) => GotoDefinition,
-        (F(12), _, true, _) => FindReferences,
-        _ => return None,
-    })
 }
 
 /// Fallback "Goto Symbol" when no language server is available: keyword-based scan.
@@ -2767,4 +3140,128 @@ fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
         }
     }
     out
+}
+
+/// Shortcuts that work no matter which pane has focus.
+fn global_binding(k: Key) -> Option<Command> {
+    use Command::*;
+    use KeyCode::*;
+    Some(match (k.code, k.ctrl, k.shift, k.alt) {
+        (Char('p'), true, false, false) => GotoFile,
+        (Char('p'), true, true, false) | (F(1), _, _, _) => ShowCommands,
+        (Char('r'), true, false, false) => GotoSymbol,
+        (Char('r'), true, true, false) => GotoWorkspaceSymbol,
+        (Char('g'), true, false, false) => GotoLine,
+        (Char('e'), true, false, false) => SwitchBuffer,
+        (Char('e'), true, true, false) => RevealInSidebar,
+        (Char('o'), true, false, false) => OpenFolder,
+        (Char(','), true, false, false) => OpenSettings,
+        (Char('t'), true, true, false) => ReopenClosed,
+        (Char('w'), true, false, false) => CloseBuffer,
+        (Char('s'), true, false, false) => Save,
+        (Char('s'), true, true, false) => SaveAs,
+        (Char('s'), true, false, true) => SaveAll,
+        (Char('b'), true, false, false) => ToggleSidebar,
+        (Char('0'), true, false, false) => FocusSidebar,
+        (Tab, true, false, _) | (PageDown, true, _, _) | (Right, true, false, true) => NextBuffer,
+        (Tab, true, true, _) | (PageUp, true, _, _) | (Left, true, false, true) => PrevBuffer,
+        (Char('='), true, _, false) => ZoomIn,
+        (Char('-'), true, false, false) => ZoomOut,
+        (Char('-'), false, false, true) => JumpBack,
+        (Char('q'), true, false, false) => Quit,
+        _ => return None,
+    })
+}
+
+/// Editor shortcuts (Sublime Text defaults, Cmd or Ctrl).
+fn editor_binding(k: Key) -> Option<Command> {
+    use Command::*;
+    use KeyCode::*;
+    Some(match (k.code, k.ctrl, k.shift, k.alt) {
+        (Char('n'), true, false, false) => NewFile,
+        (Char('z'), true, false, _) => Undo,
+        (Char('z'), true, true, _) | (Char('y'), true, _, _) => Redo,
+        (Char('c'), true, false, false) => Copy,
+        (Char('x'), true, false, false) => Cut,
+        (Char('v'), true, false, false) => Paste,
+        (Char('a'), true, false, false) => SelectAll,
+        (Char('l'), true, false, false) => SelectLine,
+        (Char('d'), true, false, false) => SelectWord,
+        (Char('d'), true, true, false) => DuplicateLine,
+        (Char('k'), true, true, false) => DeleteLine,
+        (Char('i'), true, false, false) => Hover,
+        (Char('/'), true, _, _) => ToggleComment,
+        (Char(']'), true, false, false) => Indent,
+        (Char('['), true, false, false) => Outdent,
+        (Char('j'), true, false, false) => JoinLines,
+        (Char('f'), true, false, false) => Find,
+        (Char('f'), true, false, true) => Replace,
+        (Char('h'), true, false, false) => Replace,
+        (Char('f'), false, true, true) => Format,
+        (Char(' '), true, _, _) => Completion,
+        (Up, false, false, true) | (Up, true, true, false) => MoveLineUp,
+        (Down, false, false, true) | (Down, true, true, false) => MoveLineDown,
+        (Enter, true, false, _) => InsertLineAfter,
+        (Enter, true, true, _) => InsertLineBefore,
+        (F(2), _, _, _) => Rename,
+        (F(3), _, false, _) => FindNext,
+        (F(3), _, true, _) => FindPrev,
+        (F(8), _, false, _) => NextDiagnostic,
+        (F(8), _, true, _) => PrevDiagnostic,
+        (F(9), _, _, _) => SortLines,
+        (F(12), _, false, _) => GotoDefinition,
+        (F(12), _, true, _) => FindReferences,
+        _ => return None,
+    })
+}
+
+/// Shell-style Tab completion for path prompts.
+fn complete_path(base: &Path, input: &str) -> String {
+    let (dir_part, prefix) = match input.rfind('/') {
+        Some(i) => (&input[..=i], &input[i + 1..]),
+        None => ("", input),
+    };
+    let dir = if dir_part.starts_with('/') {
+        PathBuf::from(dir_part)
+    } else if let Some(rest) = dir_part.strip_prefix("~/") {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+            .join(rest)
+    } else {
+        base.join(dir_part)
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return input.to_string();
+    };
+    let mut names: Vec<(String, bool)> = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            (n.starts_with(prefix) && (prefix.starts_with('.') || !n.starts_with('.')))
+                .then(|| (n, e.path().is_dir()))
+        })
+        .collect();
+    names.sort();
+    match names.as_slice() {
+        [] => input.to_string(),
+        [(n, d)] => format!("{dir_part}{n}{}", if *d { "/" } else { "" }),
+        many => {
+            let first = &many[0].0;
+            let mut common = first.len();
+            for (n, _) in &many[1..] {
+                common = common.min(
+                    first
+                        .bytes()
+                        .zip(n.bytes())
+                        .take_while(|(a, b)| a == b)
+                        .count(),
+                );
+            }
+            while !first.is_char_boundary(common) {
+                common -= 1;
+            }
+            format!("{dir_part}{}", &first[..common])
+        }
+    }
 }

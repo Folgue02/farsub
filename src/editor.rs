@@ -101,10 +101,13 @@ pub struct Buffer {
     /// Too many edits were queued; send the full text instead.
     pub lsp_full: bool,
     pub lsp_client: Option<usize>,
-    pub lang: Option<&'static str>,
+    /// Name of the configured language (see config.rs), if any.
+    pub lang: Option<String>,
     pub hl: HlCache,
     pub indent_unit: String,
-    pub comment: Option<&'static str>,
+    pub comment: Option<String>,
+    /// The file's own indentation was detected (otherwise config defaults apply).
+    pub indent_detected: bool,
     undo: Vec<Group>,
     redo: Vec<Group>,
     pending: Vec<Edit>,
@@ -126,6 +129,7 @@ impl Buffer {
             .iter()
             .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
             .count();
+        let indent_detected = tabs + spaces > 0;
         let indent_unit = if tabs > spaces {
             "\t".to_string()
         } else if spaces > 0 && two * 2 > spaces {
@@ -133,8 +137,8 @@ impl Buffer {
         } else {
             "    ".to_string()
         };
-        let comment = comment_token(path.as_deref());
-        let lang = path.as_deref().and_then(crate::lsp::lang_for_path);
+        let comment = comment_token(path.as_deref()).map(String::from);
+        let lang = None;
         Buffer {
             id,
             path,
@@ -156,6 +160,7 @@ impl Buffer {
             hl,
             indent_unit,
             comment,
+            indent_detected,
             undo: vec![],
             redo: vec![],
             pending: vec![],
@@ -191,9 +196,30 @@ impl Buffer {
     }
 
     pub fn set_path(&mut self, path: PathBuf) {
-        self.comment = comment_token(Some(&path));
-        self.lang = crate::lsp::lang_for_path(&path);
+        self.comment = comment_token(Some(&path)).map(String::from);
+        self.lang = None;
         self.path = Some(path);
+    }
+
+    /// Apply a language's settings: name, comment token and (if the file itself gives no
+    /// hint) indentation.
+    pub fn apply_language(
+        &mut self,
+        lang: Option<&crate::config::LanguageConfig>,
+        editor: &crate::config::EditorConfig,
+    ) {
+        self.lang = lang.map(|l| l.name.clone());
+        if let Some(c) = lang.and_then(|l| l.comment.clone()) {
+            self.comment = Some(c);
+        }
+        if !self.indent_detected {
+            let tabs = lang.and_then(|l| l.use_tabs).unwrap_or(editor.use_tabs);
+            let size = lang
+                .and_then(|l| l.tab_size)
+                .unwrap_or(editor.tab_size)
+                .max(1);
+            self.indent_unit = if tabs { "\t".into() } else { " ".repeat(size) };
+        }
     }
 
     // ---------- geometry ----------
@@ -601,7 +627,7 @@ impl Buffer {
         let prev = left.trim_end().chars().last();
         let next = self.char_at(self.cursor);
         let opener = matches!(prev, Some('{' | '(' | '['))
-            || (prev == Some(':') && self.lang == Some("python"));
+            || (prev == Some(':') && self.lang.as_deref() == Some("python"));
         let unit = self.indent_unit.clone();
         let c = self.cursor;
         if opener && matches!(next, Some('}' | ')' | ']')) {
@@ -1029,7 +1055,7 @@ impl Buffer {
         if self.read_only {
             return false;
         }
-        let Some(tok) = self.comment else {
+        let Some(tok) = self.comment.clone() else {
             return false;
         };
         let before = self.begin();
@@ -1042,12 +1068,12 @@ impl Buffer {
         }
         let all = nonempty
             .iter()
-            .all(|&l| self.lines[l].trim_start().starts_with(tok));
+            .all(|&l| self.lines[l].trim_start().starts_with(tok.as_str()));
         if all {
             for &l in &nonempty {
                 let line = &self.lines[l];
                 let ws = line.chars().take_while(|c| c.is_whitespace()).count();
-                let mut n = char_len(tok);
+                let mut n = char_len(&tok);
                 if line.chars().nth(ws + n) == Some(' ') {
                     n += 1;
                 }

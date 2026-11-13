@@ -3,27 +3,72 @@
 
 use std::path::Path;
 
-use ratatui::style::{Color, Modifier, Style};
+use eframe::egui::Color32;
 use syntect::highlighting::{FontStyle, HighlightIterator, HighlightState, Highlighter, Theme};
 use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
 
 pub struct Syntax {
     pub ss: SyntaxSet,
     pub theme: Theme,
+    pub themes: two_face::theme::LazyThemeSet,
 }
 
-pub fn rgb(c: syntect::highlighting::Color) -> Color {
-    Color::Rgb(c.r, c.g, c.b)
+/// Color + font flags for a highlighted span.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Style {
+    pub fg: Color32,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+}
+
+pub fn rgb(c: syntect::highlighting::Color) -> Color32 {
+    Color32::from_rgb(c.r, c.g, c.b)
 }
 
 impl Syntax {
-    pub fn load() -> Self {
+    pub fn load(theme: &str) -> Self {
         let ss = two_face::syntax::extra_newlines();
-        let themes = two_face::theme::extra();
-        let theme = themes
-            .get(two_face::theme::EmbeddedThemeName::MonokaiExtended)
-            .clone();
-        Syntax { ss, theme }
+        let themes = two_face::theme::LazyThemeSet::from(two_face::theme::extra());
+        let mut s = Syntax {
+            ss,
+            theme: Theme::default(),
+            themes,
+        };
+        s.set_theme(theme);
+        s
+    }
+
+    /// Switch theme by name; falls back to Monokai Extended. Returns false if unknown.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        match self.themes.get(name) {
+            Some(t) => {
+                self.theme = t.clone();
+                true
+            }
+            None => {
+                self.theme = self
+                    .themes
+                    .get("Monokai Extended")
+                    .cloned()
+                    .unwrap_or_default();
+                false
+            }
+        }
+    }
+
+    pub fn theme_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.themes.theme_names().map(String::from).collect();
+        v.sort();
+        v
+    }
+
+    pub fn find_by_name(&self, name: &str) -> Option<String> {
+        self.ss
+            .syntaxes()
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(name))
+            .map(|s| s.name.clone())
     }
 
     pub fn detect(&self, path: Option<&Path>, first_line: &str) -> String {
@@ -40,40 +85,40 @@ impl Syntax {
             .clone()
     }
 
-    pub fn bg(&self) -> Color {
+    pub fn bg(&self) -> Color32 {
         self.theme
             .settings
             .background
             .map(rgb)
-            .unwrap_or(Color::Rgb(39, 40, 34))
+            .unwrap_or(Color32::from_rgb(39, 40, 34))
     }
-    pub fn fg(&self) -> Color {
+    pub fn fg(&self) -> Color32 {
         self.theme
             .settings
             .foreground
             .map(rgb)
-            .unwrap_or(Color::Rgb(248, 248, 242))
+            .unwrap_or(Color32::from_rgb(248, 248, 242))
     }
-    pub fn selection(&self) -> Color {
+    pub fn selection(&self) -> Color32 {
         self.theme
             .settings
             .selection
             .map(rgb)
-            .unwrap_or(Color::Rgb(73, 72, 62))
+            .unwrap_or(Color32::from_rgb(73, 72, 62))
     }
-    pub fn line_highlight(&self) -> Color {
+    pub fn line_highlight(&self) -> Color32 {
         self.theme
             .settings
             .line_highlight
             .map(rgb)
-            .unwrap_or(Color::Rgb(50, 51, 44))
+            .unwrap_or(Color32::from_rgb(50, 51, 44))
     }
-    pub fn gutter(&self) -> Color {
+    pub fn gutter(&self) -> Color32 {
         self.theme
             .settings
             .gutter_foreground
             .map(rgb)
-            .unwrap_or(Color::Rgb(117, 113, 94))
+            .unwrap_or(Color32::from_rgb(117, 113, 94))
     }
 }
 
@@ -182,15 +227,10 @@ impl HlCache {
 }
 
 fn to_style(s: syntect::highlighting::Style) -> Style {
-    let mut st = Style::default().fg(rgb(s.foreground));
-    if s.font_style.contains(FontStyle::BOLD) {
-        st = st.add_modifier(Modifier::BOLD);
+    Style {
+        fg: rgb(s.foreground),
+        bold: s.font_style.contains(FontStyle::BOLD),
+        italic: s.font_style.contains(FontStyle::ITALIC),
+        underline: s.font_style.contains(FontStyle::UNDERLINE),
     }
-    if s.font_style.contains(FontStyle::ITALIC) {
-        st = st.add_modifier(Modifier::ITALIC);
-    }
-    if s.font_style.contains(FontStyle::UNDERLINE) {
-        st = st.add_modifier(Modifier::UNDERLINED);
-    }
-    st
 }

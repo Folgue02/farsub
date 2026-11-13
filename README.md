@@ -1,91 +1,112 @@
 # farsub
 
-A terminal file manager + editor: Far Manager's twin blue panels, Sublime Text's editing
-keys and Goto Anything palette, syntect syntax highlighting, and LSP support.
+A Sublime Text-style code editor in Rust (egui/eframe): Goto Anything, command palette,
+symbol search, syntax highlighting, LSP, and a sidebar you can drive entirely from the
+keyboard, including file operations. The mouse works too.
 
 ```bash
-cargo run --release -- [dir-or-file]
+cargo run --release -- [folder-or-file]
 ```
 
-`Ctrl` and `Cmd` are interchangeable. Cmd only reaches the app in terminals that speak the
-kitty keyboard protocol (kitty, WezTerm, Ghostty, recent iTerm2 with "Report keys using CSI u"),
-and only if the terminal doesn't bind that Cmd shortcut itself. Without that protocol,
-`Ctrl+Shift+<letter>` can't be told apart from `Ctrl+<letter>`, so use `F1` for the command palette.
+"Cmd" below means Cmd on macOS and Ctrl elsewhere; both always work.
 
-## Panels (Far)
-
-| Key | Action |
-| --- | --- |
-| Tab | switch panel |
-| Enter | open dir / file, or run the typed command line in the panel's dir |
-| Backspace | parent dir (when command line is empty) |
-| Insert, Shift+↑/↓, Ctrl+Space | mark files |
-| F3 / F4 / Shift+F4 | view / edit / new file |
-| F5 / F6 / F7 / F8 | copy / rename-move / mkdir / delete (to the other panel's dir by default) |
-| Ctrl+H / Ctrl+R / Ctrl+U | toggle hidden / refresh / swap panels |
-| Ctrl+O | toggle panels ↔ editor |
-| F10, Ctrl+Q | quit |
-
-Anything you type goes to the command line (`cd` is handled internally; other commands run in `$SHELL`).
-
-## Palettes (Sublime Goto Anything)
+## Palettes
 
 | Key | Palette | Prefix |
 | --- | --- | --- |
-| Ctrl/Cmd+P | fuzzy file finder (respects .gitignore); `file.rs:42` jumps to a line | – |
-| Ctrl/Cmd+Shift+P, F1 | command palette (every action and its key) | `>` |
-| Ctrl/Cmd+R | symbols in file (LSP, keyword-scan fallback), live preview | `@` |
-| Ctrl/Cmd+Shift+R | symbols in project (LSP `workspace/symbol`) | `#` |
-| Ctrl+G | goto line | `:` |
-| Ctrl/Cmd+E | switch open file | |
+| Cmd+P | Goto Anything: fuzzy file finder (respects .gitignore); `main.rs:42` opens at a line | – |
+| Cmd+Shift+P, F1 | Command palette (every action and its shortcut) | `>` |
+| Cmd+R | Symbols in the file (LSP, keyword fallback), with live preview | `@` |
+| Cmd+Shift+R | Symbols in the project (LSP) | `#` |
+| Ctrl+G | Goto line | `:` |
+| Cmd+E | Switch open file | |
 
-You can type a prefix in any palette to switch modes, as in Sublime.
+Type a prefix in any palette to switch modes, as in Sublime.
 
-The bottom bar always shows the keys for whatever has focus (panels, editor, sidebar,
-palette, prompt, completion list). The editor's tab bar shows a clock on the right.
+## Sidebar (keyboard)
 
-## Sidebar
+Cmd+0 focuses the sidebar (Cmd+0 again or Esc returns to the editor), Cmd+B shows or hides
+it, and Cmd+Shift+E reveals the current file.
 
-Ctrl/Cmd+B shows the project's file tree and focuses it, revealing the current file.
-Press it again while the tree has focus to hide it; Esc or Tab returns to the editor.
-In the tree: ↑/↓ move, → expand, ← collapse or jump to parent, Enter open, Space preview
-(open but stay in the tree), letters jump to the next matching name, Ctrl+H hidden files.
+| Key | Action |
+| --- | --- |
+| ↑ ↓ / j k, PgUp/PgDn, Home/End, g / G | move |
+| → / l, ← / h | expand, collapse / go to parent |
+| Enter / o | open file (Alt+Enter keeps focus in the sidebar) or toggle folder |
+| Space, Shift+↑↓ | mark items for multi-item operations |
+| a | new file in the selected folder (`sub/dir/file.rs` creates folders) |
+| Shift+A | new folder |
+| r, F2 | rename / move (edit the full path relative to the project) |
+| c / Cmd+C, x / Cmd+X | copy, cut |
+| p / Cmd+V | paste into the selected folder (name clashes become `name copy.ext`) |
+| Shift+D | duplicate |
+| d, Delete | move to the Trash (asks first; recoverable) |
+| y | copy the absolute path |
+| . | toggle hidden files |
+| F5 / R | refresh |
+| Esc | clear marks, then clear cut/copy, then back to the editor |
+
+Path prompts support Tab completion. Renaming or moving files that are open updates their
+tabs and language-server state.
 
 ## Editor
 
-Ctrl+S save · Ctrl+Shift+S save as · Ctrl+W/F10 close · Ctrl+Z / Ctrl+Shift+Z undo/redo ·
-Ctrl+C/X/V copy/cut/paste (whole line when nothing is selected; system clipboard) ·
-Ctrl+D select word / next occurrence · Ctrl+L expand to line · Ctrl+A select all ·
-Ctrl+Shift+K delete line · Ctrl+Shift+D duplicate · Alt+↑/↓ move line · Ctrl+/ toggle comment ·
-Tab/Shift+Tab indent/outdent · Ctrl+Enter / Ctrl+Shift+Enter insert line after/before ·
-Ctrl+J join lines · F9 sort lines · Ctrl+F incremental find, F3 / Shift+F3 next/prev ·
-Ctrl+H replace all · Alt/Ctrl+←/→ word motion · Cmd+←/→ line start/end ·
-Ctrl+PgUp/PgDn switch file. Brackets and quotes auto-close, Enter auto-indents.
+Sublime defaults: Cmd+D (select word, then next occurrence), Cmd+L, Cmd+Shift+K,
+Cmd+Shift+D, Alt+↑/↓ (move line), Cmd+/ (comment), Cmd+] / Cmd+[, Cmd+Enter,
+Cmd+Shift+Enter, Cmd+J, F9 (sort lines). Also Cmd+F (find panel: Enter next,
+Shift+Enter previous), Cmd+Alt+F (replace all), Cmd+Z / Cmd+Shift+Z, Cmd+S,
+Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab and Cmd+1…9
+(switch tabs), Cmd+= / Cmd+- (zoom), Alt+- (jump back). Copying with nothing selected
+takes the whole line. Brackets and quotes auto-close, and Enter auto-indents.
 
 ## LSP
 
-Servers start on demand per (language, project root) when you open a file:
-rust-analyzer, pyright/pylsp, typescript-language-server, gopls, clangd, lua-language-server,
-zls, sourcekit-lsp, ruby-lsp, jdtls, taplo, bash-language-server, nil, and others (see `src/lsp.rs`).
+Built-in language configs: **Rust** (rust-analyzer), **Python** (pyright), **TypeScript /
+JavaScript** incl. TSX/JSX (typescript-language-server), **Go** (gopls), **C / C++**
+(clangd). Servers start on demand per project root.
 
-Ctrl+Space completion (also triggers automatically) · Ctrl+K hover · F12 goto definition ·
-Shift+F12 references · F2 rename · Alt+Shift+F format · F8 / Shift+F8 next/prev diagnostic ·
-Ctrl+- jump back. Diagnostics show as gutter dots, colored underlines, and counts in the status bar.
+Ctrl+Space completion (also automatic), Cmd+I hover, F12 definition, Shift+F12 references,
+F2 rename, Alt+Shift+F format, F8 / Shift+F8 next/previous diagnostic. Diagnostics show as
+gutter dots, squiggles and status-bar counts. Edits are synced incrementally when the
+server supports it. Set `FARSUB_LSP_LOG=/tmp/lsp.log` to trace all traffic.
 
-Set `FARSUB_LSP_LOG=/tmp/lsp.log` to trace all LSP traffic.
+## Settings and adding languages
 
-Edits are sent to the server incrementally (only the changed ranges) when it supports that.
+Cmd+, opens `~/.config/farsub/config.toml` (created from a commented template). Saving it
+applies the changes immediately. `$FARSUB_CONFIG` overrides the location.
 
-## Performance notes
+```toml
+[editor]
+font_size = 14.0
+tab_size = 4
+theme = "Monokai Extended"   # or pick one live: "Preferences: Select Color Theme"
 
-- File-finder filtering narrows the previous match set as you type and scores large lists
-  on all cores (about 11 ms per keystroke over 200k paths, down from about 46 ms).
-- Highlighting works in 12 ms slices per frame, so jumping deep into a huge file never
-  freezes input; the rest fills in over the next few frames.
-- Dependencies are optimized even in debug builds (`[profile.dev.package."*"]`).
-- `cargo test --release bench_ -- --ignored --nocapture` prints the timings.
+# A new language
+[[languages]]
+name = "lua"
+extensions = ["lua"]
+comment = "--"
+tab_size = 2
+roots = [".luarc.json"]
+[languages.server]
+command = "lua-language-server"
+[languages.server.settings.Lua]          # answers workspace/configuration
+diagnostics = { globals = ["vim"] }
+
+# Replacing a built-in one (same name)
+[[languages]]
+name = "python"
+extensions = ["py", "pyi"]
+comment = "#"
+server = { command = "pylsp" }
+```
+
+Per-language keys: `language_id`, `extensions`, `filenames`, `comment`, `tab_size`,
+`use_tabs`, `roots`, `syntax` (highlighting override), and `server` (`command`, `args`,
+`env`, `initialization_options`, `settings`).
 
 ## Tests
 
-`cargo test` runs the buffer unit tests and end-to-end tests that drive the app with key events
-and render into a headless terminal. The LSP test uses clangd if it's installed.
+`cargo test` runs buffer, config, tree and file-op unit tests, plus GUI end-to-end tests
+that drive the real interface headlessly with egui_kittest. The LSP test uses clangd if
+it's installed. Set `FARSUB_SHOTS=dir` to save rendered screenshots.

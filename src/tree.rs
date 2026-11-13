@@ -17,6 +17,8 @@ pub struct Tree {
     pub sel: usize,
     pub scroll: usize,
     pub expanded: HashSet<PathBuf>,
+    /// Multi-selection for file operations.
+    pub marked: HashSet<PathBuf>,
     cache: HashMap<PathBuf, Vec<(String, bool)>>,
     show_hidden: bool,
 }
@@ -31,6 +33,7 @@ impl Tree {
             sel: 0,
             scroll: 0,
             expanded: HashSet::new(),
+            marked: HashSet::new(),
             cache: HashMap::new(),
             show_hidden: false,
         }
@@ -114,6 +117,7 @@ impl Tree {
     pub fn refresh(&mut self) {
         self.cache.clear();
         self.expanded.retain(|p| p.is_dir());
+        self.marked.retain(|p| p.exists());
         self.rebuild();
     }
 
@@ -123,6 +127,40 @@ impl Tree {
 
     pub fn selected_path(&self) -> Option<&Path> {
         self.selected().map(|n| n.path.as_path())
+    }
+
+    /// Marked entries, or the selected one.
+    pub fn targets(&self) -> Vec<PathBuf> {
+        if !self.marked.is_empty() {
+            let mut v: Vec<PathBuf> = self.marked.iter().cloned().collect();
+            v.sort();
+            return v;
+        }
+        self.selected_path()
+            .map(|p| vec![p.to_path_buf()])
+            .unwrap_or_default()
+    }
+
+    /// Folder that new files / pasted files go into: the selected folder, or the selected
+    /// file's folder, or the root.
+    pub fn target_dir(&self) -> PathBuf {
+        match self.selected() {
+            Some(n) if n.is_dir => n.path.clone(),
+            Some(n) => n
+                .path
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| self.root.clone()),
+            None => self.root.clone(),
+        }
+    }
+
+    pub fn toggle_mark(&mut self) {
+        if let Some(p) = self.selected_path().map(Path::to_path_buf) {
+            if !self.marked.remove(&p) {
+                self.marked.insert(p);
+            }
+        }
     }
 
     pub fn move_sel(&mut self, d: isize) {
@@ -181,6 +219,16 @@ impl Tree {
         }
     }
 
+    /// Expand a folder (and its ancestors) without moving the selection.
+    pub fn expand_path(&mut self, dir: &Path) {
+        for a in dir.ancestors() {
+            if !a.starts_with(&self.root) || a == self.root {
+                break;
+            }
+            self.expanded.insert(a.to_path_buf());
+        }
+    }
+
     /// Expand every folder between the root and `path`, then select it.
     pub fn reveal(&mut self, path: &Path) {
         let Ok(rel) = path.strip_prefix(&self.root) else {
@@ -199,6 +247,7 @@ impl Tree {
     }
 
     /// Type-to-jump: next visible entry whose name starts with `c`.
+    #[allow(dead_code)]
     pub fn jump_char(&mut self, c: char) {
         let n = self.nodes.len();
         let c = c.to_lowercase().next().unwrap_or(c);

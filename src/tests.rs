@@ -1,121 +1,237 @@
-//! End-to-end tests: drive the App with key events, render to a TestBackend, talk to clangd.
+//! End-to-end tests: drive the real GUI headlessly with egui_kittest (keys, text, clicks),
+//! check app state and the filesystem, and render screenshots.
 
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use ratatui::Terminal;
-use ratatui::backend::TestBackend;
+use eframe::egui::{self, Event, Key, Modifiers};
+use egui_kittest::Harness;
 
-use crate::app::{App, AppEvent, Modal, View};
-use crate::commands::Command;
+use crate::app::{Focus, Modal};
+use crate::config::{Config, EditorConfig, default_languages};
+use crate::gui::Gui;
 
 fn tmpdir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("farsub-test-{name}-{}", std::process::id()));
+    let d = std::env::temp_dir().join(format!("farsub-gui-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.canonicalize().unwrap()
 }
 
-fn key(app: &mut App, code: KeyCode, m: KeyModifiers) {
-    app.on_event(Event::Key(KeyEvent::new(code, m)));
-}
-
-fn typ(app: &mut App, s: &str) {
-    for c in s.chars() {
-        key(app, KeyCode::Char(c), KeyModifiers::NONE);
-    }
-}
-
-fn screen(app: &mut App) -> String {
-    let mut t = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    t.draw(|f| crate::ui::draw(f, app)).unwrap();
-    let buf = t.backend().buffer().clone();
-    let mut s = String::new();
-    for y in 0..buf.area.height {
-        for x in 0..buf.area.width {
-            s.push_str(buf[(x, y)].symbol());
-        }
-        s.push('\n');
-    }
-    s
-}
-
-fn pump(
-    app: &mut App,
-    rx: &mpsc::Receiver<AppEvent>,
-    secs: u64,
-    done: impl Fn(&App) -> bool,
-) -> bool {
-    let end = Instant::now() + Duration::from_secs(secs);
-    while Instant::now() < end {
-        if done(app) {
-            return true;
-        }
-        if let Ok(ev) = rx.recv_timeout(Duration::from_millis(50)) {
-            app.on_app_event(ev);
-        }
-        app.sync_lsp();
-    }
-    done(app)
-}
-
-fn setup(name: &str, files: &[(&str, &str)]) -> (App, mpsc::Receiver<AppEvent>, PathBuf) {
+fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let d = tmpdir(name);
     for (f, c) in files {
         let p = d.join(f);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, c).unwrap();
     }
-    let (tx, rx) = mpsc::channel();
-    (App::new(d.clone(), tx), rx, d)
+    d
+}
+
+fn test_config(root: &Path) -> Config {
+    Config {
+        editor: EditorConfig::default(),
+        languages: default_languages(),
+        // Never touch the user's real config.
+        path: Some(root.join(".farsub-test-config.toml")),
+        error: None,
+    }
+}
+
+fn harness(root: &Path) -> Harness<'static, Gui> {
+    let gui = Gui::headless(root.to_path_buf(), test_config(root));
+    Harness::builder()
+        .with_size(egui::Vec2::new(1200.0, 720.0))
+        .with_accessibility_check(false)
+        .wgpu()
+        .build_ui_state(|ui, g: &mut Gui| g.frame(ui), gui)
+}
+
+fn steps(h: &mut Harness<'static, Gui>, n: usize) {
+    for _ in 0..n {
+        h.step();
+    }
+}
+
+const CMD: Modifiers = Modifiers::COMMAND;
+
+fn press(h: &mut Harness<'static, Gui>, m: Modifiers, k: Key) {
+    h.key_press_modifiers(m, k);
+    steps(h, 2);
+}
+
+fn typ(h: &mut Harness<'static, Gui>, s: &str) {
+    h.event(Event::Text(s.to_string()));
+    steps(h, 2);
+}
+
+fn shot(h: &mut Harness<'static, Gui>, name: &str) {
+    let dir = std::env::var_os("FARSUB_SHOTS").map(PathBuf::from);
+    if let Some(dir) = dir {
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = h.render().expect("render");
+        img.save(dir.join(format!("{name}.png"))).unwrap();
+    }
+}
+
+fn wait(h: &mut Harness<'static, Gui>, secs: u64, f: impl Fn(&Gui) -> bool) -> bool {
+    let end = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < end {
+        steps(h, 1);
+        if f(h.state()) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    f(h.state())
 }
 
 #[test]
-fn panels_render_and_navigate() {
-    let (mut app, _rx, d) = setup("panels", &[("a.txt", "hi"), ("sub/b.txt", "yo")]);
-    let s = screen(&mut app);
-    assert!(
-        s.contains("a.txt") && s.contains("sub") && s.contains("<DIR>"),
-        "{s}"
+fn sidebar_file_operations_by_keyboard() {
+    let d = project(
+        "ops",
+        &[
+            ("src/main.rs", "fn main() {}\n"),
+            ("docs/readme.md", "# hi\n"),
+        ],
     );
-    assert!(s.contains("Quit") && s.contains("Copy"), "{s}");
-    // Enter "sub" (entries: .., sub, a.txt).
-    key(&mut app, KeyCode::Down, KeyModifiers::NONE);
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.panels[0].dir, d.join("sub"));
-    // Back up with Backspace, selection returns to "sub".
-    key(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
-    assert_eq!(app.panels[0].dir, d);
-    assert_eq!(app.panels[0].current().unwrap().name, "sub");
-    // F7 mkdir.
-    key(&mut app, KeyCode::F(7), KeyModifiers::NONE);
-    typ(&mut app, "newdir");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert!(d.join("newdir").is_dir());
-    // F5 copy a.txt into sub.
-    let i = app.panels[0]
-        .entries
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+
+    // Cmd+0 focuses the sidebar.
+    press(&mut h, CMD, Key::Num0);
+    assert_eq!(h.state().app.focus, Focus::Sidebar);
+
+    // `a` → new file (nested path creates folders), opens it in the editor.
+    typ(&mut h, "a");
+    assert!(matches!(h.state().app.modal, Some(Modal::Prompt(_))));
+    typ(&mut h, "notes/todo.txt");
+    // The selected folder (first entry, `docs`) is where new files go.
+    match &h.state().app.modal {
+        Some(Modal::Prompt(p)) => assert!(p.title.contains("docs/"), "{}", p.title),
+        _ => panic!("expected prompt"),
+    }
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(d.join("docs/notes/todo.txt").is_file());
+    assert_eq!(h.state().app.buf().unwrap().name(), "todo.txt");
+    assert_eq!(h.state().app.focus, Focus::Editor);
+    typ(&mut h, "hello");
+    press(&mut h, CMD, Key::S);
+    assert_eq!(
+        std::fs::read_to_string(d.join("docs/notes/todo.txt")).unwrap(),
+        "hello"
+    );
+
+    // Back to the sidebar: the new file is selected; `r` renames/moves it.
+    press(&mut h, CMD, Key::Num0);
+    assert_eq!(
+        h.state().app.tree.selected_path(),
+        Some(d.join("docs/notes/todo.txt").as_path())
+    );
+    typ(&mut h, "r");
+    press(&mut h, CMD, Key::A); // Ctrl/Cmd+A: cursor to start (path prompt)
+    // Replace the whole input: clear with Cmd+U, type new path.
+    press(&mut h, CMD, Key::U);
+    typ(&mut h, "docs/todo.md");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(!d.join("docs/notes/todo.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(d.join("docs/todo.md")).unwrap(),
+        "hello"
+    );
+    // The open buffer followed the move.
+    assert_eq!(
+        h.state().app.buf().unwrap().path.as_deref(),
+        Some(d.join("docs/todo.md").as_path())
+    );
+    assert_eq!(
+        h.state().app.tree.selected_path(),
+        Some(d.join("docs/todo.md").as_path())
+    );
+
+    // `c` copy, select the src folder, `p` paste.
+    typ(&mut h, "c");
+    let src_i = h
+        .state()
+        .app
+        .tree
+        .nodes
         .iter()
-        .position(|e| e.name == "a.txt")
+        .position(|n| n.name == "src")
         .unwrap();
-    app.panels[0].sel = i;
-    app.panels[1].chdir(d.join("sub"), false);
-    key(&mut app, KeyCode::F(5), KeyModifiers::NONE);
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert!(d.join("sub/a.txt").is_file());
-    // F8 delete with confirm.
-    key(&mut app, KeyCode::F(8), KeyModifiers::NONE);
-    assert!(matches!(app.modal, Some(Modal::Confirm(_))));
-    key(&mut app, KeyCode::Char('y'), KeyModifiers::NONE);
-    assert!(!d.join("a.txt").exists());
+    h.state_mut().app.tree.sel = src_i;
+    typ(&mut h, "p");
+    assert!(d.join("src/todo.md").is_file());
+    assert!(d.join("docs/todo.md").is_file());
+
+    // Pasting again into the same folder makes "todo copy.md".
+    typ(&mut h, "p");
+    assert!(d.join("src/todo copy.md").is_file());
+
+    // `x` cut + `p` paste moves; Shift+D duplicates.
+    h.state_mut().app.tree.reveal(&d.join("src/todo copy.md"));
+    typ(&mut h, "x");
+    let docs_i = h
+        .state()
+        .app
+        .tree
+        .nodes
+        .iter()
+        .position(|n| n.name == "docs")
+        .unwrap();
+    h.state_mut().app.tree.sel = docs_i;
+    typ(&mut h, "p");
+    assert!(!d.join("src/todo copy.md").exists());
+    assert!(d.join("docs/todo copy.md").is_file());
+    h.state_mut().app.tree.reveal(&d.join("src/main.rs"));
+    typ(&mut h, "D");
+    assert!(d.join("src/main copy.rs").is_file());
+
+    // Shift+A → new folder.
+    typ(&mut h, "A");
+    typ(&mut h, "assets/img");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(d.join("src/assets/img").is_dir());
+
+    // Space marks several files; `d` asks before trashing; `n` keeps them.
+    h.state_mut().app.tree.reveal(&d.join("src/main.rs"));
+    typ(&mut h, " ");
+    h.state_mut().app.tree.reveal(&d.join("src/main copy.rs"));
+    typ(&mut h, " ");
+    assert_eq!(h.state().app.tree.marked.len(), 2);
+    typ(&mut h, "d");
+    match &h.state().app.modal {
+        Some(Modal::Confirm(c)) => assert!(c.message.contains("2 items"), "{}", c.message),
+        _ => panic!("expected confirm"),
+    }
+    shot(&mut h, "sidebar_confirm");
+    typ(&mut h, "n");
+    assert!(h.state().app.modal.is_none());
+    assert!(d.join("src/main.rs").is_file() && d.join("src/main copy.rs").is_file());
+
+    // Arrow navigation / folding; Esc clears marks, then returns to the editor.
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert!(h.state().app.tree.marked.is_empty());
+    h.state_mut().app.tree.sel = 0;
+    let n0 = h.state().app.tree.nodes.len();
+    press(&mut h, Modifiers::NONE, Key::ArrowRight); // expand first folder
+    assert!(
+        h.state().app.tree.nodes.len() > n0
+            || h.state()
+                .app
+                .tree
+                .expanded
+                .contains(&h.state().app.tree.nodes[0].path)
+    );
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert_eq!(h.state().app.focus, Focus::Editor);
+    shot(&mut h, "sidebar");
 }
 
 #[test]
-fn goto_anything_opens_file_and_edits() {
-    let (mut app, rx, d) = setup(
-        "palette",
+fn goto_anything_commands_and_editing() {
+    let d = project(
+        "edit",
         &[
             (
                 "src/main.rs",
@@ -125,78 +241,105 @@ fn goto_anything_opens_file_and_edits() {
         ],
     );
     std::fs::create_dir_all(d.join(".git")).unwrap();
-    key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
-    assert!(pump(
-        &mut app,
-        &rx,
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+
+    press(&mut h, CMD, Key::P);
+    assert!(wait(
+        &mut h,
         5,
-        |a| matches!(&a.modal, Some(Modal::Palette(p)) if !p.items.is_empty())
+        |g| matches!(&g.app.modal, Some(Modal::Palette(p)) if !p.items.is_empty())
     ));
-    typ(&mut app, "mainrs");
-    let s = screen(&mut app);
-    assert!(
-        s.contains("Goto Anything") && s.contains("src/main.rs"),
-        "{s}"
-    );
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.view, View::Editor);
-    let s = screen(&mut app);
-    assert!(s.contains("fn main()") && s.contains("Rust"), "{s}");
+    typ(&mut h, "mainrs");
+    shot(&mut h, "goto_anything");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().name(), "main.rs");
 
-    // Ctrl+R symbol palette (heuristic fallback without rust-analyzer) jumps to `hello`.
-    key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
-    typ(&mut app, "hello");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().cursor.line, 4);
+    // Cmd+R symbol palette (keyword fallback without rust-analyzer).
+    press(&mut h, CMD, Key::R);
+    typ(&mut h, "hello");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().cursor.line, 4);
 
-    // Command palette runs "Duplicate Line".
-    key(
-        &mut app,
-        KeyCode::Char('p'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    );
-    typ(&mut app, "dupl");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().lines[5], "fn hello() {}");
+    // Command palette → Duplicate Line, Cmd+Z undoes.
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    typ(&mut h, "duplicate line");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().lines[5], "fn hello() {}");
+    press(&mut h, CMD, Key::Z);
+    assert_eq!(h.state().app.buf().unwrap().lines[5], "");
 
-    // Cmd+Z (SUPER) undoes it, Cmd+S saves.
-    key(&mut app, KeyCode::Char('z'), KeyModifiers::SUPER);
-    key(&mut app, KeyCode::Char('s'), KeyModifiers::SUPER);
-    assert_eq!(
-        std::fs::read_to_string(d.join("src/main.rs")).unwrap(),
-        "fn main() {\n    hello();\n}\n\nfn hello() {}\n"
-    );
+    // Typing with auto-pairs, Cmd+/ comment, Cmd+D next occurrence.
+    press(&mut h, Modifiers::NONE, Key::End);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    typ(&mut h, "let x = (1");
+    assert_eq!(h.state().app.buf().unwrap().lines[5], "let x = (1)");
+    press(&mut h, CMD, Key::Slash);
+    assert_eq!(h.state().app.buf().unwrap().lines[5], "// let x = (1)");
 
-    // Typing + comment toggle + save.
-    key(&mut app, KeyCode::Char('/'), KeyModifiers::CONTROL);
-    app.run(Command::Save);
-    assert!(
-        std::fs::read_to_string(d.join("src/main.rs"))
-            .unwrap()
-            .contains("// fn hello() {}")
-    );
+    // Find panel: incremental, Enter goes to the next match.
+    press(&mut h, CMD, Key::F);
+    typ(&mut h, "hello");
+    shot(&mut h, "find");
+    let first = h.state().app.buf().unwrap().cursor.line;
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let second = h.state().app.buf().unwrap().cursor.line;
+    assert_ne!(first, second);
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert!(h.state().app.modal.is_none());
 
-    // ":2" goto line inside palette.
-    key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
-    typ(&mut app, ":2");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().cursor.line, 1);
+    // Cmd+B hides the sidebar; Cmd+W closes (asks because modified), Cmd+Shift+T reopens.
+    press(&mut h, CMD, Key::B);
+    assert!(!h.state().app.sidebar_visible);
+    press(&mut h, CMD, Key::S);
+    press(&mut h, CMD, Key::W);
+    assert!(h.state().app.buffers.is_empty());
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    assert_eq!(h.state().app.buf().unwrap().name(), "main.rs");
 
-    // Ctrl+O toggles back to the panels.
-    key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
-    assert_eq!(app.view, View::Panels);
+    // Mouse: clicking a line in the editor moves the cursor there.
+    press(&mut h, CMD, Key::B);
+    steps(&mut h, 2);
+    shot(&mut h, "editor");
 }
 
 #[test]
-fn find_prompt_is_incremental() {
-    let (mut app, _rx, d) = setup("find", &[("x.txt", "alpha\nbeta\ngamma beta\n")]);
-    app.open_file(&d.join("x.txt"), true);
-    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
-    typ(&mut app, "beta");
-    assert_eq!(app.buf().unwrap().cursor.line, 1);
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    key(&mut app, KeyCode::F(3), KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().selection().unwrap().0.line, 2);
+fn settings_add_language_and_theme() {
+    let d = project("cfg", &[("init.lua", "local x = 1\n")]);
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    // Cmd+, creates and opens the config from the template.
+    press(&mut h, CMD, Key::Comma);
+    let cfg = d.join(".farsub-test-config.toml");
+    assert!(cfg.is_file());
+    assert_eq!(
+        h.state().app.buf().unwrap().name(),
+        ".farsub-test-config.toml"
+    );
+    // Add a language and switch theme by editing the file in the editor, then save.
+    let extra =
+        "\n[[languages]]\nname = \"lua\"\nextensions = [\"lua\"]\ncomment = \"--\"\ntab_size = 2\n";
+    {
+        let b = h.state_mut().app.buf_mut().unwrap();
+        b.move_doc(true, false);
+        b.insert_text(extra);
+        let theme = b
+            .lines
+            .iter()
+            .position(|l| l.starts_with("theme = "))
+            .unwrap();
+        b.lines[theme] = "theme = \"Nord\"".into();
+    }
+    press(&mut h, CMD, Key::S);
+    assert_eq!(h.state().app.config.editor.theme, "Nord");
+    assert!(h.state().app.config.language("lua").is_some());
+    // A .lua file now gets the configured comment token and indentation.
+    h.state_mut().app.open_file(&d.join("init.lua"), true);
+    steps(&mut h, 2);
+    press(&mut h, CMD, Key::Slash);
+    assert_eq!(h.state().app.buf().unwrap().lines[0], "-- local x = 1");
+    assert_eq!(h.state().app.buf().unwrap().indent_unit, "  ");
+    shot(&mut h, "nord_theme");
 }
 
 fn clangd_available() -> bool {
@@ -207,260 +350,51 @@ fn clangd_available() -> bool {
 }
 
 #[test]
-fn lsp_clangd_diagnostics_symbols_completion_definition() {
+fn lsp_through_the_gui() {
     if !clangd_available() {
         eprintln!("clangd not found; skipping");
         return;
     }
     let src = "struct Point { int x; int y; };\n\nint add(int a, int b) { return a + b; }\n\nint main() {\n    struct Point p;\n    p.;\n    int r = add(1, 2);\n    return r + undefined_thing;\n}\n";
-    let (mut app, rx, d) = setup("clangd", &[("main.c", src)]);
-    let path: &Path = &d.join("main.c");
-    app.open_file(path, true);
-    assert!(
-        app.buf().unwrap().lsp_client.is_some(),
-        "clangd should start"
-    );
+    let d = project("lsp", &[("main.c", src)]);
+    let path = d.join("main.c");
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&path, true);
+    assert!(wait(&mut h, 20, |g| g
+        .app
+        .diagnostics
+        .get(&path)
+        .is_some_and(|d| d.iter().any(|x| x.severity == 1))));
 
-    // Diagnostics for the undefined identifier.
-    assert!(
-        pump(&mut app, &rx, 20, |a| a
-            .diagnostics
-            .get(path)
-            .is_some_and(|d| d.iter().any(|x| x.severity == 1))),
-        "no diagnostics"
-    );
-    let s = screen(&mut app);
-    assert!(s.contains("clangd") && s.contains("E:"), "{s}");
+    // Ctrl+Space completion after `p.`.
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(6, 6));
+    press(&mut h, Modifiers::CTRL, Key::Space);
+    assert!(wait(&mut h, 10, |g| g
+        .app
+        .completion
+        .as_ref()
+        .is_some_and(|c| !c.shown.is_empty())));
+    shot(&mut h, "completion");
+    typ(&mut h, "y");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().lines[6], "    p.y;");
 
-    // Document symbols via Ctrl+R.
-    key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
-    assert!(pump(
-        &mut app,
-        &rx,
-        10,
-        |a| matches!(&a.modal, Some(Modal::Palette(p)) if !p.loading
-        && p.items.iter().any(|i| i.label.trim() == "add"))
-    ));
-    typ(&mut app, "add");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().cursor.line, 2);
+    // F12 goto definition.
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(7, 13));
+    press(&mut h, Modifiers::NONE, Key::F12);
+    assert!(wait(&mut h, 10, |g| g.app.buf().unwrap().cursor.line == 2));
 
-    // Member completion after "p." on line 7.
-    app.buffers[app.cur].goto(crate::editor::Pos::new(6, 6));
-    app.run(Command::Completion);
-    assert!(
-        pump(&mut app, &rx, 10, |a| a.completion.as_ref().is_some_and(
-            |c| c.items.iter().any(|i| i.label.contains('x'))
-        )),
-        "no completion"
-    );
-    let s = screen(&mut app);
-    assert!(s.contains("field"), "{s}");
-    typ(&mut app, "y");
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().lines[6], "    p.y;");
-
-    // Goto definition of `add` on line 8.
-    app.buffers[app.cur].goto(crate::editor::Pos::new(7, 12));
-    app.run(Command::GotoDefinition);
-    let ok = pump(&mut app, &rx, 10, |a| a.buf().unwrap().cursor.line == 2);
-    assert!(
-        ok,
-        "definition jump: cursor={:?} status={:?} modal={}",
-        app.buf().unwrap().cursor,
-        app.status,
-        app.modal.is_some()
-    );
-
-    // Hover.
-    app.buffers[app.cur].goto(crate::editor::Pos::new(2, 5));
-    app.run(Command::Hover);
-    assert!(pump(&mut app, &rx, 10, |a| a.hover.is_some()), "hover");
-    app.lsp.shutdown();
-}
-
-/// Timing harness: `cargo test --release bench_ -- --ignored --nocapture`
-#[test]
-#[ignore]
-fn bench_hot_paths() {
-    use crate::palette::{Action, Item, Mode, Palette};
-    // 1. Palette filtering over 200k paths, typed one char at a time.
-    let items: Vec<Item> = (0..200_000)
-        .map(|i| Item {
-            label: format!("crates/module_{}/src/sub_{}/file_{i}.rs", i % 97, i % 13),
-            detail: String::new(),
-            action: Action::None,
-        })
-        .collect();
-    let mut p = Palette::new(Mode::Files, "");
-    p.set_items(items);
-    let t = Instant::now();
-    for c in "mod5file12".chars() {
-        p.query.push(c);
-        p.refilter();
-    }
-    println!("palette: 10 keystrokes over 200k items: {:?}", t.elapsed());
-
-    // 2. Highlighting a 20k-line Rust file + rendering frames.
-    let src: String = (0..2000)
-        .map(|i| format!("/// doc {i}\npub fn f{i}(x: &str) -> Result<u32, String> {{\n    let v = x.len() as u32 * {i};\n    if v > 10 {{ Ok(v) }} else {{ Err(format!(\"{{}}\", v)) }}\n}}\n\nstruct S{i} {{ a: i32 }}\nimpl S{i} {{ fn g(&self) {{}} }}\n// end\n\n"))
-        .collect();
-    let (mut app, _rx, d) = setup("bench", &[("big.rs", &src)]);
-    app.open_file(&d.join("big.rs"), true);
-    let t = Instant::now();
-    screen(&mut app);
-    println!("first frame (top of file): {:?}", t.elapsed());
-    app.buffers[app.cur].goto(crate::editor::Pos::new(19_990, 0));
-    let t = Instant::now();
-    screen(&mut app);
-    println!("jump to end, first frame: {:?}", t.elapsed());
-    let mut frames = 1;
-    while app.hl_pending {
-        screen(&mut app);
-        frames += 1;
-    }
-    println!(
-        "jump to end, fully highlighted after {frames} frames: {:?}",
-        t.elapsed()
-    );
-    let t = Instant::now();
-    for _ in 0..50 {
-        screen(&mut app);
-    }
-    println!("steady frame: {:?}", t.elapsed() / 50);
-    // Typing at the top invalidates highlighting for the whole file.
-    app.buffers[app.cur].goto(crate::editor::Pos::new(0, 0));
-    let t = Instant::now();
-    for _ in 0..20 {
-        typ(&mut app, "x");
-        screen(&mut app);
-    }
-    println!("keystroke+frame near top: {:?}", t.elapsed() / 20);
-    let t = Instant::now();
-    for _ in 0..20 {
-        let _ = app.buffers[app.cur].text();
-    }
-    println!(
-        "full-text join (LSP full sync payload, {} bytes): {:?}",
-        src.len(),
-        t.elapsed() / 20
-    );
-}
-
-#[test]
-fn lsp_incremental_sync_matches_buffer() {
-    if !clangd_available() {
-        return;
-    }
-    let (mut app, rx, d) = setup("incr", &[("m.c", "int main() {\n    return 0;\n}\n")]);
-    let path = d.join("m.c");
-    app.open_file(&path, true);
-    let cid = app.buf().unwrap().lsp_client.unwrap();
-    assert!(pump(&mut app, &rx, 10, |a| a.lsp.clients[&cid].ready));
-    assert_eq!(
-        app.lsp.clients[&cid].sync_kind, 2,
-        "clangd supports incremental sync"
-    );
-    // Several kinds of edits, including multi-line and undo, then ask clangd for an error
-    // that only exists if its copy of the document matches ours.
-    let b = &mut app.buffers[app.cur];
-    b.goto(crate::editor::Pos::new(1, 4));
-    b.insert_text("int é = 1;\n    ");
-    b.delete_line();
-    b.insert_text("int zz = nope;\n    ");
-    b.duplicate();
-    b.undo();
-    app.sync_lsp();
-    let lines = &app.buf().unwrap().lines;
-    let line = lines.iter().position(|l| l.contains("nope")).unwrap();
-    let col = lines[line].chars().count() - "nope;".len();
-    let want = crate::editor::Pos::new(line, col);
-    assert!(
-        pump(&mut app, &rx, 10, |a| a.diagnostics.get(&path).is_some_and(
-            |d| d
-                .iter()
-                .any(|x| x.message.contains("nope") && x.start == want)
-        )),
-        "diagnostics should point at line 2: {:?} / {:?}",
-        app.diagnostics.get(&path),
-        app.buf().unwrap().lines
-    );
-    app.lsp.shutdown();
-}
-
-#[test]
-fn hint_bar_clock_and_sidebar() {
-    let (mut app, _rx, d) = setup(
-        "sidebar",
-        &[
-            ("src/main.rs", "fn main() {}\n"),
-            ("src/lib.rs", "pub fn x() {}\n"),
-            ("notes.txt", "hi\n"),
-        ],
-    );
-    std::fs::create_dir_all(d.join(".git")).unwrap();
-    let s = screen(&mut app);
-    let last = s.lines().last().unwrap();
-    assert!(
-        last.contains("Delete") && last.contains("Find file") && last.contains("Editor"),
-        "{last}"
-    );
-
-    app.open_file(&d.join("src/main.rs"), true);
-    let s = screen(&mut app);
-    let first = s.lines().next().unwrap();
-    let clock = chrono::Local::now().format("%H:%M").to_string();
-    assert!(
-        first.contains("main.rs") && first.trim_end().ends_with(&clock),
-        "{first}"
-    );
-    let last = s.lines().last().unwrap();
-    assert!(
-        last.contains("Files") && last.contains("Save") && last.contains("Tree"),
-        "{last}"
-    );
-
-    // Ctrl+B: show + focus the tree with the current file revealed.
-    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert!(app.tree_visible && app.focus_tree);
-    assert_eq!(
-        app.tree.selected_path(),
-        Some(d.join("src/main.rs").as_path())
-    );
-    let s = screen(&mut app);
-    assert!(
-        s.contains("▾ FARSUB-TEST-SIDEBAR")
-            && s.contains("▾ src")
-            && s.contains("lib.rs")
-            && s.contains("notes.txt"),
-        "{s}"
-    );
-    assert!(s.lines().last().unwrap().contains("Preview"));
-
-    // Up to lib.rs, Enter opens it and focuses the editor.
-    key(&mut app, KeyCode::Up, KeyModifiers::NONE);
-    key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert_eq!(app.buf().unwrap().name(), "lib.rs");
-    assert!(!app.focus_tree && app.tree_visible);
-    // Typing goes to the editor, not the tree.
-    typ(&mut app, "z");
-    assert!(app.buf().unwrap().lines[0].starts_with('z'));
-
-    // Left on a file jumps to its folder; Left again collapses it.
-    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-    key(&mut app, KeyCode::Left, KeyModifiers::NONE);
-    assert_eq!(app.tree.selected().unwrap().name, "src");
-    key(&mut app, KeyCode::Left, KeyModifiers::NONE);
-    assert_eq!(app.tree.nodes.len(), 2);
-    // Type-to-jump.
-    typ(&mut app, "n");
-    assert_eq!(app.tree.selected().unwrap().name, "notes.txt");
-    // Ctrl+B while focused hides it.
-    key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert!(!app.tree_visible);
-
-    // Palette shows its own hints.
-    key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
-    let s = screen(&mut app);
-    assert!(s.lines().last().unwrap().contains("Symbols"), "{s}");
+    // Cmd+I hover.
+    press(&mut h, CMD, Key::I);
+    assert!(wait(&mut h, 10, |g| g.app.hover.is_some()));
+    shot(&mut h, "hover");
+    h.state_mut().app.lsp.shutdown();
 }
