@@ -1,0 +1,6 @@
+name = "rust_analyzer"
+command = "rust-analyzer"
+root_markers = ["Cargo.toml"]
+description = "Rust language server (install with: rustup component add rust-analyzer)"
+
+[settings.rust-analyzer]

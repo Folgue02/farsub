@@ -1,0 +1,7 @@
+name = "bash"
+language_id = "shellscript"
+extensions = ["sh", "bash", "zsh", "ksh"]
+filenames = [".bashrc", ".bash_profile", ".profile", ".zshrc", "PKGBUILD"]
+first_line = "^#!.*\\b(ba|z|k)?sh\\b"
+comment = "#"
+servers = ["bashls"]

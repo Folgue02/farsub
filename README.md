@@ -1,8 +1,9 @@
 # farsub
 
 A Sublime Text-style code editor in Rust (egui/eframe): Goto Anything, command palette,
-symbol search, syntax highlighting, LSP, and a sidebar you can drive entirely from the
-keyboard, including file operations. The mouse works too.
+symbol search, syntax highlighting with Sublime packages, LSP with a built-in server
+installer, and a sidebar you can drive entirely from the keyboard, including file
+operations. The mouse works too.
 
 ```bash
 cargo run --release -- [folder-or-file]
@@ -10,20 +11,54 @@ cargo run --release -- [folder-or-file]
 
 "Cmd" below means Cmd on macOS and Ctrl elsewhere; both always work.
 
-## Menu bar and keymap
+## Everything is data
 
-The menu bar (File, Edit, Selection, Find, Goto, Sidebar, View, Tools, Help) shows each
-item's shortcut and greys out items that can't run right now. It works from the keyboard
-too: **F10** opens it, Left/Right switch menus, Up/Down move, Enter runs, a letter jumps to
-the item starting with it, and Esc closes. View → Toggle Menu Bar hides it (F10 still
-works), or set `show_menu_bar = false`.
+Nothing about languages, servers, keys or menus is hard-coded. The defaults ship as TOML in
+[runtime/](runtime/) (embedded into the binary at build time), and files in your config
+folder override them:
 
-**Cmd+Shift+/** (Cmd+?) or Help → Keyboard Shortcuts opens a searchable list of every
-shortcut, grouped by where it applies (general, editor, sidebar, palette, find panel,
-menus). Select a row and press Enter to run that command.
+```text
+~/.config/farsub/                 ($FARSUB_CONFIG points at config.toml elsewhere)
+  config.toml          [editor] settings (+ optional [[languages]] / [[servers]])
+  languages/<name>.toml   add a language, or replace a built-in with the same name
+  servers/<name>.toml     add/replace a language server (nvim-lspconfig style)
+  keymap.toml          add/override/unbind keys (like Sublime's user keymap)
+  menus.toml           replace the menu layout
+  Packages/            Sublime packages: .sublime-syntax grammars, .tmTheme themes
+~/.local/share/farsub/servers/<name>/   servers installed by the server manager ($FARSUB_DATA)
+```
 
-All shortcuts are defined in one table ([src/keymap.rs](src/keymap.rs)). Key handling, the
-menus, the command palette's hints and the keymap list are all generated from it.
+Saving any of these files inside farsub applies it immediately (Cmd+, opens `config.toml`,
+created from a commented template).
+
+## Menus and the keymap
+
+On **macOS** the menus live in the system menu bar (built with `muda`), with shortcuts
+shown and unavailable items greyed out. On **Windows and Linux** an in-window menu bar shows
+the same menus (`show_menu_bar = true` turns it on for macOS too). Either way **F10** opens the
+in-window menus from the keyboard: Left/Right switch menus, Up/Down move, Enter runs, a
+letter jumps to an item, and Esc closes.
+
+**Cmd+Shift+/** (Cmd+?) or Help → Keyboard Shortcuts lists every binding grouped by where it
+applies, with a search box; Enter runs the selected command.
+
+Custom keys in `keymap.toml` (`context` is `global`, `editor` or `sidebar`;
+`command = ""` unbinds; `platforms` limits an entry):
+
+```toml
+[[keys]]
+keys = "Cmd+K"
+command = "hover"
+context = "editor"
+
+[[keys]]
+keys = "F12"
+command = ""          # unbind
+context = "editor"
+```
+
+Command ids are the snake_case names shown in the keymap viewer (`goto_file`,
+`toggle_comment`, `sidebar_new_file`, `manage_servers`, …).
 
 ## Palettes
 
@@ -41,7 +76,8 @@ Type a prefix in any palette to switch modes, as in Sublime.
 ## Sidebar (keyboard)
 
 Cmd+0 focuses the sidebar (Cmd+0 again or Esc returns to the editor), Cmd+B shows or hides
-it, and Cmd+Shift+E reveals the current file.
+it, and Cmd+Shift+E reveals the current file. Rows highlight on hover, and folders open and
+close with a Sublime-style slide and rotating arrow (`animations = false` turns that off).
 
 | Key | Action |
 | --- | --- |
@@ -74,54 +110,77 @@ Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab and Cmd+1�
 (switch tabs), Cmd+= / Cmd+- (zoom), Alt+- (jump back). Copying with nothing selected
 takes the whole line. Brackets and quotes auto-close, and Enter auto-indents.
 
-## LSP
+## Language servers (lspconfig + mason)
 
-Built-in language configs: **Rust** (rust-analyzer), **Python** (pyright), **TypeScript /
-JavaScript** incl. TSX/JSX (typescript-language-server), **Go** (gopls), **C / C++**
-(clangd). Servers start on demand per project root.
+Languages list servers in order of preference; the first one that is installed (by
+farsub, or found on PATH) runs. Built-in definitions:
 
-Ctrl+Space completion (also automatic), Cmd+I hover, F12 definition, Shift+F12 references,
-F2 rename, Alt+Shift+F format, F8 / Shift+F8 next/previous diagnostic. Diagnostics show as
-gutter dots, squiggles and status-bar counts. Edits are synced incrementally when the
-server supports it. Set `FARSUB_LSP_LOG=/tmp/lsp.log` to trace all traffic.
+| Language | Servers | Installable from farsub |
+| --- | --- | --- |
+| Python | pyright, basedpyright, pylsp | yes (npm / pip) |
+| JavaScript, TypeScript, JSX, TSX | ts_ls (typescript-language-server) | yes (npm) |
+| Bash / sh / zsh | bashls (bash-language-server) | yes (npm) |
+| Go | gopls | yes (go install) |
+| Rust | rust_analyzer | no (`rustup component add rust-analyzer`) |
+| C / C++ | clangd | no (Xcode / LLVM) |
 
-## Settings and adding languages
+**Tools → Language Servers** (Cmd+Alt+L) is a Mason-like manager: it lists every server
+with its status (installed, on PATH, not installed, failed), and `i` installs, `u` updates,
+`x` uninstalls, Enter shows details and the install log. Installs go into farsub's own data
+folder: npm packages under a private prefix, pip packages in a private venv, cargo/go
+binaries in a private bin, so nothing touches your system. Opening a file whose server is
+missing tells you which ones can be installed.
 
-Cmd+, opens `~/.config/farsub/config.toml` (created from a commented template). Saving it
-applies the changes immediately. `$FARSUB_CONFIG` overrides the location.
+A server definition (`servers/<name>.toml`):
 
 ```toml
-[editor]
-font_size = 14.0
-tab_size = 4
-theme = "Monokai Extended"   # or pick one live: "Preferences: Select Color Theme"
-
-# A new language
-[[languages]]
-name = "lua"
-extensions = ["lua"]
-comment = "--"
-tab_size = 2
-roots = [".luarc.json"]
-[languages.server]
+name = "lua_ls"
 command = "lua-language-server"
-[languages.server.settings.Lua]          # answers workspace/configuration
+args = []
+root_markers = [".luarc.json", ".git"]
+description = "Lua language server"
+
+[settings.Lua]                    # answers workspace/configuration
 diagnostics = { globals = ["vim"] }
 
-# Replacing a built-in one (same name)
-[[languages]]
-name = "python"
-extensions = ["py", "pyi"]
-comment = "#"
-server = { command = "pylsp" }
+[initialization_options]          # sent with initialize
+
+[install]                         # one of: npm, pip, cargo, go, script
+npm = ["some-package"]
+bin = "lua-language-server"       # if it differs from `command`
 ```
 
-Per-language keys: `language_id`, `extensions`, `filenames`, `comment`, `tab_size`,
-`use_tabs`, `roots`, `syntax` (highlighting override), and `server` (`command`, `args`,
-`env`, `initialization_options`, `settings`).
+A language (`languages/<name>.toml`):
+
+```toml
+name = "lua"
+extensions = ["lua"]
+filenames = []
+first_line = "^#!.*\\blua"        # shebang detection
+comment = "--"
+tab_size = 2
+servers = ["lua_ls"]
+# syntax = "Lua"                  # force a grammar
+```
+
+Features: Ctrl+Space completion (also automatic), Cmd+I hover, F12 definition, Shift+F12
+references, F2 rename, Alt+Shift+F format, F8 / Shift+F8 diagnostics. Edits sync
+incrementally when the server supports it. `FARSUB_LSP_LOG=/tmp/lsp.log` traces traffic.
+
+## Syntax packages (Sublime-style)
+
+Drop Sublime Text packages into `~/.config/farsub/Packages/`: any `.sublime-syntax` file
+adds or overrides a grammar, and any `.tmTheme` becomes a color theme (pick it with
+Preferences → Color Theme or `theme = "..."`). They load in the background at startup.
+
+- **Packages: Install Package (git URL)…** clones a package repository into `Packages/`.
+- **Packages: Remove Package…** moves one to the Trash.
+- **Packages: Browse Packages Folder** opens it in your file manager.
+- **Packages: Reload Syntaxes & Themes** reloads after editing grammars by hand.
 
 ## Tests
 
-`cargo test` runs buffer, config, tree and file-op unit tests, plus GUI end-to-end tests
-that drive the real interface headlessly with egui_kittest. The LSP test uses clangd if
-it's installed. Set `FARSUB_SHOTS=dir` to save rendered screenshots.
+`cargo test` runs unit tests (buffer, config, keymap, tree, file ops, installer, packages)
+plus GUI end-to-end tests that drive the real interface headlessly with egui_kittest.
+The LSP test uses clangd if it's installed. `cargo test -- --ignored` also runs real
+npm and pip server installs (network). Set `FARSUB_SHOTS=dir` to save screenshots.

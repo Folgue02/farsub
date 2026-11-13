@@ -1,10 +1,23 @@
-//! Editor + language configuration. Built-in defaults cover a handful of languages; a user
-//! file at `~/.config/farsub/config.toml` can override any of them or add new ones.
+//! Configuration, all data-driven. Built-in defaults live in `runtime/` (embedded at build
+//! time); the user's config folder overrides any of them:
+//!
+//! ```text
+//! ~/.config/farsub/
+//!   config.toml          [editor] settings (+ optional [[languages]] / [[servers]])
+//!   languages/*.toml     one language per file (same name replaces a built-in)
+//!   servers/*.toml       language servers, nvim-lspconfig style, with mason-style [install]
+//!   keymap.toml          extra/overriding [[keys]] (like Sublime's user keymap)
+//!   menus.toml           replaces the menu layout
+//!   Packages/            Sublime-style packages: *.sublime-syntax, *.tmTheme
+//! ~/.local/share/farsub/servers/<name>/   servers installed by the server manager
+//! ```
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+
+include!(concat!(env!("OUT_DIR"), "/runtime_files.rs"));
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
@@ -15,6 +28,8 @@ pub struct EditorConfig {
     pub theme: String,
     pub show_sidebar: bool,
     pub show_menu_bar: bool,
+    /// Animate sidebar folders opening/closing.
+    pub animations: bool,
 }
 
 impl Default for EditorConfig {
@@ -25,28 +40,75 @@ impl Default for EditorConfig {
             use_tabs: false,
             theme: "Monokai Extended".into(),
             show_sidebar: true,
-            show_menu_bar: true,
+            // macOS gets the native menu bar instead.
+            show_menu_bar: !cfg!(target_os = "macos"),
+            animations: true,
         }
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+/// How to install a server (like a mason.nvim package). One source is used.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct InstallSpec {
+    #[serde(default)]
+    pub npm: Vec<String>,
+    #[serde(default)]
+    pub pip: Vec<String>,
+    #[serde(default)]
+    pub cargo: Option<String>,
+    #[serde(default)]
+    pub go: Option<String>,
+    /// Shell script run in the install folder ($FARSUB_INSTALL_DIR); `bin` is relative to it.
+    #[serde(default)]
+    pub script: Option<String>,
+    /// Executable name if it differs from the server's `command`.
+    #[serde(default)]
+    pub bin: Option<String>,
+}
+
+impl InstallSpec {
+    pub fn source(&self) -> String {
+        if !self.npm.is_empty() {
+            format!("npm: {}", self.npm.join(" "))
+        } else if !self.pip.is_empty() {
+            format!("pip: {}", self.pip.join(" "))
+        } else if let Some(c) = &self.cargo {
+            format!("cargo: {c}")
+        } else if let Some(g) = &self.go {
+            format!("go: {g}")
+        } else if self.script.is_some() {
+            "script".into()
+        } else {
+            "none".into()
+        }
+    }
+}
+
+/// A language server definition (like an nvim-lspconfig entry).
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 pub struct ServerConfig {
+    #[serde(default)]
+    pub name: String,
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Sent as `initializationOptions` in the initialize request.
+    #[serde(default)]
+    pub root_markers: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    /// Sent as `initializationOptions`.
     #[serde(default)]
     pub initialization_options: Option<toml::Value>,
-    /// Answers `workspace/configuration` requests, keyed by section
-    /// (e.g. `[languages.server.settings.rust-analyzer]`).
+    /// Answers `workspace/configuration`, keyed by section.
     #[serde(default)]
     pub settings: Option<toml::Value>,
+    #[serde(default)]
+    pub install: Option<InstallSpec>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
 pub struct LanguageConfig {
     pub name: String,
     /// LSP languageId (defaults to `name`).
@@ -57,18 +119,25 @@ pub struct LanguageConfig {
     /// Exact file names, e.g. "Makefile".
     #[serde(default)]
     pub filenames: Vec<String>,
+    /// Regex matched against the first line (shebangs), e.g. "^#!.*python".
+    #[serde(default)]
+    pub first_line: Option<String>,
     #[serde(default)]
     pub comment: Option<String>,
     #[serde(default)]
     pub tab_size: Option<usize>,
     #[serde(default)]
     pub use_tabs: Option<bool>,
-    /// Files/dirs marking the project root for the language server.
+    /// Extra project-root markers (servers have their own).
     #[serde(default)]
     pub roots: Vec<String>,
-    /// syntect syntax name override (otherwise detected from the extension).
+    /// Syntax name override (otherwise detected from the extension / packages).
     #[serde(default)]
     pub syntax: Option<String>,
+    /// Server names, tried in order; the first installed one runs.
+    #[serde(default)]
+    pub servers: Vec<String>,
+    /// Inline server (older config style); becomes a server named after the language.
     #[serde(default)]
     pub server: Option<ServerConfig>,
 }
@@ -78,7 +147,7 @@ impl LanguageConfig {
         self.language_id.as_deref().unwrap_or(&self.name)
     }
 
-    pub fn matches(&self, path: &Path) -> bool {
+    pub fn matches_path(&self, path: &Path) -> bool {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if self.filenames.iter().any(|f| f == name) {
             return true;
@@ -86,131 +155,76 @@ impl LanguageConfig {
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         !ext.is_empty() && self.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))
     }
+
+    pub fn matches_first_line(&self, line: &str) -> bool {
+        self.first_line
+            .as_deref()
+            .and_then(|r| regex::Regex::new(r).ok())
+            .is_some_and(|re| re.is_match(line))
+    }
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct KeyBinding {
+    pub keys: String,
+    /// Command id; "" or "none" unbinds the key in that context.
+    pub command: String,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub platforms: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct KeyDoc {
+    pub section: String,
+    pub keys: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct MenuDef {
+    pub title: String,
+    pub items: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
 struct FileConfig {
     #[serde(default)]
     editor: Option<EditorConfig>,
     #[serde(default)]
     languages: Vec<LanguageConfig>,
+    #[serde(default)]
+    servers: Vec<ServerConfig>,
+}
+
+#[derive(Deserialize, Default)]
+struct KeymapFile {
+    #[serde(default)]
+    keys: Vec<KeyBinding>,
+    #[serde(default)]
+    docs: Vec<KeyDoc>,
+}
+
+#[derive(Deserialize, Default)]
+struct MenusFile {
+    #[serde(default)]
+    menu: Vec<MenuDef>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {
     pub editor: EditorConfig,
     pub languages: Vec<LanguageConfig>,
+    pub servers: Vec<ServerConfig>,
+    pub keys: Vec<KeyBinding>,
+    pub docs: Vec<KeyDoc>,
+    pub menus: Vec<MenuDef>,
+    /// The main config.toml.
     pub path: Option<PathBuf>,
+    /// Where installed servers go.
+    pub data_dir: Option<PathBuf>,
     pub error: Option<String>,
-}
-
-fn lang(
-    name: &str,
-    id: Option<&str>,
-    exts: &[&str],
-    comment: &str,
-    roots: &[&str],
-    cmd: &str,
-    args: &[&str],
-) -> LanguageConfig {
-    LanguageConfig {
-        name: name.into(),
-        language_id: id.map(String::from),
-        extensions: exts.iter().map(|s| s.to_string()).collect(),
-        comment: Some(comment.into()),
-        roots: roots.iter().map(|s| s.to_string()).collect(),
-        server: Some(ServerConfig {
-            command: cmd.into(),
-            args: args.iter().map(|s| s.to_string()).collect(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    }
-}
-
-pub fn default_languages() -> Vec<LanguageConfig> {
-    let js_roots = &["package.json", "tsconfig.json", "jsconfig.json"];
-    let ts = &["typescript-language-server", "--stdio"];
-    vec![
-        lang(
-            "rust",
-            None,
-            &["rs"],
-            "//",
-            &["Cargo.toml"],
-            "rust-analyzer",
-            &[],
-        ),
-        lang(
-            "python",
-            None,
-            &["py", "pyi"],
-            "#",
-            &[
-                "pyproject.toml",
-                "setup.py",
-                "setup.cfg",
-                "requirements.txt",
-            ],
-            "pyright-langserver",
-            &["--stdio"],
-        ),
-        lang(
-            "typescript",
-            None,
-            &["ts", "mts", "cts"],
-            "//",
-            js_roots,
-            ts[0],
-            &ts[1..],
-        ),
-        lang(
-            "tsx",
-            Some("typescriptreact"),
-            &["tsx"],
-            "//",
-            js_roots,
-            ts[0],
-            &ts[1..],
-        ),
-        lang(
-            "javascript",
-            None,
-            &["js", "mjs", "cjs"],
-            "//",
-            js_roots,
-            ts[0],
-            &ts[1..],
-        ),
-        lang(
-            "jsx",
-            Some("javascriptreact"),
-            &["jsx"],
-            "//",
-            js_roots,
-            ts[0],
-            &ts[1..],
-        ),
-        lang("go", None, &["go"], "//", &["go.mod"], "gopls", &[]),
-        lang(
-            "c",
-            None,
-            &["c", "h"],
-            "//",
-            &["compile_commands.json", "CMakeLists.txt", "Makefile"],
-            "clangd",
-            &[],
-        ),
-        lang(
-            "cpp",
-            None,
-            &["cc", "cpp", "cxx", "hpp", "hh", "hxx"],
-            "//",
-            &["compile_commands.json", "CMakeLists.txt", "Makefile"],
-            "clangd",
-            &[],
-        ),
-    ]
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -223,97 +237,237 @@ pub fn config_path() -> Option<PathBuf> {
     Some(base.join("farsub").join("config.toml"))
 }
 
+pub fn default_data_dir() -> Option<PathBuf> {
+    if let Some(x) = std::env::var_os("FARSUB_DATA") {
+        return Some(PathBuf::from(x));
+    }
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
+        })?;
+    Some(base.join("farsub"))
+}
+
+fn upsert<T>(list: &mut Vec<T>, item: T, same: impl Fn(&T, &T) -> bool) {
+    match list.iter_mut().find(|x| same(x, &item)) {
+        Some(slot) => *slot = item,
+        None => list.push(item),
+    }
+}
+
 impl Config {
+    /// Built-in defaults only.
+    pub fn builtin() -> Config {
+        let mut c = Config {
+            editor: EditorConfig::default(),
+            ..Default::default()
+        };
+        let mut errs = vec![];
+        for (name, text) in RUNTIME_FILES {
+            if let Err(e) = c.merge_file(name, text) {
+                errs.push(format!("built-in {name}: {e}"));
+            }
+        }
+        if !errs.is_empty() {
+            c.error = Some(errs.join("; "));
+        }
+        c
+    }
+
     pub fn load() -> Config {
         Self::load_from(config_path())
     }
 
     pub fn load_from(path: Option<PathBuf>) -> Config {
-        let mut c = Config {
-            editor: EditorConfig::default(),
-            languages: default_languages(),
-            path: path.clone(),
-            error: None,
-        };
+        let mut c = Self::builtin();
+        c.path = path.clone();
+        c.data_dir = default_data_dir();
+        let mut errs: Vec<String> = c.error.take().into_iter().collect();
         if let Some(p) = &path {
-            if let Ok(text) = std::fs::read_to_string(p) {
-                if let Err(e) = c.merge_str(&text) {
-                    c.error = Some(format!("{}: {e}", p.display()));
+            if let Some(dir) = p.parent() {
+                // Folder overrides first, then config.toml on top.
+                for sub in ["languages", "servers"] {
+                    let mut files: Vec<PathBuf> = std::fs::read_dir(dir.join(sub))
+                        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+                        .unwrap_or_default();
+                    files.sort();
+                    for f in files
+                        .iter()
+                        .filter(|f| f.extension().is_some_and(|e| e == "toml"))
+                    {
+                        if let Ok(text) = std::fs::read_to_string(f)
+                            && let Err(e) = c.merge_file(
+                                &format!("{sub}/{}", f.file_name().unwrap().to_string_lossy()),
+                                &text,
+                            )
+                        {
+                            errs.push(format!("{}: {e}", f.display()));
+                        }
+                    }
+                }
+                for name in ["keymap.toml", "menus.toml"] {
+                    let f = dir.join(name);
+                    if let Ok(text) = std::fs::read_to_string(&f)
+                        && let Err(e) = c.merge_file(name, &text)
+                    {
+                        errs.push(format!("{}: {e}", f.display()));
+                    }
                 }
             }
+            if let Ok(text) = std::fs::read_to_string(p)
+                && let Err(e) = c.merge_str(&text)
+            {
+                errs.push(format!("{}: {e}", p.display()));
+            }
+        }
+        if !errs.is_empty() {
+            c.error = Some(errs.join("; "));
         }
         c
     }
 
-    /// Merge a TOML document: `[editor]` replaces editor settings; each `[[languages]]`
-    /// entry replaces the built-in language of the same name or adds a new one.
+    /// Merge one data file, dispatching on its path inside runtime/ or the config folder.
+    pub fn merge_file(&mut self, name: &str, text: &str) -> Result<(), String> {
+        let err = |e: toml::de::Error| e.message().to_string();
+        if name.starts_with("languages/") {
+            let l: LanguageConfig = toml::from_str(text).map_err(err)?;
+            self.add_language(l);
+        } else if name.starts_with("servers/") {
+            let mut s: ServerConfig = toml::from_str(text).map_err(err)?;
+            if s.name.is_empty() {
+                s.name = Path::new(name)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+            }
+            upsert(&mut self.servers, s, |a, b| a.name == b.name);
+        } else if name == "keymap.toml" {
+            let k: KeymapFile = toml::from_str(text).map_err(err)?;
+            self.keys.extend(k.keys);
+            for d in k.docs {
+                upsert(&mut self.docs, d, |a, b| {
+                    a.section == b.section && a.keys == b.keys
+                });
+            }
+        } else if name == "menus.toml" {
+            let m: MenusFile = toml::from_str(text).map_err(err)?;
+            self.menus = m.menu;
+        }
+        Ok(())
+    }
+
+    /// Merge a config.toml document.
     pub fn merge_str(&mut self, text: &str) -> Result<(), String> {
         let f: FileConfig = toml::from_str(text).map_err(|e| e.message().to_string())?;
         if let Some(e) = f.editor {
             self.editor = e;
         }
+        for s in f.servers {
+            upsert(&mut self.servers, s, |a, b| a.name == b.name);
+        }
         for l in f.languages {
-            match self.languages.iter_mut().find(|x| x.name == l.name) {
-                Some(slot) => *slot = l,
-                None => self.languages.push(l),
-            }
+            self.add_language(l);
         }
         Ok(())
     }
 
-    pub fn language_for(&self, path: &Path) -> Option<&LanguageConfig> {
+    fn add_language(&mut self, mut l: LanguageConfig) {
+        if let Some(mut s) = l.server.take() {
+            if s.name.is_empty() {
+                s.name = l.name.clone();
+            }
+            if s.root_markers.is_empty() {
+                s.root_markers = l.roots.clone();
+            }
+            l.servers.retain(|n| n != &s.name);
+            l.servers.insert(0, s.name.clone());
+            upsert(&mut self.servers, s, |a, b| a.name == b.name);
+        }
+        upsert(&mut self.languages, l, |a, b| a.name == b.name);
+    }
+
+    pub fn language_for(&self, path: &Path, first_line: &str) -> Option<&LanguageConfig> {
         // Later entries (user-added) win over earlier ones on conflicting extensions.
-        self.languages.iter().rev().find(|l| l.matches(path))
+        self.languages
+            .iter()
+            .rev()
+            .find(|l| l.matches_path(path))
+            .or_else(|| {
+                self.languages
+                    .iter()
+                    .rev()
+                    .find(|l| l.matches_first_line(first_line))
+            })
     }
 
     pub fn language(&self, name: &str) -> Option<&LanguageConfig> {
         self.languages.iter().find(|l| l.name == name)
     }
+
+    pub fn server(&self, name: &str) -> Option<&ServerConfig> {
+        self.servers.iter().find(|s| s.name == name)
+    }
+
+    /// Languages that list a server.
+    pub fn languages_using(&self, server: &str) -> Vec<String> {
+        self.languages
+            .iter()
+            .filter(|l| l.servers.iter().any(|s| s == server))
+            .map(|l| l.name.clone())
+            .collect()
+    }
+
+    pub fn config_dir(&self) -> Option<PathBuf> {
+        self.path
+            .as_ref()
+            .and_then(|p| p.parent())
+            .map(Path::to_path_buf)
+    }
+
+    pub fn packages_dir(&self) -> Option<PathBuf> {
+        self.config_dir().map(|d| d.join("Packages"))
+    }
 }
 
-pub const TEMPLATE: &str = r##"# farsub configuration. Save this file to apply changes.
+pub const TEMPLATE: &str = r##"# farsub settings. Save this file to apply changes.
+#
+# Everything else is data too, in this folder (each overrides the built-ins in runtime/):
+#   languages/<name>.toml   add or replace a language
+#   servers/<name>.toml     add or replace a language server (with optional [install])
+#   keymap.toml             add/override key bindings: [[keys]] keys = "Cmd+K", command = "hover"
+#   menus.toml              replace the menu layout
+#   Packages/               Sublime packages (.sublime-syntax, .tmTheme); see "Packages:" commands
+# Manage servers with Tools → Language Servers (Cmd+Shift+P "LSP: Manage Language Servers").
 
 [editor]
 font_size = 14.0
 tab_size = 4
 use_tabs = false
 show_sidebar = true
-show_menu_bar = true
-# Any theme bundled with bat/two-face, e.g. "Monokai Extended", "OneHalfDark", "Nord",
-# "Dracula", "Solarized (dark)", "GitHub", "Visual Studio Dark+".
+# In-window menu bar (macOS uses the system menu bar either way).
+# show_menu_bar = true
+animations = true
+# Any bundled theme ("Monokai Extended", "OneHalfDark", "Nord", "Dracula", "GitHub",
+# "Solarized (dark)", "Visual Studio Dark+", …) or a .tmTheme from Packages/.
 theme = "Monokai Extended"
 
-# Built-in languages: rust, python, typescript, tsx, javascript, jsx, go, c, cpp.
-# A [[languages]] entry with the same name replaces the built-in one; a new name adds a
-# language.
-#
-# [[languages]]
-# name = "python"
-# extensions = ["py", "pyi"]
-# comment = "#"
-# roots = ["pyproject.toml", "setup.py"]
-# server = { command = "pylsp" }
+# Example: a language defined inline here instead of languages/lua.toml.
 #
 # [[languages]]
 # name = "lua"
 # extensions = ["lua"]
 # comment = "--"
 # tab_size = 2
-# roots = [".luarc.json"]
-# [languages.server]
-# command = "lua-language-server"
-# [languages.server.settings.Lua]
-# diagnostics = { globals = ["vim"] }
+# servers = ["lua_ls"]
 #
-# [[languages]]
-# name = "rust"
-# extensions = ["rs"]
-# comment = "//"
-# roots = ["Cargo.toml"]
-# [languages.server]
-# command = "rust-analyzer"
-# [languages.server.initialization_options]
-# check = { command = "clippy" }
+# [[servers]]
+# name = "lua_ls"
+# command = "lua-language-server"
+# root_markers = [".luarc.json", ".git"]
+# [servers.settings.Lua]
+# diagnostics = { globals = ["vim"] }
 "##;
 
 #[cfg(test)]
@@ -321,17 +475,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_and_overrides() {
-        let mut c = Config {
-            languages: default_languages(),
-            ..Default::default()
-        };
-        assert_eq!(c.language_for(Path::new("a/b.rs")).unwrap().name, "rust");
+    fn builtins_load_and_user_overrides() {
+        let c = Config::builtin();
+        assert!(c.error.is_none(), "{:?}", c.error);
         assert_eq!(
-            c.language_for(Path::new("x.tsx")).unwrap().language_id(),
+            c.language_for(Path::new("a/b.rs"), "").unwrap().name,
+            "rust"
+        );
+        assert_eq!(
+            c.language_for(Path::new("x.tsx"), "")
+                .unwrap()
+                .language_id(),
             "typescriptreact"
         );
-        assert!(c.language_for(Path::new("x.lua")).is_none());
+        assert_eq!(
+            c.language_for(Path::new("run"), "#!/usr/bin/env python3")
+                .unwrap()
+                .name,
+            "python"
+        );
+        assert_eq!(
+            c.language_for(Path::new("deploy"), "#!/bin/bash")
+                .unwrap()
+                .name,
+            "bash"
+        );
+        assert_eq!(
+            c.language_for(Path::new(".bashrc"), "").unwrap().name,
+            "bash"
+        );
+        assert!(c.language_for(Path::new("x.lua"), "").is_none());
+        assert_eq!(
+            c.language("python").unwrap().servers,
+            ["pyright", "basedpyright", "pylsp"]
+        );
+        let pyright = c.server("pyright").unwrap();
+        assert_eq!(pyright.install.as_ref().unwrap().npm, ["pyright"]);
+        assert!(pyright.settings.is_some());
+        assert!(c.server("bashls").unwrap().install.is_some());
+        assert!(c.keys.len() > 50 && !c.docs.is_empty() && c.menus.len() >= 8);
+
+        // User overrides via config.toml (inline server style still works).
+        let mut c = c;
         c.merge_str(
             r#"
             [editor]
@@ -344,22 +529,61 @@ mod tests {
             name = "lua"
             extensions = ["lua"]
             comment = "--"
-            [languages.server]
+            servers = ["lua_ls"]
+            [[servers]]
+            name = "lua_ls"
             command = "lua-language-server"
-            [languages.server.settings.Lua]
+            [servers.settings.Lua]
             diagnostics = { globals = ["vim"] }
             "#,
         )
         .unwrap();
         assert_eq!(c.editor.font_size, 16.0);
         assert_eq!(c.editor.tab_size, 4, "missing keys keep defaults");
-        let py = c.language_for(Path::new("m.py")).unwrap();
-        assert_eq!(py.server.as_ref().unwrap().command, "pylsp");
-        let lua = c.language_for(Path::new("init.lua")).unwrap();
-        assert_eq!(lua.comment.as_deref(), Some("--"));
-        assert!(lua.server.as_ref().unwrap().settings.is_some());
+        assert_eq!(c.language("python").unwrap().servers, ["python"]);
+        assert_eq!(c.server("python").unwrap().command, "pylsp");
+        assert_eq!(c.languages_using("lua_ls"), ["lua"]);
         assert!(c.merge_str("[[languages]]\nextensions = 3").is_err());
-        // The shipped template must parse.
         c.merge_str(TEMPLATE).unwrap();
+    }
+
+    #[test]
+    fn config_folder_files() {
+        let d = std::env::temp_dir().join(format!("farsub-cfgdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("languages")).unwrap();
+        std::fs::create_dir_all(d.join("servers")).unwrap();
+        std::fs::write(
+            d.join("languages/zig.toml"),
+            "name = \"zig\"\nextensions = [\"zig\"]\ncomment = \"//\"\nservers = [\"zls\"]\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("servers/zls.toml"), "command = \"zls\"\n").unwrap();
+        std::fs::write(
+            d.join("keymap.toml"),
+            "[[keys]]\nkeys = \"Cmd+K\"\ncommand = \"hover\"\ncontext = \"editor\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("menus.toml"),
+            "[[menu]]\ntitle = \"Mine\"\nitems = [\"save\"]\n",
+        )
+        .unwrap();
+        let c = Config::load_from(Some(d.join("config.toml")));
+        assert!(c.error.is_none(), "{:?}", c.error);
+        assert_eq!(
+            c.language_for(Path::new("a.zig"), "").unwrap().servers,
+            ["zls"]
+        );
+        assert_eq!(c.server("zls").unwrap().command, "zls");
+        assert_eq!(c.keys.last().unwrap().command, "hover");
+        assert_eq!(c.menus.len(), 1);
+        std::fs::write(d.join("servers/bad.toml"), "command = 3\n").unwrap();
+        assert!(
+            Config::load_from(Some(d.join("config.toml")))
+                .error
+                .unwrap()
+                .contains("bad.toml")
+        );
     }
 }

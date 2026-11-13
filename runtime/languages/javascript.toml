@@ -1,0 +1,5 @@
+name = "javascript"
+extensions = ["js", "mjs", "cjs"]
+first_line = "^#!.*\\bnode"
+comment = "//"
+servers = ["ts_ls"]

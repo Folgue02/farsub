@@ -1,7 +1,8 @@
-//! Menu bar layout. Every item is a command, so menus, the palette and shortcuts never
-//! disagree about what an action does or which key runs it.
+//! Menus, built from runtime/menus.toml (or the user's menus.toml). Every item is a
+//! command, so menus, the palette and shortcuts never disagree.
 
 use crate::commands::{self, Command, Command::*};
+use crate::config::MenuDef;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MenuState {
@@ -9,138 +10,55 @@ pub struct MenuState {
     pub item: usize,
 }
 
-/// `None` is a separator.
-pub const MENUS: &[(&str, &[Option<Command>])] = &[
-    (
-        "File",
-        &[
-            Some(NewFile),
-            Some(OpenFolder),
-            Some(ReopenClosed),
-            None,
-            Some(Save),
-            Some(SaveAs),
-            Some(SaveAll),
-            None,
-            Some(CloseBuffer),
-            None,
-            Some(OpenSettings),
-            Some(SelectTheme),
-            None,
-            Some(Quit),
-        ],
-    ),
-    (
-        "Edit",
-        &[
-            Some(Undo),
-            Some(Redo),
-            None,
-            Some(Cut),
-            Some(Copy),
-            Some(Paste),
-            None,
-            Some(ToggleComment),
-            Some(DuplicateLine),
-            Some(DeleteLine),
-            Some(MoveLineUp),
-            Some(MoveLineDown),
-            Some(JoinLines),
-            Some(InsertLineAfter),
-            Some(InsertLineBefore),
-            None,
-            Some(Indent),
-            Some(Outdent),
-            Some(SortLines),
-            Some(UpperCase),
-            Some(LowerCase),
-        ],
-    ),
-    (
-        "Selection",
-        &[Some(SelectAll), Some(SelectLine), Some(SelectWord)],
-    ),
-    (
-        "Find",
-        &[
-            Some(Find),
-            Some(FindNext),
-            Some(FindPrev),
-            None,
-            Some(Replace),
-        ],
-    ),
-    (
-        "Goto",
-        &[
-            Some(GotoFile),
-            Some(GotoSymbol),
-            Some(GotoWorkspaceSymbol),
-            Some(GotoLine),
-            Some(SwitchBuffer),
-            None,
-            Some(GotoDefinition),
-            Some(FindReferences),
-            Some(JumpBack),
-            None,
-            Some(NextDiagnostic),
-            Some(PrevDiagnostic),
-        ],
-    ),
-    (
-        "Sidebar",
-        &[
-            Some(FocusSidebar),
-            Some(RevealInSidebar),
-            None,
-            Some(SidebarNewFile),
-            Some(SidebarNewFolder),
-            Some(SidebarRename),
-            Some(SidebarDuplicate),
-            None,
-            Some(SidebarCopy),
-            Some(SidebarCut),
-            Some(SidebarPaste),
-            Some(SidebarCopyPath),
-            None,
-            Some(SidebarDelete),
-            None,
-            Some(ToggleHidden),
-            Some(RefreshSidebar),
-        ],
-    ),
-    (
-        "View",
-        &[
-            Some(ToggleSidebar),
-            Some(ToggleMenuBar),
-            None,
-            Some(NextBuffer),
-            Some(PrevBuffer),
-            None,
-            Some(ZoomIn),
-            Some(ZoomOut),
-            Some(ZoomReset),
-        ],
-    ),
-    (
-        "Tools",
-        &[
-            Some(ShowCommands),
-            None,
-            Some(Completion),
-            Some(Hover),
-            Some(Rename),
-            Some(Format),
-            None,
-            Some(RestartLsp),
-        ],
-    ),
-    ("Help", &[Some(ShowKeymap), Some(ShowCommands)]),
-];
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item {
+    pub cmd: Command,
+    pub label: String,
+}
 
-/// Item label: the command name without its "Area: " prefix, plus a few nicer wordings.
-pub fn label(cmd: Command) -> String {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Menu {
+    pub title: String,
+    /// `None` is a separator.
+    pub items: Vec<Option<Item>>,
+}
+
+pub fn build(defs: &[MenuDef]) -> (Vec<Menu>, Vec<String>) {
+    let mut errs = vec![];
+    let menus = defs
+        .iter()
+        .map(|d| Menu {
+            title: d.title.clone(),
+            items: d
+                .items
+                .iter()
+                .filter_map(|s| {
+                    if s == "-" {
+                        return Some(None);
+                    }
+                    let (id, label) = match s.split_once(':') {
+                        Some((i, l)) => (i.trim(), Some(l.trim().to_string())),
+                        None => (s.trim(), None),
+                    };
+                    match commands::from_id(id) {
+                        Some(cmd) => Some(Some(Item {
+                            cmd,
+                            label: label.unwrap_or_else(|| default_label(cmd)),
+                        })),
+                        None => {
+                            errs.push(format!("menu {}: unknown command \"{id}\"", d.title));
+                            None
+                        }
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+    (menus, errs)
+}
+
+/// The command name without its "Area: " prefix, plus a few nicer wordings.
+pub fn default_label(cmd: Command) -> String {
     let special = match cmd {
         GotoFile => Some("Goto Anything…"),
         ShowCommands => Some("Command Palette…"),
@@ -154,6 +72,7 @@ pub fn label(cmd: Command) -> String {
         ShowKeymap => Some("Keyboard Shortcuts"),
         SelectTheme => Some("Color Theme…"),
         OpenSettings => Some("Settings & Languages…"),
+        ManageServers => Some("Language Servers…"),
         _ => None,
     };
     if let Some(s) = special {
@@ -161,8 +80,4 @@ pub fn label(cmd: Command) -> String {
     }
     let n = commands::name(cmd);
     n.split_once(": ").map(|(_, r)| r).unwrap_or(n).to_string()
-}
-
-pub fn items(menu: usize) -> &'static [Option<Command>] {
-    MENUS.get(menu).map(|m| m.1).unwrap_or(&[])
 }

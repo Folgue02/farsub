@@ -1,0 +1,4 @@
+name = "cpp"
+extensions = ["cc", "cpp", "cxx", "hpp", "hh", "hxx"]
+comment = "//"
+servers = ["clangd"]

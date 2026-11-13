@@ -1,0 +1,8 @@
+name = "bashls"
+command = "bash-language-server"
+args = ["start"]
+root_markers = []
+description = "Bash language server (shellcheck diagnostics when shellcheck is installed)"
+
+[install]
+npm = ["bash-language-server"]

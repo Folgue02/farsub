@@ -7,10 +7,14 @@ mod editor;
 mod fileops;
 mod gui;
 mod highlight;
+mod installer;
 mod keymap;
 mod keys;
 mod lsp;
 mod menu;
+#[cfg(target_os = "macos")]
+mod native_menu;
+mod packages;
 mod palette;
 #[cfg(test)]
 mod tests;

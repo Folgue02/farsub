@@ -15,10 +15,12 @@ use crate::config::{self, Config};
 use crate::editor::{Buffer, Pos, char_len, is_word};
 use crate::fileops;
 use crate::highlight::{HlCache, Syntax};
-use crate::keymap::{self, Ctx};
+use crate::installer::{self, InstallEvent};
+use crate::keymap::{self, Ctx, Keymap};
 use crate::keys::{Key, KeyCode};
 use crate::lsp::{Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
-use crate::menu::{self, MenuState};
+use crate::menu::{self, Menu, MenuState};
+use crate::packages;
 use crate::palette::{Action, Item, Mode, Palette};
 use crate::tree::Tree;
 
@@ -26,6 +28,11 @@ pub enum AppEvent {
     Lsp(usize, Value),
     LspExit(usize),
     Files(PathBuf, Vec<String>),
+    Install(String, InstallEvent),
+    Packages(Box<packages::Loaded>),
+    PackageInstalled(Result<String, String>),
+    /// A native menu item was chosen (command id).
+    Menu(String),
 }
 
 /// Event sender that also wakes the GUI so background results show up immediately.
@@ -72,6 +79,7 @@ pub enum PromptKind {
     ReplaceFind,
     ReplaceWith(String),
     RenameSymbol,
+    PackageUrl,
 }
 
 impl PromptKind {
@@ -102,6 +110,8 @@ impl Prompt {
 
 pub enum ConfirmKind {
     Trash(Vec<PathBuf>),
+    UninstallServer(String),
+    RemovePackage(String),
     CloseBuffer(usize),
     Quit,
 }
@@ -116,6 +126,22 @@ pub enum Modal {
     Prompt(Prompt),
     Confirm(Confirm),
     Keymap(KeymapView),
+    Servers(ServersView),
+}
+
+/// The language-server manager (like :Mason).
+pub struct ServersView {
+    pub sel: usize,
+    pub details: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ServerStatus {
+    Installed(PathBuf),
+    OnPath(PathBuf),
+    Installing,
+    Failed(String),
+    Missing,
 }
 
 /// The keyboard-shortcut reference (Help → Keyboard Shortcuts).
@@ -127,14 +153,14 @@ pub struct KeymapView {
 
 #[derive(Clone, Debug)]
 pub struct KeymapRow {
-    pub section: &'static str,
+    pub section: String,
     pub keys: String,
     pub desc: String,
     pub cmd: Option<Command>,
 }
 
 /// All shortcuts grouped by where they apply, filtered by a search string.
-pub fn keymap_rows(query: &str) -> Vec<KeymapRow> {
+pub fn keymap_rows(km: &Keymap, query: &str) -> Vec<KeymapRow> {
     let mut rows = vec![];
     for (ctx, section) in [
         (Ctx::Global, "General"),
@@ -142,14 +168,15 @@ pub fn keymap_rows(query: &str) -> Vec<KeymapRow> {
         (Ctx::Sidebar, "Sidebar (when focused)"),
     ] {
         for (cmd, name, _) in COMMANDS {
-            let keys: Vec<String> = keymap::BINDINGS
+            let keys: Vec<String> = km
+                .bindings
                 .iter()
-                .filter(|b| b.1 == *cmd && b.2 == ctx)
-                .map(|b| keymap::display(b.0))
+                .filter(|b| b.cmd == *cmd && b.ctx == ctx)
+                .map(|b| keymap::display(&b.keys))
                 .collect();
             if !keys.is_empty() {
                 rows.push(KeymapRow {
-                    section,
+                    section: section.to_string(),
                     keys: keys.join(", "),
                     desc: name.to_string(),
                     cmd: Some(*cmd),
@@ -157,18 +184,18 @@ pub fn keymap_rows(query: &str) -> Vec<KeymapRow> {
             }
         }
     }
-    for (section, keys, desc) in keymap::DOC_KEYS {
+    for d in &km.docs {
         rows.push(KeymapRow {
-            section,
-            keys: keymap::display(keys),
-            desc: desc.to_string(),
+            section: d.section.clone(),
+            keys: keymap::display(&d.keys),
+            desc: d.description.clone(),
             cmd: None,
         });
     }
     for (cmd, name, in_palette) in COMMANDS {
-        if *in_palette && keymap::keys_for(*cmd).is_empty() {
+        if *in_palette && km.keys_for(*cmd).is_empty() {
             rows.push(KeymapRow {
-                section: "No shortcut (use the command palette)",
+                section: "No shortcut (use the command palette)".into(),
                 keys: String::new(),
                 desc: name.to_string(),
                 cmd: Some(*cmd),
@@ -259,6 +286,14 @@ pub struct App {
     /// Open menu (menu bar navigation), if any.
     pub menu: Option<MenuState>,
     pub menu_bar_visible: bool,
+    pub keymap: Keymap,
+    pub menus: Vec<Menu>,
+    /// Server name → install log (present while installing or after a failure).
+    pub install_log: HashMap<String, Vec<String>>,
+    pub installing: HashSet<String>,
+    pub install_failed: HashMap<String, String>,
+    /// Installed Sublime packages (folder names).
+    pub packages: Vec<String>,
     tx: EventTx,
 }
 
@@ -355,6 +390,7 @@ impl App {
     pub fn new(root: PathBuf, config: Config, tx: EventTx) -> Self {
         let syn = Syntax::load(&config.editor.theme);
         let mut tree = Tree::new();
+        tree.anim = Duration::from_millis(if config.editor.animations { 160 } else { 0 });
         tree.set_root(root.clone(), false);
         let mut app = App {
             root,
@@ -390,11 +426,23 @@ impl App {
             theme_before: None,
             menu: None,
             menu_bar_visible: config.editor.show_menu_bar,
+            keymap: Keymap::default(),
+            menus: vec![],
+            install_log: HashMap::new(),
+            installing: HashSet::new(),
+            install_failed: HashMap::new(),
+            packages: vec![],
             config,
             tx,
         };
-        if let Some(e) = app.config.error.clone() {
+        let errs = app.rebuild_keys_and_menus();
+        if let Some(e) = app.config.error.clone().or(errs) {
             app.msg(format!("Config error: {e}"));
+        }
+        // User syntaxes/themes from Packages/ load in the background.
+        if let Some(dir) = app.config.packages_dir().filter(|d| d.is_dir()) {
+            app.packages = packages::list(&dir);
+            packages::load_async(Some(dir), app.tx.clone());
         }
         app
     }
@@ -488,6 +536,17 @@ impl App {
             return true;
         }
         if self.modal.is_some() {
+            // Cmd+V into prompts/palettes even when a native menu swallowed the paste event.
+            if k.ctrl
+                && !k.shift
+                && !k.alt
+                && k.code == KeyCode::Char('v')
+                && matches!(self.modal, Some(Modal::Prompt(_) | Modal::Palette(_)))
+            {
+                let t = self.clipboard_text();
+                self.on_paste(&t);
+                return true;
+            }
             self.modal_key(k);
             return true;
         }
@@ -497,11 +556,11 @@ impl App {
         }
         let sidebar = self.focus == Focus::Sidebar && self.sidebar_visible;
         let own = if sidebar {
-            keymap::lookup(k, Ctx::Sidebar)
+            self.keymap.lookup(k, Ctx::Sidebar)
         } else {
             None
         };
-        if let Some(cmd) = own.or_else(|| keymap::lookup(k, Ctx::Global)) {
+        if let Some(cmd) = own.or_else(|| self.keymap.lookup(k, Ctx::Global)) {
             self.run(cmd);
             return true;
         }
@@ -532,6 +591,7 @@ impl App {
                     v.sel = 0;
                     v.scroll = 0;
                 }
+                Some(Modal::Servers(_)) => self.servers_char(c),
                 Some(Modal::Palette(p)) => {
                     p.query.push(c);
                     self.palette_query_changed();
@@ -622,6 +682,16 @@ impl App {
                     self.msg(format!("{name} exited"));
                 }
             }
+            AppEvent::Install(name, ev) => self.on_install(name, ev),
+            AppEvent::Packages(l) => self.on_packages(*l),
+            AppEvent::PackageInstalled(res) => match res {
+                Ok(name) => {
+                    self.msg(format!("Installed package {name} — loading syntaxes…"));
+                    self.run(Command::ReloadPackages);
+                }
+                Err(e) => self.msg(format!("Package install failed: {e}")),
+            },
+            AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Files(root, list) => {
                 self.indexing = None;
                 self.files.insert(root.clone(), list);
@@ -657,6 +727,7 @@ impl App {
             }
             Some(Modal::Prompt(p)) => self.prompt_key(k, p),
             Some(Modal::Keymap(v)) => self.keymap_key(k, v),
+            Some(Modal::Servers(v)) => self.servers_key(k, v),
             Some(Modal::Confirm(c)) => match k.code {
                 KeyCode::Enter => self.confirm(c.kind),
                 KeyCode::Esc => {}
@@ -682,6 +753,36 @@ impl App {
                 }
             }
             ConfirmKind::Quit => self.quit = true,
+            ConfirmKind::UninstallServer(name) => {
+                let Some(data) = self.config.data_dir.clone() else {
+                    return;
+                };
+                match installer::uninstall(&data, &name) {
+                    Ok(()) => {
+                        self.install_log.remove(&name);
+                        self.lsp.reset_server(&name);
+                        self.msg(format!("Uninstalled {name}"));
+                        self.reopen_lsp_docs();
+                    }
+                    Err(e) => self.msg(format!("Uninstall failed: {e}")),
+                }
+                self.modal = Some(Modal::Servers(ServersView {
+                    sel: self.servers_sel_of(&name),
+                    details: false,
+                }));
+            }
+            ConfirmKind::RemovePackage(name) => {
+                let Some(dir) = self.config.packages_dir() else {
+                    return;
+                };
+                match fileops::trash(&[dir.join(&name)]) {
+                    Ok(()) => {
+                        self.msg(format!("Moved package {name} to the Trash"));
+                        self.run(Command::ReloadPackages);
+                    }
+                    Err(e) => self.msg(format!("Remove failed: {e}")),
+                }
+            }
         }
     }
 
@@ -892,6 +993,16 @@ impl App {
                     .unwrap_or(0);
                 self.msg(format!("Replaced {n} occurrence(s)"));
             }
+            PromptKind::PackageUrl => {
+                if input.is_empty() {
+                    return;
+                }
+                let Some(dir) = self.config.packages_dir() else {
+                    return self.msg("No config folder for packages");
+                };
+                self.msg(format!("Cloning {input}…"));
+                packages::install_git(dir, input, self.tx.clone());
+            }
             PromptKind::RenameSymbol => {
                 if input.is_empty() {
                     return;
@@ -960,7 +1071,7 @@ impl App {
 
     /// Single-letter sidebar commands (arrive as text so Shift+A gives 'A').
     fn tree_char(&mut self, c: char) {
-        if let Some(cmd) = keymap::lookup(keymap::key_for_char(c), Ctx::Sidebar) {
+        if let Some(cmd) = self.keymap.lookup(keymap::key_for_char(c), Ctx::Sidebar) {
             self.run(cmd);
         }
     }
@@ -1185,7 +1296,7 @@ impl App {
 
     fn set_buffer_path(&mut self, i: usize, path: PathBuf) {
         let first = self.buffers[i].lines[0].clone();
-        let lang = self.config.language_for(&path).cloned();
+        let lang = self.config.language_for(&path, &first).cloned();
         let syntax = lang
             .as_ref()
             .and_then(|l| l.syntax.as_deref())
@@ -1220,8 +1331,15 @@ impl App {
             return self.msg(format!("Config error: {e}"));
         }
         let langs_changed =
-            format!("{:?}", new.languages) != format!("{:?}", self.config.languages);
+            new.languages != self.config.languages || new.servers != self.config.servers;
+        let data = self.config.data_dir.clone();
         self.config = new;
+        if self.config.data_dir.is_none() {
+            self.config.data_dir = data;
+        }
+        if let Some(e) = self.rebuild_keys_and_menus() {
+            self.msg(format!("Config error: {e}"));
+        }
         if !self.syn.set_theme(&self.config.editor.theme) {
             self.msg(format!("Unknown theme '{}'", self.config.editor.theme));
         }
@@ -1229,9 +1347,15 @@ impl App {
             b.hl.invalidate(0);
         }
         self.font_size = self.config.editor.font_size;
+        self.tree.anim = Duration::from_millis(if self.config.editor.animations {
+            160
+        } else {
+            0
+        });
         for i in 0..self.buffers.len() {
             if let Some(p) = self.buffers[i].path.clone() {
-                let lang = self.config.language_for(&p).cloned();
+                let first = self.buffers[i].lines[0].clone();
+                let lang = self.config.language_for(&p, &first).cloned();
                 let b = &mut self.buffers[i];
                 b.apply_language(lang.as_ref(), &self.config.editor);
             }
@@ -1343,7 +1467,7 @@ impl App {
                 .filter(|c| c.2)
                 .map(|(c, name, _)| Item {
                     label: name.to_string(),
-                    detail: keymap::shortcut(*c),
+                    detail: self.keymap.shortcut(*c),
                     action: Action::Command(*c),
                 })
                 .collect(),
@@ -1394,6 +1518,15 @@ impl App {
                     })
                     .collect()
             }
+            Mode::Packages => self
+                .packages
+                .iter()
+                .map(|n| Item {
+                    label: n.clone(),
+                    detail: String::new(),
+                    action: Action::Package(n.clone()),
+                })
+                .collect(),
             Mode::Locations => return,
         };
         if let Some(p) = self.palette() {
@@ -1554,6 +1687,12 @@ impl App {
                     self.focus = Focus::Editor;
                 }
             }
+            Action::Package(n) => {
+                self.modal = Some(Modal::Confirm(Confirm {
+                    message: format!("Move package {n} to the Trash?"),
+                    kind: ConfirmKind::RemovePackage(n),
+                }));
+            }
             Action::Theme(n) => {
                 self.apply_theme(&n);
                 self.theme_before = None;
@@ -1673,7 +1812,14 @@ impl App {
                     );
                 }
                 self.msg(format!("Saved {name} ({lines} lines)"));
-                if saved.is_some() && saved == self.config.path {
+                let in_config =
+                    saved
+                        .as_ref()
+                        .zip(self.config.config_dir())
+                        .is_some_and(|(p, d)| {
+                            p.starts_with(&d) && p.extension().is_some_and(|e| e == "toml")
+                        });
+                if in_config {
                     self.reload_config();
                 }
                 self.tree.refresh();
@@ -1728,7 +1874,7 @@ impl App {
         if self.hover.take().is_some() && k.code == KeyCode::Esc {
             return;
         }
-        if let Some(cmd) = keymap::lookup(k, Ctx::Editor) {
+        if let Some(cmd) = self.keymap.lookup(k, Ctx::Editor) {
             self.run(cmd);
             return;
         }
@@ -1813,6 +1959,237 @@ impl App {
         }
     }
 
+    // ===================================================================== keys, menus, servers, packages
+
+    /// Rebuild the keymap and menus from config; returns a combined error message.
+    fn rebuild_keys_and_menus(&mut self) -> Option<String> {
+        let (km, mut errs) = Keymap::from_config(&self.config);
+        let (menus, merrs) = menu::build(&self.config.menus);
+        errs.extend(merrs);
+        self.keymap = km;
+        self.menus = menus;
+        (!errs.is_empty()).then(|| errs.join("; "))
+    }
+
+    /// System clipboard text (falls back to the editor's own clipboard).
+    pub fn clipboard_text(&self) -> String {
+        arboard::Clipboard::new()
+            .and_then(|mut c| c.get_text())
+            .unwrap_or_else(|_| self.clip.clone())
+    }
+
+    /// A native menu item fired. If it has a shortcut, replay that key so the focused pane
+    /// decides (Cmd+C copies files in the sidebar, text in the editor); otherwise run it.
+    pub fn on_menu_command(&mut self, id: &str) {
+        let Some(cmd) = crate::commands::from_id(id) else {
+            return;
+        };
+        if !self.enabled(cmd) {
+            return;
+        }
+        let key = self
+            .keymap
+            .primary(cmd)
+            .filter(|b| b.ctx != Ctx::Sidebar)
+            .map(|b| keymap::key_of(&b.spec));
+        match key {
+            Some(k)
+                if self
+                    .keymap
+                    .lookup(k, Ctx::Global)
+                    .or(self.keymap.lookup(k, Ctx::Editor))
+                    .is_some() =>
+            {
+                self.on_key(k);
+            }
+            _ => self.run(cmd),
+        }
+    }
+
+    pub fn server_status(&self, s: &crate::config::ServerConfig) -> ServerStatus {
+        if self.installing.contains(&s.name) {
+            return ServerStatus::Installing;
+        }
+        if let Some(d) = &self.config.data_dir
+            && let Some(b) = installer::installed_bin(d, s)
+        {
+            return ServerStatus::Installed(b);
+        }
+        if let Some(e) = self.install_failed.get(&s.name) {
+            return ServerStatus::Failed(e.clone());
+        }
+        match crate::lsp::find_server(&s.command) {
+            Some(p) => ServerStatus::OnPath(p),
+            None => ServerStatus::Missing,
+        }
+    }
+
+    /// Servers in the manager's order: those for the current file's language first.
+    pub fn server_rows(&self) -> Vec<crate::config::ServerConfig> {
+        let cur = self
+            .buf()
+            .and_then(|b| b.lang.clone())
+            .and_then(|l| self.config.language(&l).cloned());
+        let mut v = self.config.servers.clone();
+        v.sort_by_key(|s| {
+            let rank = cur
+                .as_ref()
+                .and_then(|l| l.servers.iter().position(|n| n == &s.name))
+                .unwrap_or(usize::MAX);
+            (rank, s.name.clone())
+        });
+        v
+    }
+
+    fn servers_sel_of(&self, name: &str) -> usize {
+        self.server_rows()
+            .iter()
+            .position(|s| s.name == name)
+            .unwrap_or(0)
+    }
+
+    pub fn install_server(&mut self, name: &str) {
+        let Some(s) = self.config.server(name).cloned() else {
+            return;
+        };
+        if s.install.is_none() {
+            return self.msg(format!(
+                "{name} can't be installed automatically — install `{}` yourself",
+                s.command
+            ));
+        }
+        let Some(data) = self.config.data_dir.clone() else {
+            return self.msg("No data folder to install into (set $HOME or $FARSUB_DATA)");
+        };
+        if !self.installing.insert(name.to_string()) {
+            return;
+        }
+        self.install_failed.remove(name);
+        self.install_log.insert(
+            name.to_string(),
+            vec![format!(
+                "installing {name} ({})",
+                s.install.as_ref().unwrap().source()
+            )],
+        );
+        self.msg(format!("Installing {name}…"));
+        installer::install(data, s, self.tx.clone());
+    }
+
+    fn on_install(&mut self, name: String, ev: InstallEvent) {
+        match ev {
+            InstallEvent::Log(l) => {
+                let log = self.install_log.entry(name).or_default();
+                log.push(l);
+                if log.len() > 200 {
+                    log.remove(0);
+                }
+            }
+            InstallEvent::Done(res) => {
+                self.installing.remove(&name);
+                match res {
+                    Ok(_) => {
+                        self.msg(format!("{name} installed"));
+                        self.lsp.reset_server(&name);
+                        self.reopen_lsp_docs();
+                    }
+                    Err(e) => {
+                        self.msg(format!("{name}: install failed — {e}"));
+                        self.install_failed.insert(name, e);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start servers for open files that don't have one yet (after installs/uninstalls).
+    fn reopen_lsp_docs(&mut self) {
+        self.lsp_warned.clear();
+        for i in 0..self.buffers.len() {
+            let alive = self.buffers[i]
+                .lsp_client
+                .and_then(|c| self.lsp.clients.get(&c))
+                .is_some_and(|c| c.alive);
+            if !alive {
+                self.buffers[i].lsp_client = None;
+                self.lsp_open(i);
+            }
+        }
+    }
+
+    fn servers_key(&mut self, k: Key, mut v: ServersView) {
+        let n = self.server_rows().len();
+        match k.code {
+            KeyCode::Esc => return,
+            KeyCode::Up => v.sel = v.sel.saturating_sub(1),
+            KeyCode::Down => v.sel = (v.sel + 1).min(n.saturating_sub(1)),
+            KeyCode::Home => v.sel = 0,
+            KeyCode::End => v.sel = n.saturating_sub(1),
+            KeyCode::Enter => v.details = !v.details,
+            _ => {}
+        }
+        self.modal = Some(Modal::Servers(v));
+    }
+
+    fn servers_char(&mut self, c: char) {
+        let rows = self.server_rows();
+        let Some(Modal::Servers(v)) = &mut self.modal else {
+            return;
+        };
+        let n = rows.len();
+        let sel = v.sel.min(n.saturating_sub(1));
+        match c {
+            'j' => v.sel = (v.sel + 1).min(n.saturating_sub(1)),
+            'k' => v.sel = v.sel.saturating_sub(1),
+            ' ' => v.details = !v.details,
+            'i' | 'u' => {
+                if let Some(s) = rows.get(sel) {
+                    let name = s.name.clone();
+                    self.install_server(&name);
+                }
+            }
+            'x' | 'X' => {
+                let Some(s) = rows.get(sel) else { return };
+                let managed = self
+                    .config
+                    .data_dir
+                    .as_ref()
+                    .is_some_and(|d| installer::installed_bin(d, s).is_some());
+                if !managed {
+                    return self.msg(format!("{} wasn't installed by farsub", s.name));
+                }
+                self.modal = Some(Modal::Confirm(Confirm {
+                    message: format!("Uninstall {}?", s.name),
+                    kind: ConfirmKind::UninstallServer(s.name.clone()),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    fn on_packages(&mut self, l: packages::Loaded) {
+        let n_syn = l.syntaxes.syntaxes().len();
+        self.syn.ss = l.syntaxes;
+        self.syn.user_themes = l.themes;
+        self.syn.set_theme(&self.config.editor.theme);
+        self.packages = l.packages;
+        // Re-detect syntaxes for open files (a package may provide a better grammar).
+        for i in 0..self.buffers.len() {
+            match self.buffers[i].path.clone() {
+                Some(p) => self.set_buffer_path(i, p),
+                None => self.buffers[i].hl.invalidate(0),
+            }
+        }
+        if !l.errors.is_empty() {
+            self.msg(format!("Package errors: {}", l.errors.join("; ")));
+        } else if !self.packages.is_empty() {
+            self.msg(format!(
+                "Loaded {} package(s), {n_syn} syntaxes",
+                self.packages.len()
+            ));
+        }
+    }
+
     // ===================================================================== menu & keymap
 
     /// Whether a command can do anything right now (menus grey out the rest).
@@ -1832,6 +2209,7 @@ impl App {
             ReopenClosed => !self.closed.is_empty(),
             JumpBack => !self.jumps.is_empty(),
             SidebarPaste => self.file_clip.is_some(),
+            RemovePackage => !self.packages.is_empty(),
             _ => true,
         }
     }
@@ -1845,7 +2223,13 @@ impl App {
     }
 
     pub fn menu_activate(&mut self, menu: usize, item: usize) {
-        if let Some(Some(cmd)) = menu::items(menu).get(item).copied() {
+        let cmd = self
+            .menus
+            .get(menu)
+            .and_then(|m| m.items.get(item))
+            .and_then(|i| i.as_ref())
+            .map(|i| i.cmd);
+        if let Some(cmd) = cmd {
             if self.enabled(cmd) {
                 self.menu = None;
                 self.run(cmd);
@@ -1855,8 +2239,12 @@ impl App {
 
     fn menu_key(&mut self, k: Key) {
         let Some(mut m) = self.menu else { return };
-        let n_menus = menu::MENUS.len();
-        let items = menu::items(m.menu);
+        let n_menus = self.menus.len().max(1);
+        let items: Vec<Option<Command>> = self
+            .menus
+            .get(m.menu)
+            .map(|mm| mm.items.iter().map(|i| i.as_ref().map(|i| i.cmd)).collect())
+            .unwrap_or_default();
         let step = |m: &MenuState, d: isize| -> usize {
             let n = items.len() as isize;
             let mut i = m.item as isize;
@@ -1903,13 +2291,16 @@ impl App {
     fn menu_char(&mut self, c: char) {
         let Some(m) = self.menu else { return };
         let c = c.to_ascii_lowercase();
-        let hits: Vec<usize> = menu::items(m.menu)
+        let Some(menu) = self.menus.get(m.menu) else {
+            return;
+        };
+        let hits: Vec<usize> = menu
+            .items
             .iter()
             .enumerate()
             .filter(|(_, it)| {
-                it.is_some_and(|cmd| {
-                    self.enabled(cmd) && menu::label(cmd).to_lowercase().starts_with(c)
-                })
+                it.as_ref()
+                    .is_some_and(|i| self.enabled(i.cmd) && i.label.to_lowercase().starts_with(c))
             })
             .map(|(i, _)| i)
             .collect();
@@ -1927,11 +2318,14 @@ impl App {
     }
 
     fn keymap_key(&mut self, k: Key, mut v: KeymapView) {
-        let n = keymap_rows(&v.query).len();
+        let n = keymap_rows(&self.keymap, &v.query).len();
         match k.code {
             KeyCode::Esc => return,
             KeyCode::Enter => {
-                if let Some(cmd) = keymap_rows(&v.query).get(v.sel).and_then(|r| r.cmd) {
+                if let Some(cmd) = keymap_rows(&self.keymap, &v.query)
+                    .get(v.sel)
+                    .and_then(|r| r.cmd)
+                {
                     self.run(cmd);
                     return;
                 }
@@ -2087,6 +2481,38 @@ impl App {
                 }
                 self.sidebar_nav(cmd);
             }
+            ManageServers => {
+                self.completion = None;
+                self.hover = None;
+                self.modal = Some(Modal::Servers(ServersView {
+                    sel: 0,
+                    details: false,
+                }));
+            }
+            InstallPackage => self.prompt(
+                "Install package from git URL (Sublime packages with .sublime-syntax / .tmTheme)",
+                "https://github.com/",
+                PromptKind::PackageUrl,
+            ),
+            RemovePackage => {
+                if self.packages.is_empty() {
+                    return self.msg("No packages installed");
+                }
+                let mut p = Palette::new(Mode::Packages, "");
+                p.title = "Remove package".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+            }
+            BrowsePackages => {
+                if let Some(d) = self.config.packages_dir() {
+                    packages::reveal(&d);
+                }
+            }
+            ReloadPackages => {
+                let dir = self.config.packages_dir();
+                self.packages = dir.as_deref().map(packages::list).unwrap_or_default();
+                packages::load_async(dir, self.tx.clone());
+            }
             ShowKeymap => {
                 self.completion = None;
                 self.hover = None;
@@ -2168,7 +2594,9 @@ impl App {
         if self.buffers.is_empty() {
             return false;
         }
-        if matches!(k.code, KeyCode::Char(_)) && !k.ctrl && keymap::lookup(k, Ctx::Editor).is_none()
+        if matches!(k.code, KeyCode::Char(_))
+            && !k.ctrl
+            && self.keymap.lookup(k, Ctx::Editor).is_none()
         {
             return false;
         }
@@ -2272,7 +2700,10 @@ impl App {
                 self.clip_line = line;
                 return;
             }
-            Paste => return self.paste_text(self.clip.clone()),
+            Paste => {
+                let t = self.clipboard_text();
+                return self.paste_text(t);
+            }
             Find => {
                 let b = &self.buffers[self.cur];
                 let def = b
@@ -2534,6 +2965,18 @@ impl App {
 
     // ===================================================================== LSP plumbing
 
+    /// The first configured server for a language that is installed or on PATH.
+    fn pick_server(
+        &self,
+        lang: &crate::config::LanguageConfig,
+    ) -> Option<(crate::config::ServerConfig, PathBuf)> {
+        let data = self.config.data_dir.as_deref();
+        lang.servers
+            .iter()
+            .filter_map(|n| self.config.server(n))
+            .find_map(|s| installer::resolve(data, s).map(|bin| (s.clone(), bin)))
+    }
+
     fn lsp_open(&mut self, i: usize) {
         let b = &self.buffers[i];
         let (Some(path), Some(lang)) = (b.path.clone(), b.lang.clone()) else {
@@ -2542,10 +2985,38 @@ impl App {
         let Some(cfg) = self.config.language(&lang).cloned() else {
             return;
         };
-        if cfg.server.is_none() {
+        if cfg.servers.is_empty() {
             return;
         }
-        match self.lsp.client_for(&cfg, &path) {
+        let Some((server, bin)) = self.pick_server(&cfg) else {
+            if self.lsp_warned.insert(lang.clone()) {
+                let installable: Vec<String> = cfg
+                    .servers
+                    .iter()
+                    .filter(|n| self.config.server(n).is_some_and(|s| s.install.is_some()))
+                    .cloned()
+                    .collect();
+                if installable.is_empty() {
+                    let cmds: Vec<String> = cfg
+                        .servers
+                        .iter()
+                        .filter_map(|n| self.config.server(n))
+                        .map(|s| s.command.clone())
+                        .collect();
+                    self.msg(format!(
+                        "No {lang} language server found (install {})",
+                        cmds.join(" or ")
+                    ));
+                } else {
+                    self.msg(format!(
+                        "No {lang} language server installed — Tools › Language Servers can install {}",
+                        installable.join(", ")
+                    ));
+                }
+            }
+            return;
+        };
+        match self.lsp.client_for(&cfg, &server, &bin, &path) {
             Ok(cid) => {
                 let b = &mut self.buffers[i];
                 b.lsp_client = Some(cid);
@@ -3264,11 +3735,11 @@ impl App {
             return String::new();
         };
         match b.lsp_client.and_then(|c| self.lsp.clients.get(&c)) {
-            Some(c) if !c.alive => format!("{} (dead)", c.cmd),
-            Some(c) if !c.ready => format!("{} starting…", c.cmd),
+            Some(c) if !c.alive => format!("{} (dead)", c.server),
+            Some(c) if !c.ready => format!("{} starting…", c.server),
             Some(c) => match &c.progress {
-                Some(p) => format!("{} · {}", c.cmd, p.chars().take(40).collect::<String>()),
-                None => c.cmd.clone(),
+                Some(p) => format!("{} · {}", c.server, p.chars().take(40).collect::<String>()),
+                None => c.server.clone(),
             },
             None => String::new(),
         }
@@ -3382,9 +3853,13 @@ fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
 }
 
 fn first_enabled(app: &App, menu: usize) -> usize {
-    menu::items(menu)
-        .iter()
-        .position(|c| c.is_some_and(|c| app.enabled(c)))
+    app.menus
+        .get(menu)
+        .and_then(|m| {
+            m.items
+                .iter()
+                .position(|c| c.as_ref().is_some_and(|c| app.enabled(c.cmd)))
+        })
         .unwrap_or(0)
 }
 

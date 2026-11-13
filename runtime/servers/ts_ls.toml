@@ -1,0 +1,12 @@
+name = "ts_ls"
+command = "typescript-language-server"
+args = ["--stdio"]
+root_markers = ["tsconfig.json", "jsconfig.json", "package.json"]
+description = "TypeScript & JavaScript language server (tsserver)"
+
+[initialization_options]
+hostInfo = "farsub"
+
+[install]
+npm = ["typescript-language-server", "typescript"]
+bin = "typescript-language-server"

@@ -1,0 +1,4 @@
+name = "typescript"
+extensions = ["ts", "mts", "cts"]
+comment = "//"
+servers = ["ts_ls"]

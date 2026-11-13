@@ -8,7 +8,7 @@ use eframe::egui::{self, Event, Key, Modifiers};
 use egui_kittest::Harness;
 
 use crate::app::{Focus, Modal};
-use crate::config::{Config, EditorConfig, default_languages};
+use crate::config::{Config, EditorConfig};
 use crate::gui::Gui;
 
 fn tmpdir(name: &str) -> PathBuf {
@@ -29,13 +29,16 @@ fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 fn test_config(root: &Path) -> Config {
-    Config {
-        editor: EditorConfig::default(),
-        languages: default_languages(),
-        // Never touch the user's real config.
-        path: Some(root.join(".farsub-test-config.toml")),
-        error: None,
-    }
+    let mut c = Config::builtin();
+    c.editor = EditorConfig {
+        show_menu_bar: true,
+        animations: false,
+        ..EditorConfig::default()
+    };
+    // Never touch the user's real config or data folders.
+    c.path = Some(root.join(".farsub-test-config.toml"));
+    c.data_dir = Some(root.join(".farsub-test-data"));
+    c
 }
 
 fn harness(root: &Path) -> Harness<'static, Gui> {
@@ -470,14 +473,14 @@ fn keymap_viewer_search_and_run() {
     press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Slash);
     assert!(matches!(h.state().app.modal, Some(Modal::Keymap(_))));
     // Every bound command and the sidebar keys are listed.
-    let all = crate::app::keymap_rows("");
+    let all = crate::app::keymap_rows(&h.state().app.keymap, "");
     assert!(all.iter().any(|r| r.section.starts_with("Sidebar")
         && r.desc.contains("New Folder")
         && r.keys.contains("Shift+A")));
     assert!(all.iter().any(|r| r.desc.contains("Goto Anything")));
     shot(&mut h, "keymap");
     typ(&mut h, "duplicate line");
-    let rows = crate::app::keymap_rows("duplicate line");
+    let rows = crate::app::keymap_rows(&h.state().app.keymap, "duplicate line");
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(rows[0].keys.contains("Shift+D"));
     shot(&mut h, "keymap_filtered");
@@ -488,4 +491,219 @@ fn keymap_viewer_search_and_run() {
         h.state().app.buf().unwrap().lines[..2],
         ["one".to_string(), "one".to_string()]
     );
+}
+
+fn fake_server_config(root: &Path) -> Config {
+    let mut c = test_config(root);
+    c.merge_str(
+        r#"
+        [[languages]]
+        name = "fakelang"
+        extensions = ["fake"]
+        comment = ";;"
+        servers = ["fake_ls"]
+
+        [[servers]]
+        name = "fake_ls"
+        command = "fake-ls-not-on-path"
+        description = "A pretend server installed by a script"
+        [servers.install]
+        script = "echo compiling fake-ls; printf '#!/bin/sh\nsleep 30\n' > fake-ls; chmod +x fake-ls"
+        bin = "fake-ls"
+        "#,
+    )
+    .unwrap();
+    c
+}
+
+#[test]
+#[cfg(unix)]
+fn server_manager_install_and_uninstall() {
+    let d = project("servers", &[("a.fake", "hello\n")]);
+    let gui = Gui::headless(d.clone(), fake_server_config(&d));
+    let mut h = Harness::builder()
+        .with_size(egui::Vec2::new(1200.0, 720.0))
+        .with_accessibility_check(false)
+        .wgpu()
+        .build_ui_state(|ui, g: &mut Gui| g.frame(ui), gui);
+    h.state_mut().app.open_file(&d.join("a.fake"), true);
+    steps(&mut h, 2);
+    // Opening the file explains how to get a server.
+    let msg = h.state().app.status.clone().unwrap().0;
+    assert!(
+        msg.contains("Language Servers") && msg.contains("fake_ls"),
+        "{msg}"
+    );
+
+    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::L);
+    assert!(matches!(h.state().app.modal, Some(Modal::Servers(_))));
+    // The current file's servers are listed first.
+    assert_eq!(h.state().app.server_rows()[0].name, "fake_ls");
+    let names: Vec<String> = h
+        .state()
+        .app
+        .server_rows()
+        .iter()
+        .map(|s| s.name.clone())
+        .collect();
+    for want in ["pyright", "basedpyright", "pylsp", "ts_ls", "bashls"] {
+        assert!(
+            names.iter().any(|n| n == want),
+            "{want} missing from {names:?}"
+        );
+    }
+    shot(&mut h, "servers");
+    typ(&mut h, "i");
+    let ok = wait(&mut h, 20, |g| {
+        let s = g.app.config.server("fake_ls").unwrap();
+        matches!(
+            g.app.server_status(s),
+            crate::app::ServerStatus::Installed(_)
+        )
+    });
+    assert!(
+        ok,
+        "log={:?} failed={:?} status={:?}",
+        h.state().app.install_log.get("fake_ls"),
+        h.state().app.install_failed,
+        h.state().app.status
+    );
+    assert!(wait(&mut h, 1, |g| {
+        let s = g.app.config.server("fake_ls").unwrap();
+        matches!(
+            g.app.server_status(s),
+            crate::app::ServerStatus::Installed(_)
+        )
+    }));
+    assert!(
+        h.state().app.install_log["fake_ls"]
+            .iter()
+            .any(|l| l == "compiling fake-ls")
+    );
+    // Installing starts the server for the open file.
+    assert!(h.state().app.buffers[0].lsp_client.is_some());
+    press(&mut h, Modifiers::NONE, Key::Enter); // details
+    shot(&mut h, "servers_details");
+    typ(&mut h, "x");
+    assert!(matches!(h.state().app.modal, Some(Modal::Confirm(_))));
+    typ(&mut h, "y");
+    let s = h.state().app.config.server("fake_ls").unwrap().clone();
+    assert_eq!(
+        h.state().app.server_status(&s),
+        crate::app::ServerStatus::Missing
+    );
+    assert!(
+        matches!(h.state().app.modal, Some(Modal::Servers(_))),
+        "back in the manager"
+    );
+    h.state_mut().app.lsp.shutdown();
+}
+
+const TM_THEME: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>name</key><string>Farsub Test Theme</string>
+<key>settings</key><array>
+<dict><key>settings</key><dict>
+<key>background</key><string>#102030</string><key>foreground</key><string>#E0E0E0</string>
+</dict></dict>
+<dict><key>scope</key><string>keyword</string><key>settings</key><dict><key>foreground</key><string>#FF8800</string></dict></dict>
+</array></dict></plist>"#;
+
+#[test]
+fn sublime_packages_add_syntax_and_theme() {
+    let syntax = "%YAML 1.2\n---\nname: Farsub Test Lang\nfile_extensions: [fstl]\nscope: source.fstl\ncontexts:\n  main:\n    - match: '\\b(let|fn)\\b'\n      scope: keyword.control.fstl\n";
+    let d = project(
+        "pkgs",
+        &[
+            ("Packages/TestLang/TestLang.sublime-syntax", syntax),
+            ("Packages/TestTheme/Test.tmTheme", TM_THEME),
+            ("code.fstl", "let x = fn\n"),
+        ],
+    );
+    let mut h = harness(&d);
+    assert!(wait(&mut h, 30, |g| g
+        .app
+        .syn
+        .ss
+        .find_syntax_by_extension("fstl")
+        .is_some()));
+    assert_eq!(h.state().app.packages, ["TestLang", "TestTheme"]);
+    h.state_mut().app.open_file(&d.join("code.fstl"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "Farsub Test Lang");
+    assert!(
+        h.state()
+            .app
+            .syn
+            .theme_names()
+            .iter()
+            .any(|t| t == "Farsub Test Theme")
+    );
+    assert!(h.state_mut().app.syn.set_theme("Farsub Test Theme"));
+    h.state_mut().app.buffers[0].hl.invalidate(0);
+    steps(&mut h, 3);
+    // The keyword picked up the package theme's color.
+    let spans = &h.state().app.buffers[0].hl.lines[0];
+    assert!(
+        spans
+            .iter()
+            .any(|s| s.2.fg == egui::Color32::from_rgb(0xFF, 0x88, 0x00)),
+        "{spans:?}"
+    );
+    shot(&mut h, "package_theme");
+}
+
+#[test]
+fn sidebar_hover_and_folder_animation() {
+    let d = project("anim", &[("src/a.rs", ""), ("src/b.rs", ""), ("z.txt", "")]);
+    let mut cfg = test_config(&d);
+    cfg.editor.animations = true;
+    let gui = Gui::headless(d.clone(), cfg);
+    let mut h = Harness::builder()
+        .with_size(egui::Vec2::new(1000.0, 500.0))
+        .with_accessibility_check(false)
+        .wgpu()
+        .build_ui_state(|ui, g: &mut Gui| g.frame(ui), gui);
+    steps(&mut h, 2);
+    press(&mut h, CMD, Key::Num0);
+    press(&mut h, Modifiers::NONE, Key::ArrowRight);
+    assert!(!h.state().app.tree.anims.is_empty(), "opening animates");
+    assert!(wait(&mut h, 2, |g| g.app.tree.anims.is_empty()));
+    assert_eq!(h.state().app.tree.nodes.len(), 4);
+    // Hover the last row.
+    let y = 26.0 + 32.0 + 3.0 * 24.0 + 12.0;
+    h.event(Event::PointerMoved(egui::Pos2::new(80.0, y)));
+    steps(&mut h, 2);
+    shot(&mut h, "sidebar_hover");
+    press(&mut h, Modifiers::NONE, Key::ArrowLeft);
+    assert_eq!(
+        h.state().app.tree.nodes.len(),
+        4,
+        "children stay while closing"
+    );
+    assert!(wait(&mut h, 2, |g| g.app.tree.nodes.len() == 2));
+}
+
+#[test]
+fn native_menu_commands_follow_focus() {
+    let d = project("nmenu", &[("a.txt", "one\n"), ("b.txt", "")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    // Edit → Duplicate Line from the system menu acts on the editor.
+    h.state_mut().app.on_menu_command("duplicate_line");
+    assert_eq!(
+        h.state().app.buf().unwrap().lines[..2],
+        ["one".to_string(), "one".to_string()]
+    );
+    // Edit → Copy while the sidebar has focus copies files, like its shortcut does.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::FocusSidebar);
+    h.state_mut().app.on_menu_command("copy");
+    assert!(h.state().app.file_clip.is_some());
+    // Items without a shortcut just run.
+    h.state_mut().app.on_menu_command("select_theme");
+    assert!(matches!(h.state().app.modal, Some(Modal::Palette(_))));
 }

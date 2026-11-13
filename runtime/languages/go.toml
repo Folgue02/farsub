@@ -1,0 +1,5 @@
+name = "go"
+extensions = ["go"]
+comment = "//"
+use_tabs = true
+servers = ["gopls"]

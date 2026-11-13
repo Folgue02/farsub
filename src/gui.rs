@@ -16,7 +16,6 @@ use crate::config::Config;
 use crate::editor::{Buffer, Pos};
 use crate::highlight::Span;
 use crate::keys::Key;
-use crate::menu;
 use crate::palette::Mode;
 
 const TAB: usize = 4;
@@ -90,6 +89,8 @@ pub struct Gui {
     last_title: String,
     find_count: Option<(String, i32, usize)>,
     pub menu_titles: Vec<Rect>,
+    #[cfg(target_os = "macos")]
+    native_menu: Option<crate::native_menu::NativeMenu>,
 }
 
 impl Gui {
@@ -98,6 +99,10 @@ impl Gui {
         let mut g = Self::headless(root, config);
         let tx = g.app_tx();
         tx.set_waker(move || ctx.request_repaint());
+        #[cfg(target_os = "macos")]
+        {
+            g.native_menu = crate::native_menu::NativeMenu::install(&g.app, tx.clone());
+        }
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         g.last_title.clear();
         g
@@ -117,6 +122,8 @@ impl Gui {
             last_title: String::new(),
             find_count: None,
             menu_titles: vec![],
+            #[cfg(target_os = "macos")]
+            native_menu: None,
         }
     }
 
@@ -167,6 +174,9 @@ impl Gui {
                 _ => {}
             }
         }
+        // The character an Alt-shortcut types arrives in the same batch; never carry the
+        // flag into a later frame.
+        self.suppress_text = false;
     }
 
     /// One full frame: input, background events, drawing.
@@ -185,6 +195,10 @@ impl Gui {
         }
         if self.app.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(m) = &mut self.native_menu {
+            m.sync(&self.app);
         }
         if let Some(t) = self.app.pending_copy.take() {
             ctx.copy_text(t);
@@ -240,6 +254,7 @@ impl Gui {
             Some(Modal::Palette(_)) => self.draw_palette(ui, &over, full, &c),
             Some(Modal::Confirm(_)) => self.draw_confirm(&over, full, &c),
             Some(Modal::Keymap(_)) => self.draw_keymap(ui, &over, full, &c),
+            Some(Modal::Servers(_)) => self.draw_servers(ui, &over, full, &c),
             _ => {}
         }
         if let Some(r) = bar {
@@ -320,7 +335,11 @@ impl Gui {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        p.text(
+        p.with_clip_rect(
+            head.shrink2(Vec2::new(70.0, 0.0))
+                .translate(Vec2::new(30.0, 0.0)),
+        )
+        .text(
             Pos2::new(r.right() - 10.0, head.center().y),
             Align2::RIGHT_CENTER,
             rootname,
@@ -332,6 +351,9 @@ impl Gui {
             Pos2::new(r.right() - 1.0, r.bottom()),
         );
         let rows = ((list.height() / ROW_H).floor() as usize).max(1);
+        if self.app.tree.tick() {
+            ui.ctx().request_repaint();
+        }
         let t = &mut self.app.tree;
         // Follow keyboard selection; leave mouse-wheel scrolling alone otherwise.
         if self.last_tree_sel != Some(t.sel) {
@@ -351,6 +373,7 @@ impl Gui {
                 t.scroll = s.round() as usize;
             }
         }
+        let hover_pos = resp.hover_pos();
         let current = self
             .app
             .buffers
@@ -362,36 +385,59 @@ impl Gui {
         };
         let t = &self.app.tree;
         let clip = p.with_clip_rect(list);
-        for row in 0..rows {
-            let i = t.scroll + row;
+        // Rows have animated heights while a folder opens/closes.
+        let mut y = list.top();
+        let mut hits: Vec<(usize, Rect)> = vec![];
+        let mut i = t.scroll;
+        while y < list.bottom() {
             let Some(n) = t.nodes.get(i) else { break };
-            let y = list.top() + row as f32 * ROW_H;
-            let rr = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), ROW_H));
+            let f = t.row_factor(i);
+            let h = ROW_H * f;
+            if h < 0.5 {
+                i += 1;
+                continue;
+            }
+            let rr = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), h));
+            let row_clip = clip.with_clip_rect(rr);
+            // Content slides in from above as the row grows.
+            let full = Rect::from_min_size(
+                Pos2::new(rr.left(), rr.bottom() - ROW_H),
+                Vec2::new(rr.width(), ROW_H),
+            );
+            let alpha = f.powf(1.5);
+            let fade = |col: Color32| mix(c.side, col, alpha);
             let marked = t.marked.contains(&n.path);
+            let hovered = hover_pos.is_some_and(|hp| rr.contains(hp));
             if i == t.sel {
-                clip.rect_filled(
+                row_clip.rect_filled(
                     rr,
                     0.0,
-                    if focused {
+                    fade(if focused {
                         c.pop_sel
                     } else {
                         mix(c.side, c.sel, 0.6)
-                    },
+                    }),
                 );
             } else if marked {
-                clip.rect_filled(rr, 0.0, mix(c.side, c.accent, 0.12));
+                row_clip.rect_filled(rr, 0.0, fade(mix(c.side, c.accent, 0.12)));
+            } else if hovered {
+                row_clip.rect_filled(rr, 0.0, mix(c.side, c.fg, 0.07));
             }
             if marked {
-                clip.rect_filled(
-                    Rect::from_min_size(rr.min, Vec2::new(3.0, ROW_H)),
+                row_clip.rect_filled(
+                    Rect::from_min_size(rr.min, Vec2::new(3.0, h)),
                     0.0,
                     c.accent,
                 );
             }
             let x = list.left() + 12.0 + n.depth as f32 * 14.0;
             if n.is_dir {
-                let open = t.expanded.contains(&n.path);
-                disclosure(&clip, Pos2::new(x + 3.0, rr.center().y), open, c.dim);
+                disclosure(
+                    &row_clip,
+                    Pos2::new(x + 3.0, full.center().y),
+                    t.arrow(&n.path),
+                    fade(if hovered { c.fg } else { c.dim }),
+                );
             }
             let is_cur = current.as_deref() == Some(n.path.as_path());
             let is_cut = cut.iter().any(|p| n.path.starts_with(p));
@@ -405,13 +451,16 @@ impl Gui {
             if is_cut {
                 col = mix(col, c.side, 0.55);
             }
-            clip.text(
-                Pos2::new(x + 14.0, rr.center().y),
+            row_clip.text(
+                Pos2::new(x + 14.0, full.center().y),
                 Align2::LEFT_CENTER,
                 &n.name,
                 ui_font.clone(),
-                col,
+                fade(col),
             );
+            hits.push((i, rr));
+            y += h;
+            i += 1;
         }
         if t.nodes.is_empty() {
             p.text(
@@ -422,13 +471,13 @@ impl Gui {
                 c.dim,
             );
         }
-        if resp.clicked() || resp.double_clicked() {
-            if let Some(pos) = resp.interact_pointer_pos() {
-                let i = self.app.tree.scroll + ((pos.y - list.top()) / ROW_H) as usize;
-                let open =
-                    resp.double_clicked() || self.app.tree.nodes.get(i).is_some_and(|n| n.is_dir);
-                self.app.tree_click(i, open);
-            }
+        if (resp.clicked() || resp.double_clicked())
+            && let Some(pos) = resp.interact_pointer_pos()
+            && let Some(&(i, _)) = hits.iter().find(|(_, r)| r.contains(pos))
+        {
+            let open =
+                resp.double_clicked() || self.app.tree.nodes.get(i).is_some_and(|n| n.is_dir);
+            self.app.tree_click(i, open);
         }
     }
 
@@ -1105,7 +1154,8 @@ impl Gui {
         let mut x = r.left() + 6.0;
         self.menu_titles.clear();
         let mut action: Option<Option<usize>> = None;
-        for (i, (title, _)) in menu::MENUS.iter().enumerate() {
+        let titles: Vec<String> = self.app.menus.iter().map(|m| m.title.clone()).collect();
+        for (i, title) in titles.iter().enumerate() {
             let w = ui.ctx().fonts_mut(|f| {
                 f.layout_no_wrap(title.to_string(), font.clone(), c.fg)
                     .size()
@@ -1127,7 +1177,7 @@ impl Gui {
             p.text(
                 tr.center(),
                 Align2::CENTER_CENTER,
-                *title,
+                title.as_str(),
                 font.clone(),
                 if open == Some(i) {
                     c.fg
@@ -1165,19 +1215,30 @@ impl Gui {
         let Some(title) = self.menu_titles.get(m.menu).copied() else {
             return;
         };
-        let items = menu::items(m.menu);
+        let items: Vec<Option<(crate::commands::Command, String, String)>> = self
+            .app
+            .menus
+            .get(m.menu)
+            .map(|mm| {
+                mm.items
+                    .iter()
+                    .map(|i| {
+                        i.as_ref()
+                            .map(|i| (i.cmd, i.label.clone(), self.app.keymap.shortcut(i.cmd)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let font = FontId::proportional(UI_SIZE);
         let small = FontId::proportional(12.0);
         let mut label_w: f32 = 120.0;
         let mut key_w: f32 = 0.0;
         for it in items.iter().flatten() {
-            let lw = ui.ctx().fonts_mut(|f| {
-                f.layout_no_wrap(menu::label(*it), font.clone(), c.fg)
-                    .size()
-                    .x
-            });
+            let lw = ui
+                .ctx()
+                .fonts_mut(|f| f.layout_no_wrap(it.1.clone(), font.clone(), c.fg).size().x);
             let kw = ui.ctx().fonts_mut(|f| {
-                f.layout_no_wrap(crate::keymap::shortcut(*it), small.clone(), c.dim)
+                f.layout_no_wrap(it.2.clone(), small.clone(), c.dim)
                     .size()
                     .x
             });
@@ -1203,7 +1264,7 @@ impl Gui {
         let mut hovered = None;
         let mut clicked = None;
         for (i, it) in items.iter().enumerate() {
-            let Some(cmd) = it else {
+            let Some((cmd, label, keys)) = it else {
                 p.line_segment(
                     [
                         Pos2::new(r.left() + 10.0, y + 4.5),
@@ -1218,6 +1279,7 @@ impl Gui {
                 Rect::from_min_size(Pos2::new(r.left() + 4.0, y), Vec2::new(w - 8.0, MENU_ROW));
             y += MENU_ROW;
             let enabled = self.app.enabled(*cmd);
+            let (label, keys) = (label.clone(), keys.clone());
             if i == m.item && enabled {
                 p.rect_filled(rr, 4.0, c.pop_sel);
             }
@@ -1225,14 +1287,14 @@ impl Gui {
             p.text(
                 Pos2::new(rr.left() + 12.0, rr.center().y),
                 Align2::LEFT_CENTER,
-                menu::label(*cmd),
+                label,
                 font.clone(),
                 col,
             );
             p.text(
                 Pos2::new(rr.right() - 12.0, rr.center().y),
                 Align2::RIGHT_CENTER,
-                crate::keymap::shortcut(*cmd),
+                keys,
                 small.clone(),
                 if enabled {
                     c.dim
@@ -1274,7 +1336,7 @@ impl Gui {
         let Some(Modal::Keymap(v)) = &self.app.modal else {
             return;
         };
-        let rows = crate::app::keymap_rows(&v.query);
+        let rows = crate::app::keymap_rows(&self.app.keymap, &v.query);
         p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
         let r = Rect::from_center_size(
             full.center(),
@@ -1337,8 +1399,8 @@ impl Gui {
         let mut last = "";
         for (i, row) in rows.iter().enumerate() {
             if row.section != last {
-                lines.push((Some(row.section), None));
-                last = row.section;
+                lines.push((Some(row.section.as_str()), None));
+                last = row.section.as_str();
             }
             lines.push((None, Some(i)));
         }
@@ -1438,6 +1500,203 @@ impl Gui {
         if let Some(Modal::Keymap(v)) = &mut self.app.modal {
             v.scroll = scroll;
             v.sel = new_sel.unwrap_or(sel);
+        }
+    }
+
+    fn draw_servers(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
+        use crate::app::ServerStatus as St;
+        let Some(Modal::Servers(v)) = &self.app.modal else {
+            return;
+        };
+        let rows = self.app.server_rows();
+        let sel = v.sel.min(rows.len().saturating_sub(1));
+        let details = v.details;
+        p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
+        let r = Rect::from_center_size(
+            full.center(),
+            Vec2::new(
+                (full.width() * 0.75).clamp(520.0, 960.0),
+                full.height() * 0.84,
+            ),
+        );
+        p.rect_filled(
+            r.translate(Vec2::new(0.0, 5.0)),
+            8.0,
+            Color32::from_black_alpha(90),
+        );
+        p.rect_filled(r, 6.0, c.pop);
+        p.rect_stroke(r, 6.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+        let font = FontId::proportional(UI_SIZE);
+        let small = FontId::proportional(11.5);
+        p.text(
+            Pos2::new(r.left() + 18.0, r.top() + 24.0),
+            Align2::LEFT_CENTER,
+            "Language Servers",
+            FontId::proportional(16.0),
+            c.fg,
+        );
+        p.text(
+            Pos2::new(r.right() - 18.0, r.top() + 24.0),
+            Align2::RIGHT_CENTER,
+            "i install · u update · x uninstall · Enter details · Esc close",
+            small.clone(),
+            c.dim,
+        );
+        let data = self
+            .app
+            .config
+            .data_dir
+            .clone()
+            .map(|d| d.join("servers").display().to_string())
+            .unwrap_or_default();
+        p.text(
+            Pos2::new(r.left() + 18.0, r.top() + 46.0),
+            Align2::LEFT_CENTER,
+            format!("Installs go to {data}"),
+            small.clone(),
+            c.dim,
+        );
+        let green = Color32::from_rgb(0x7F, 0xD1, 0x7A);
+        let detail_h = if details {
+            (r.height() * 0.42).max(160.0)
+        } else {
+            0.0
+        };
+        let list = Rect::from_min_max(
+            Pos2::new(r.left() + 8.0, r.top() + 62.0),
+            Pos2::new(r.right() - 8.0, r.bottom() - 8.0 - detail_h),
+        );
+        let lh = 30.0;
+        let n_vis = ((list.height() / lh).floor() as usize).max(1);
+        let first = sel.saturating_sub(n_vis - 1);
+        let clip = p.with_clip_rect(list);
+        let mut clicked = None;
+        for (row, (i, srv)) in rows.iter().enumerate().skip(first).take(n_vis).enumerate() {
+            let rr = Rect::from_min_size(
+                Pos2::new(list.left(), list.top() + row as f32 * lh),
+                Vec2::new(list.width(), lh),
+            );
+            let resp = ui.interact(rr, Id::unique(("srv", i)), Sense::click());
+            if i == sel {
+                clip.rect_filled(rr, 4.0, c.pop_sel);
+            } else if resp.hovered() {
+                clip.rect_filled(rr, 4.0, mix(c.pop, c.fg, 0.05));
+            }
+            let st = self.app.server_status(srv);
+            let (dot, label) = match &st {
+                St::Installed(_) => (green, "installed".to_string()),
+                St::OnPath(_) => (c.info, "on PATH".to_string()),
+                St::Installing => (c.accent, "installing…".to_string()),
+                St::Failed(_) => (c.err, "install failed".to_string()),
+                St::Missing if srv.install.is_some() => (c.dim, "not installed".to_string()),
+                St::Missing => (c.dim, "not found (install manually)".to_string()),
+            };
+            clip.circle_filled(Pos2::new(rr.left() + 16.0, rr.center().y), 4.5, dot);
+            let nr = clip.text(
+                Pos2::new(rr.left() + 30.0, rr.center().y),
+                Align2::LEFT_CENTER,
+                &srv.name,
+                FontId::proportional(14.0),
+                c.fg,
+            );
+            let langs = self.app.config.languages_using(&srv.name).join(", ");
+            clip.text(
+                Pos2::new(nr.right() + 14.0, rr.center().y),
+                Align2::LEFT_CENTER,
+                langs,
+                small.clone(),
+                c.dim,
+            );
+            clip.text(
+                Pos2::new(rr.right() - 12.0, rr.center().y),
+                Align2::RIGHT_CENTER,
+                label,
+                small.clone(),
+                dot,
+            );
+            if resp.clicked() {
+                clicked = Some(i);
+            }
+        }
+        if details && let Some(srv) = rows.get(sel) {
+            let d = Rect::from_min_max(
+                Pos2::new(r.left() + 14.0, list.bottom() + 6.0),
+                Pos2::new(r.right() - 14.0, r.bottom() - 12.0),
+            );
+            p.rect_filled(d, 4.0, c.bg);
+            let st = self.app.server_status(srv);
+            let location = match &st {
+                St::Installed(b) | St::OnPath(b) => b.display().to_string(),
+                _ => "—".into(),
+            };
+            let mut lines = vec![
+                srv.description.clone(),
+                format!("command   {} {}", srv.command, srv.args.join(" ")),
+                format!(
+                    "languages {}",
+                    self.app.config.languages_using(&srv.name).join(", ")
+                ),
+                format!(
+                    "roots     {}",
+                    if srv.root_markers.is_empty() {
+                        "(git root or file folder)".into()
+                    } else {
+                        srv.root_markers.join(", ")
+                    }
+                ),
+                format!(
+                    "install   {}",
+                    srv.install
+                        .as_ref()
+                        .map(|i| i.source())
+                        .unwrap_or_else(|| "manual".into())
+                ),
+                format!("location  {location}"),
+            ];
+            if let St::Failed(e) = &st {
+                lines.push(format!("error     {e}"));
+            }
+            if let Some(log) = self.app.install_log.get(&srv.name) {
+                lines.push(String::new());
+                lines.extend(
+                    log.iter()
+                        .rev()
+                        .take(8)
+                        .rev()
+                        .map(|l| l.replace(['\n', '\r'], " ")),
+                );
+            }
+            let dc = p.with_clip_rect(d.shrink(6.0));
+            for (k, l) in lines.iter().enumerate() {
+                dc.text(
+                    Pos2::new(d.left() + 12.0, d.top() + 16.0 + k as f32 * 18.0),
+                    Align2::LEFT_CENTER,
+                    l,
+                    FontId::monospace(12.0),
+                    if k == 0 { c.fg } else { c.dim },
+                );
+            }
+        }
+        if rows.is_empty() {
+            p.text(
+                list.left_top() + Vec2::new(18.0, 16.0),
+                Align2::LEFT_CENTER,
+                "No servers configured",
+                font,
+                c.dim,
+            );
+        }
+        if self.app.installing.is_empty() {
+        } else {
+            ui.ctx().request_repaint_after(Duration::from_millis(200));
+        }
+        if let Some(i) = clicked
+            && let Some(Modal::Servers(v)) = &mut self.app.modal
+        {
+            if v.sel == i {
+                v.details = !v.details;
+            }
+            v.sel = i;
         }
     }
 
@@ -1721,20 +1980,17 @@ fn line_job(
 }
 
 /// Folder disclosure triangle (drawn, so it never depends on font coverage).
-fn disclosure(p: &Painter, at: Pos2, open: bool, col: Color32) {
-    let pts = if open {
-        vec![
-            at + Vec2::new(-4.0, -2.0),
-            at + Vec2::new(4.0, -2.0),
-            at + Vec2::new(0.0, 3.0),
-        ]
-    } else {
-        vec![
-            at + Vec2::new(-2.0, -4.0),
-            at + Vec2::new(3.0, 0.0),
-            at + Vec2::new(-2.0, 4.0),
-        ]
-    };
+/// Folder disclosure triangle, rotated from ▸ (0.0) to ▾ (1.0). Drawn as a shape so it
+/// never depends on font coverage.
+fn disclosure(p: &Painter, at: Pos2, open: f32, col: Color32) {
+    let a = open.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2;
+    let (sn, cs) = a.sin_cos();
+    let rot = |v: Vec2| at + Vec2::new(v.x * cs - v.y * sn, v.x * sn + v.y * cs);
+    let pts = vec![
+        rot(Vec2::new(-2.0, -4.0)),
+        rot(Vec2::new(3.0, 0.0)),
+        rot(Vec2::new(-2.0, 4.0)),
+    ];
     p.add(egui::Shape::convex_polygon(pts, col, Stroke::NONE));
 }
 

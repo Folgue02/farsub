@@ -89,6 +89,11 @@ pub enum Command {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    ManageServers,
+    InstallPackage,
+    RemovePackage,
+    BrowsePackages,
+    ReloadPackages,
     Quit,
 }
 
@@ -191,6 +196,11 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (ZoomIn, "View: Zoom In", true),
     (ZoomOut, "View: Zoom Out", true),
     (ZoomReset, "View: Reset Zoom", true),
+    (ManageServers, "LSP: Manage Language Servers", true),
+    (InstallPackage, "Packages: Install Package (git URL)…", true),
+    (RemovePackage, "Packages: Remove Package…", true),
+    (BrowsePackages, "Packages: Browse Packages Folder", true),
+    (ReloadPackages, "Packages: Reload Syntaxes & Themes", true),
     (Quit, "Quit", true),
 ];
 
@@ -200,4 +210,24 @@ pub fn name(cmd: Command) -> &'static str {
         .find(|c| c.0 == cmd)
         .map(|c| c.1)
         .unwrap_or("?")
+}
+
+/// Stable id used in keymap.toml / menus.toml, e.g. `GotoFile` → "goto_file".
+pub fn id(cmd: Command) -> String {
+    let mut out = String::new();
+    for (i, c) in format!("{cmd:?}").chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+pub fn from_id(s: &str) -> Option<Command> {
+    COMMANDS.iter().map(|c| c.0).find(|c| id(*c) == s)
 }

@@ -1,0 +1,522 @@
+# Default key bindings (like Sublime's Default.sublime-keymap).
+# Override or extend them in ~/.config/farsub/keymap.toml with the same format.
+#
+# keys:     "Cmd+Shift+P" — Cmd is Cmd on macOS and Ctrl elsewhere; also Ctrl, Shift, Alt.
+# command:  a command id (see Help → Keyboard Shortcuts, or the README).
+# context:  "global" (default), "editor" or "sidebar" (single letters only apply there).
+# platforms: optional list, e.g. ["macos"] or ["windows", "linux"].
+
+
+# ---- global
+[[keys]]
+keys = "Cmd+P"
+command = "goto_file"
+[[keys]]
+keys = "Cmd+Shift+P"
+command = "show_commands"
+[[keys]]
+keys = "F1"
+command = "show_commands"
+[[keys]]
+keys = "Cmd+R"
+command = "goto_symbol"
+[[keys]]
+keys = "Cmd+Shift+R"
+command = "goto_workspace_symbol"
+[[keys]]
+keys = "Ctrl+G"
+command = "goto_line"
+[[keys]]
+keys = "Cmd+E"
+command = "switch_buffer"
+[[keys]]
+keys = "Cmd+N"
+command = "new_file"
+[[keys]]
+keys = "Cmd+O"
+command = "open_folder"
+[[keys]]
+keys = "Cmd+Shift+T"
+command = "reopen_closed"
+[[keys]]
+keys = "Cmd+S"
+command = "save"
+[[keys]]
+keys = "Cmd+Shift+S"
+command = "save_as"
+[[keys]]
+keys = "Cmd+Alt+S"
+command = "save_all"
+[[keys]]
+keys = "Cmd+W"
+command = "close_buffer"
+[[keys]]
+keys = "Cmd+,"
+command = "open_settings"
+[[keys]]
+keys = "Cmd+Shift+/"
+command = "show_keymap"
+[[keys]]
+keys = "F10"
+command = "open_menu"
+[[keys]]
+keys = "Cmd+B"
+command = "toggle_sidebar"
+[[keys]]
+keys = "Cmd+0"
+command = "focus_sidebar"
+[[keys]]
+keys = "Cmd+Shift+E"
+command = "reveal_in_sidebar"
+[[keys]]
+keys = "Ctrl+Tab"
+command = "next_buffer"
+[[keys]]
+keys = "Ctrl+PageDown"
+command = "next_buffer"
+[[keys]]
+keys = "Cmd+Alt+Right"
+command = "next_buffer"
+[[keys]]
+keys = "Ctrl+Shift+Tab"
+command = "prev_buffer"
+[[keys]]
+keys = "Ctrl+PageUp"
+command = "prev_buffer"
+[[keys]]
+keys = "Cmd+Alt+Left"
+command = "prev_buffer"
+[[keys]]
+keys = "Cmd+="
+command = "zoom_in"
+[[keys]]
+keys = "Cmd+Shift+="
+command = "zoom_in"
+[[keys]]
+keys = "Cmd+-"
+command = "zoom_out"
+[[keys]]
+keys = "Alt+-"
+command = "jump_back"
+[[keys]]
+keys = "Cmd+Q"
+command = "quit"
+
+# ---- editor
+[[keys]]
+keys = "Cmd+Z"
+command = "undo"
+context = "editor"
+[[keys]]
+keys = "Cmd+Shift+Z"
+command = "redo"
+context = "editor"
+[[keys]]
+keys = "Cmd+Y"
+command = "redo"
+context = "editor"
+[[keys]]
+keys = "Cmd+X"
+command = "cut"
+context = "editor"
+[[keys]]
+keys = "Cmd+C"
+command = "copy"
+context = "editor"
+[[keys]]
+keys = "Cmd+V"
+command = "paste"
+context = "editor"
+[[keys]]
+keys = "Cmd+A"
+command = "select_all"
+context = "editor"
+[[keys]]
+keys = "Cmd+L"
+command = "select_line"
+context = "editor"
+[[keys]]
+keys = "Cmd+D"
+command = "select_word"
+context = "editor"
+[[keys]]
+keys = "Cmd+Shift+D"
+command = "duplicate_line"
+context = "editor"
+[[keys]]
+keys = "Cmd+Shift+K"
+command = "delete_line"
+context = "editor"
+[[keys]]
+keys = "Alt+Up"
+command = "move_line_up"
+context = "editor"
+[[keys]]
+keys = "Ctrl+Shift+Up"
+command = "move_line_up"
+context = "editor"
+[[keys]]
+keys = "Alt+Down"
+command = "move_line_down"
+context = "editor"
+[[keys]]
+keys = "Ctrl+Shift+Down"
+command = "move_line_down"
+context = "editor"
+[[keys]]
+keys = "Cmd+/"
+command = "toggle_comment"
+context = "editor"
+[[keys]]
+keys = "Cmd+]"
+command = "indent"
+context = "editor"
+[[keys]]
+keys = "Cmd+["
+command = "outdent"
+context = "editor"
+[[keys]]
+keys = "Cmd+Enter"
+command = "insert_line_after"
+context = "editor"
+[[keys]]
+keys = "Cmd+Shift+Enter"
+command = "insert_line_before"
+context = "editor"
+[[keys]]
+keys = "Cmd+J"
+command = "join_lines"
+context = "editor"
+[[keys]]
+keys = "F9"
+command = "sort_lines"
+context = "editor"
+[[keys]]
+keys = "Cmd+F"
+command = "find"
+context = "editor"
+[[keys]]
+keys = "F3"
+command = "find_next"
+context = "editor"
+[[keys]]
+keys = "Shift+F3"
+command = "find_prev"
+context = "editor"
+[[keys]]
+keys = "Cmd+Alt+F"
+command = "replace"
+context = "editor"
+[[keys]]
+keys = "Cmd+H"
+command = "replace"
+context = "editor"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+Space"
+command = "completion"
+context = "editor"
+[[keys]]
+keys = "Cmd+I"
+command = "hover"
+context = "editor"
+[[keys]]
+keys = "F12"
+command = "goto_definition"
+context = "editor"
+[[keys]]
+keys = "Shift+F12"
+command = "find_references"
+context = "editor"
+[[keys]]
+keys = "F2"
+command = "rename"
+context = "editor"
+[[keys]]
+keys = "Alt+Shift+F"
+command = "format"
+context = "editor"
+[[keys]]
+keys = "F8"
+command = "next_diagnostic"
+context = "editor"
+[[keys]]
+keys = "Shift+F8"
+command = "prev_diagnostic"
+context = "editor"
+
+# ---- sidebar
+[[keys]]
+keys = "Up"
+command = "sidebar_up"
+context = "sidebar"
+[[keys]]
+keys = "K"
+command = "sidebar_up"
+context = "sidebar"
+[[keys]]
+keys = "Down"
+command = "sidebar_down"
+context = "sidebar"
+[[keys]]
+keys = "J"
+command = "sidebar_down"
+context = "sidebar"
+[[keys]]
+keys = "Shift+Up"
+command = "sidebar_mark_up"
+context = "sidebar"
+[[keys]]
+keys = "Shift+Down"
+command = "sidebar_mark_down"
+context = "sidebar"
+[[keys]]
+keys = "PageUp"
+command = "sidebar_page_up"
+context = "sidebar"
+[[keys]]
+keys = "PageDown"
+command = "sidebar_page_down"
+context = "sidebar"
+[[keys]]
+keys = "Home"
+command = "sidebar_top"
+context = "sidebar"
+[[keys]]
+keys = "G"
+command = "sidebar_top"
+context = "sidebar"
+[[keys]]
+keys = "End"
+command = "sidebar_bottom"
+context = "sidebar"
+[[keys]]
+keys = "Shift+G"
+command = "sidebar_bottom"
+context = "sidebar"
+[[keys]]
+keys = "Right"
+command = "sidebar_expand"
+context = "sidebar"
+[[keys]]
+keys = "L"
+command = "sidebar_expand"
+context = "sidebar"
+[[keys]]
+keys = "Left"
+command = "sidebar_collapse"
+context = "sidebar"
+[[keys]]
+keys = "H"
+command = "sidebar_collapse"
+context = "sidebar"
+[[keys]]
+keys = "Enter"
+command = "sidebar_open"
+context = "sidebar"
+[[keys]]
+keys = "O"
+command = "sidebar_open"
+context = "sidebar"
+[[keys]]
+keys = "Alt+Enter"
+command = "sidebar_open_keep_focus"
+context = "sidebar"
+[[keys]]
+keys = "Space"
+command = "sidebar_mark"
+context = "sidebar"
+[[keys]]
+keys = "A"
+command = "sidebar_new_file"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+N"
+command = "sidebar_new_file"
+context = "sidebar"
+[[keys]]
+keys = "Shift+A"
+command = "sidebar_new_folder"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+Shift+N"
+command = "sidebar_new_folder"
+context = "sidebar"
+[[keys]]
+keys = "R"
+command = "sidebar_rename"
+context = "sidebar"
+[[keys]]
+keys = "F2"
+command = "sidebar_rename"
+context = "sidebar"
+[[keys]]
+keys = "C"
+command = "sidebar_copy"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+C"
+command = "sidebar_copy"
+context = "sidebar"
+[[keys]]
+keys = "X"
+command = "sidebar_cut"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+X"
+command = "sidebar_cut"
+context = "sidebar"
+[[keys]]
+keys = "P"
+command = "sidebar_paste"
+context = "sidebar"
+[[keys]]
+keys = "V"
+command = "sidebar_paste"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+V"
+command = "sidebar_paste"
+context = "sidebar"
+[[keys]]
+keys = "Shift+D"
+command = "sidebar_duplicate"
+context = "sidebar"
+[[keys]]
+keys = "Y"
+command = "sidebar_copy_path"
+context = "sidebar"
+[[keys]]
+keys = "D"
+command = "sidebar_delete"
+context = "sidebar"
+[[keys]]
+keys = "Delete"
+command = "sidebar_delete"
+context = "sidebar"
+[[keys]]
+keys = "Cmd+Backspace"
+command = "sidebar_delete"
+context = "sidebar"
+[[keys]]
+keys = "."
+command = "toggle_hidden"
+context = "sidebar"
+[[keys]]
+keys = "F5"
+command = "refresh_sidebar"
+context = "sidebar"
+[[keys]]
+keys = "Shift+R"
+command = "refresh_sidebar"
+context = "sidebar"
+[[keys]]
+keys = "Esc"
+command = "sidebar_escape"
+context = "sidebar"
+[[keys]]
+keys = "Tab"
+command = "focus_editor"
+context = "sidebar"
+
+[[keys]]
+keys = "Cmd+Alt+L"
+command = "manage_servers"
+
+# ---- built-in keys that are not commands (listed in the keymap viewer)
+[[docs]]
+section = "Editor"
+keys = "Alt+Left / Alt+Right"
+description = "Move by word (Ctrl+Left/Right too)"
+[[docs]]
+section = "Editor"
+keys = "Cmd+Left / Cmd+Right"
+description = "Line start / end (macOS)"
+[[docs]]
+section = "Editor"
+keys = "Home / End"
+description = "Smart line start / end"
+[[docs]]
+section = "Editor"
+keys = "Cmd+Up / Cmd+Down"
+description = "Document start / end (Ctrl+Home/End too)"
+[[docs]]
+section = "Editor"
+keys = "Shift + any motion"
+description = "Extend the selection"
+[[docs]]
+section = "Editor"
+keys = "Alt+Backspace / Alt+Delete"
+description = "Delete word left / right"
+[[docs]]
+section = "Editor"
+keys = "Cmd+Backspace"
+description = "Delete to line start"
+[[docs]]
+section = "Editor"
+keys = "Tab / Shift+Tab"
+description = "Indent / unindent (selection or line)"
+[[docs]]
+section = "Editor"
+keys = "Ctrl+Up / Ctrl+Down"
+description = "Scroll without moving the cursor"
+[[docs]]
+section = "Editor"
+keys = "Cmd+1 … Cmd+9"
+description = "Go to tab 1–9"
+[[docs]]
+section = "Editor"
+keys = "Esc"
+description = "Clear selection, close popups"
+[[docs]]
+section = "Palette"
+keys = ">"
+description = "Commands (type in Goto Anything)"
+[[docs]]
+section = "Palette"
+keys = "@"
+description = "Symbols in file"
+[[docs]]
+section = "Palette"
+keys = ":"
+description = "Goto line"
+[[docs]]
+section = "Palette"
+keys = "#"
+description = "Symbols in project"
+[[docs]]
+section = "Palette"
+keys = "name:42"
+description = "Open file at line 42"
+[[docs]]
+section = "Palette"
+keys = "Up / Down, Enter, Esc"
+description = "Choose, open, cancel"
+[[docs]]
+section = "Find panel"
+keys = "Enter / Shift+Enter"
+description = "Next / previous match"
+[[docs]]
+section = "Find panel"
+keys = "Esc"
+description = "Close and return to where you started"
+[[docs]]
+section = "Prompts"
+keys = "Tab"
+description = "Complete a path"
+[[docs]]
+section = "Prompts"
+keys = "Cmd+U"
+description = "Clear the input"
+[[docs]]
+section = "Menu bar"
+keys = "F10"
+description = "Open the menu bar"
+[[docs]]
+section = "Menu bar"
+keys = "Left / Right, Up / Down"
+description = "Move between menus and items"
+[[docs]]
+section = "Menu bar"
+keys = "Enter / Esc"
+description = "Run the item / close"

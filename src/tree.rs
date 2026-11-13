@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub struct Node {
     pub name: String,
@@ -21,6 +22,14 @@ pub struct Tree {
     pub marked: HashSet<PathBuf>,
     cache: HashMap<PathBuf, Vec<(String, bool)>>,
     show_hidden: bool,
+    /// Folder open/close animations: folder → (start, opening).
+    pub anims: HashMap<PathBuf, (Instant, bool)>,
+    /// Animation length; zero disables animations.
+    pub anim: Duration,
+}
+
+fn ease(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
 const ALWAYS_HIDDEN: &[&str] = &[".git", ".DS_Store", ".hg", ".svn"];
@@ -36,6 +45,8 @@ impl Tree {
             marked: HashSet::new(),
             cache: HashMap::new(),
             show_hidden: false,
+            anims: HashMap::new(),
+            anim: Duration::from_millis(160),
         }
     }
 
@@ -115,6 +126,7 @@ impl Tree {
 
     /// Re-read directories from disk (after saves and file operations).
     pub fn refresh(&mut self) {
+        self.anims.clear();
         self.cache.clear();
         self.expanded.retain(|p| p.is_dir());
         self.marked.retain(|p| p.exists());
@@ -171,16 +183,47 @@ impl Tree {
         self.sel = (self.sel as isize + d).clamp(0, n - 1) as usize;
     }
 
+    fn is_open(&self, p: &Path) -> bool {
+        self.expanded.contains(p) && !self.anims.get(p).is_some_and(|a| !a.1)
+    }
+
+    fn open_dir(&mut self, p: PathBuf) {
+        self.expanded.insert(p.clone());
+        self.rebuild();
+        if !self.anim.is_zero() {
+            self.anims.insert(p, (Instant::now(), true));
+        }
+    }
+
+    fn close_dir(&mut self, p: PathBuf) {
+        // Keep the selection out of the folder that's closing.
+        if let Some(sel) = self.selected_path().map(Path::to_path_buf)
+            && sel != p
+            && sel.starts_with(&p)
+            && let Some(i) = self.nodes.iter().position(|n| n.path == p)
+        {
+            self.sel = i;
+        }
+        if self.anim.is_zero() {
+            self.expanded.remove(&p);
+            self.rebuild();
+        } else {
+            // Children stay in the list until the animation finishes (see `tick`).
+            self.anims.insert(p, (Instant::now(), false));
+        }
+    }
+
     pub fn toggle(&mut self) {
         let Some(n) = self.selected() else { return };
         if !n.is_dir {
             return;
         }
         let p = n.path.clone();
-        if !self.expanded.remove(&p) {
-            self.expanded.insert(p);
+        if self.is_open(&p) {
+            self.close_dir(p)
+        } else {
+            self.open_dir(p)
         }
-        self.rebuild();
     }
 
     pub fn expand(&mut self) {
@@ -189,7 +232,7 @@ impl Tree {
             return;
         }
         let p = n.path.clone();
-        if self.expanded.contains(&p) {
+        if self.is_open(&p) {
             // Already open: step into the first child.
             if self
                 .nodes
@@ -199,24 +242,74 @@ impl Tree {
                 self.sel += 1;
             }
         } else {
-            self.expanded.insert(p);
-            self.rebuild();
+            self.open_dir(p);
         }
     }
 
     pub fn collapse(&mut self) {
         let Some(n) = self.selected() else { return };
         let p = n.path.clone();
-        if n.is_dir && self.expanded.remove(&p) {
-            self.rebuild();
+        if n.is_dir && self.is_open(&p) {
+            self.close_dir(p);
             return;
         }
         // Otherwise jump to the parent folder.
-        if let Some(parent) = p.parent() {
-            if let Some(i) = self.nodes.iter().position(|n| n.path == parent) {
-                self.sel = i;
+        if let Some(parent) = p.parent()
+            && let Some(i) = self.nodes.iter().position(|n| n.path == parent)
+        {
+            self.sel = i;
+        }
+    }
+
+    /// Advance animations; returns true while any are running.
+    pub fn tick(&mut self) -> bool {
+        let done: Vec<(PathBuf, bool)> = self
+            .anims
+            .iter()
+            .filter(|(_, (t, _))| t.elapsed() >= self.anim)
+            .map(|(p, (_, o))| (p.clone(), *o))
+            .collect();
+        let mut rebuild = false;
+        for (p, opening) in done {
+            self.anims.remove(&p);
+            if !opening {
+                self.expanded.remove(&p);
+                rebuild = true;
             }
         }
+        if rebuild {
+            self.rebuild();
+        }
+        !self.anims.is_empty()
+    }
+
+    fn progress(&self, p: &Path) -> Option<f32> {
+        let (t, opening) = self.anims.get(p)?;
+        let e = ease(t.elapsed().as_secs_f32() / self.anim.as_secs_f32().max(1e-3));
+        Some(if *opening { e } else { 1.0 - e })
+    }
+
+    /// Visible height fraction of a row (children of an animating folder grow/shrink).
+    pub fn row_factor(&self, i: usize) -> f32 {
+        let Some(n) = self.nodes.get(i) else {
+            return 1.0;
+        };
+        let mut f = 1.0;
+        for a in n.path.ancestors().skip(1) {
+            if a == self.root {
+                break;
+            }
+            if let Some(pr) = self.progress(a) {
+                f *= pr;
+            }
+        }
+        f
+    }
+
+    /// Disclosure arrow rotation: 0 = closed (▸), 1 = open (▾).
+    pub fn arrow(&self, p: &Path) -> f32 {
+        self.progress(p)
+            .unwrap_or(if self.expanded.contains(p) { 1.0 } else { 0.0 })
     }
 
     /// Expand a folder (and its ancestors) without moving the selection.
@@ -274,6 +367,7 @@ mod tests {
         std::fs::write(d.join("src/deep/x.rs"), "").unwrap();
         std::fs::write(d.join("b.txt"), "").unwrap();
         let mut t = Tree::new();
+        t.anim = Duration::ZERO;
         t.set_root(d.clone(), false);
         let names: Vec<_> = t.nodes.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, ["src", "b.txt"], ".git hidden, dirs first");
@@ -288,5 +382,33 @@ mod tests {
         assert_eq!(t.selected().unwrap().name, "deep");
         t.jump_char('b');
         assert_eq!(t.selected().unwrap().name, "b.txt");
+    }
+
+    #[test]
+    fn folder_animation_grows_and_shrinks() {
+        let d = std::env::temp_dir().join(format!("farsub-anim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/a.rs"), "").unwrap();
+        let mut t = Tree::new();
+        t.anim = Duration::from_millis(80);
+        t.set_root(d.clone(), false);
+        t.expand();
+        assert_eq!(t.nodes.len(), 2, "children appear immediately");
+        assert!(t.row_factor(1) < 0.6, "but start small");
+        assert!(t.arrow(&d.join("src")) < 0.6);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!t.tick(), "animation finished");
+        assert_eq!(t.row_factor(1), 1.0);
+        assert_eq!(t.arrow(&d.join("src")), 1.0);
+        t.sel = 1;
+        t.collapse(); // on a file: jump to parent
+        t.collapse(); // close the folder
+        assert_eq!(t.nodes.len(), 2, "children stay while shrinking");
+        assert!(t.tick());
+        std::thread::sleep(Duration::from_millis(100));
+        t.tick();
+        assert_eq!(t.nodes.len(), 1, "removed once closed");
+        assert_eq!(t.arrow(&d.join("src")), 0.0);
     }
 }

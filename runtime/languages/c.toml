@@ -1,0 +1,4 @@
+name = "c"
+extensions = ["c", "h"]
+comment = "//"
+servers = ["clangd"]

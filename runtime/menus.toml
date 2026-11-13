@@ -1,0 +1,39 @@
+# Menu layout (like Sublime's Main.sublime-menu). A menus.toml in the config folder
+# replaces it. Items are command ids; "-" is a separator. Labels come from the command
+# names unless written as "command_id: Label".
+
+[[menu]]
+title = "File"
+items = ["new_file", "open_folder", "reopen_closed", "-", "save", "save_as", "save_all", "-", "close_buffer", "-", "open_settings", "select_theme", "-", "quit"]
+
+[[menu]]
+title = "Edit"
+items = ["undo", "redo", "-", "cut", "copy", "paste", "-", "toggle_comment", "duplicate_line", "delete_line", "move_line_up", "move_line_down", "join_lines", "insert_line_after", "insert_line_before", "-", "indent", "outdent", "sort_lines", "upper_case", "lower_case"]
+
+[[menu]]
+title = "Selection"
+items = ["select_all", "select_line", "select_word"]
+
+[[menu]]
+title = "Find"
+items = ["find", "find_next", "find_prev", "-", "replace"]
+
+[[menu]]
+title = "Goto"
+items = ["goto_file", "goto_symbol", "goto_workspace_symbol", "goto_line", "switch_buffer", "-", "goto_definition", "find_references", "jump_back", "-", "next_diagnostic", "prev_diagnostic"]
+
+[[menu]]
+title = "Sidebar"
+items = ["focus_sidebar", "reveal_in_sidebar", "-", "sidebar_new_file", "sidebar_new_folder", "sidebar_rename", "sidebar_duplicate", "-", "sidebar_copy", "sidebar_cut", "sidebar_paste", "sidebar_copy_path", "-", "sidebar_delete", "-", "toggle_hidden", "refresh_sidebar"]
+
+[[menu]]
+title = "View"
+items = ["toggle_sidebar", "toggle_menu_bar", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
+
+[[menu]]
+title = "Tools"
+items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "manage_servers", "-", "install_package", "remove_package", "browse_packages", "reload_packages"]
+
+[[menu]]
+title = "Help"
+items = ["show_keymap", "show_commands"]

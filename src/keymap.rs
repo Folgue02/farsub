@@ -1,11 +1,13 @@
-//! The one table of key bindings. Key handling, the command palette's shortcut hints, the
-//! menu bar's shortcut column and the keymap viewer are all derived from it.
+//! Key bindings, built at runtime from runtime/keymap.toml plus the user's keymap.toml.
+//! Key handling, menu shortcuts, the command palette's hints and the keymap viewer all
+//! read from the same `Keymap`.
 //!
-//! Specs are written like "Cmd+Shift+P". `Cmd` is the primary modifier (Cmd on macOS, Ctrl
-//! elsewhere; both always work), `Ctrl` is written where Sublime uses Ctrl on every platform
-//! (it is matched the same way), plus `Shift` and `Alt`.
+//! Specs look like "Cmd+Shift+P". `Cmd` is the primary modifier (Cmd on macOS, Ctrl
+//! elsewhere; both always work); `Ctrl` is written where Sublime uses Ctrl everywhere (it
+//! matches the same way); plus `Shift` and `Alt`.
 
-use crate::commands::Command::{self, *};
+use crate::commands::{self, Command};
+use crate::config::{Config, KeyDoc};
 use crate::keys::{Key, KeyCode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,194 +18,150 @@ pub enum Ctx {
     Sidebar,
 }
 
-pub const BINDINGS: &[(&str, Command, Ctx)] = &[
-    // ---- global
-    ("Cmd+P", GotoFile, Ctx::Global),
-    ("Cmd+Shift+P", ShowCommands, Ctx::Global),
-    ("F1", ShowCommands, Ctx::Global),
-    ("Cmd+R", GotoSymbol, Ctx::Global),
-    ("Cmd+Shift+R", GotoWorkspaceSymbol, Ctx::Global),
-    ("Ctrl+G", GotoLine, Ctx::Global),
-    ("Cmd+E", SwitchBuffer, Ctx::Global),
-    ("Cmd+N", NewFile, Ctx::Global),
-    ("Cmd+O", OpenFolder, Ctx::Global),
-    ("Cmd+Shift+T", ReopenClosed, Ctx::Global),
-    ("Cmd+S", Save, Ctx::Global),
-    ("Cmd+Shift+S", SaveAs, Ctx::Global),
-    ("Cmd+Alt+S", SaveAll, Ctx::Global),
-    ("Cmd+W", CloseBuffer, Ctx::Global),
-    ("Cmd+,", OpenSettings, Ctx::Global),
-    ("Cmd+Shift+/", ShowKeymap, Ctx::Global),
-    ("F10", OpenMenu, Ctx::Global),
-    ("Cmd+B", ToggleSidebar, Ctx::Global),
-    ("Cmd+0", FocusSidebar, Ctx::Global),
-    ("Cmd+Shift+E", RevealInSidebar, Ctx::Global),
-    ("Ctrl+Tab", NextBuffer, Ctx::Global),
-    ("Ctrl+PageDown", NextBuffer, Ctx::Global),
-    ("Cmd+Alt+Right", NextBuffer, Ctx::Global),
-    ("Ctrl+Shift+Tab", PrevBuffer, Ctx::Global),
-    ("Ctrl+PageUp", PrevBuffer, Ctx::Global),
-    ("Cmd+Alt+Left", PrevBuffer, Ctx::Global),
-    ("Cmd+=", ZoomIn, Ctx::Global),
-    ("Cmd+Shift+=", ZoomIn, Ctx::Global),
-    ("Cmd+-", ZoomOut, Ctx::Global),
-    ("Alt+-", JumpBack, Ctx::Global),
-    ("Cmd+Q", Quit, Ctx::Global),
-    // ---- editor
-    ("Cmd+Z", Undo, Ctx::Editor),
-    ("Cmd+Shift+Z", Redo, Ctx::Editor),
-    ("Cmd+Y", Redo, Ctx::Editor),
-    ("Cmd+X", Cut, Ctx::Editor),
-    ("Cmd+C", Copy, Ctx::Editor),
-    ("Cmd+V", Paste, Ctx::Editor),
-    ("Cmd+A", SelectAll, Ctx::Editor),
-    ("Cmd+L", SelectLine, Ctx::Editor),
-    ("Cmd+D", SelectWord, Ctx::Editor),
-    ("Cmd+Shift+D", DuplicateLine, Ctx::Editor),
-    ("Cmd+Shift+K", DeleteLine, Ctx::Editor),
-    ("Alt+Up", MoveLineUp, Ctx::Editor),
-    ("Ctrl+Shift+Up", MoveLineUp, Ctx::Editor),
-    ("Alt+Down", MoveLineDown, Ctx::Editor),
-    ("Ctrl+Shift+Down", MoveLineDown, Ctx::Editor),
-    ("Cmd+/", ToggleComment, Ctx::Editor),
-    ("Cmd+]", Indent, Ctx::Editor),
-    ("Cmd+[", Outdent, Ctx::Editor),
-    ("Cmd+Enter", InsertLineAfter, Ctx::Editor),
-    ("Cmd+Shift+Enter", InsertLineBefore, Ctx::Editor),
-    ("Cmd+J", JoinLines, Ctx::Editor),
-    ("F9", SortLines, Ctx::Editor),
-    ("Cmd+F", Find, Ctx::Editor),
-    ("F3", FindNext, Ctx::Editor),
-    ("Shift+F3", FindPrev, Ctx::Editor),
-    ("Cmd+Alt+F", Replace, Ctx::Editor),
-    ("Cmd+H", Replace, Ctx::Editor),
-    ("Ctrl+Space", Completion, Ctx::Editor),
-    ("Cmd+I", Hover, Ctx::Editor),
-    ("F12", GotoDefinition, Ctx::Editor),
-    ("Shift+F12", FindReferences, Ctx::Editor),
-    ("F2", Rename, Ctx::Editor),
-    ("Alt+Shift+F", Format, Ctx::Editor),
-    ("F8", NextDiagnostic, Ctx::Editor),
-    ("Shift+F8", PrevDiagnostic, Ctx::Editor),
-    // ---- sidebar (single letters work because they arrive as text)
-    ("Up", SidebarUp, Ctx::Sidebar),
-    ("K", SidebarUp, Ctx::Sidebar),
-    ("Down", SidebarDown, Ctx::Sidebar),
-    ("J", SidebarDown, Ctx::Sidebar),
-    ("Shift+Up", SidebarMarkUp, Ctx::Sidebar),
-    ("Shift+Down", SidebarMarkDown, Ctx::Sidebar),
-    ("PageUp", SidebarPageUp, Ctx::Sidebar),
-    ("PageDown", SidebarPageDown, Ctx::Sidebar),
-    ("Home", SidebarTop, Ctx::Sidebar),
-    ("G", SidebarTop, Ctx::Sidebar),
-    ("End", SidebarBottom, Ctx::Sidebar),
-    ("Shift+G", SidebarBottom, Ctx::Sidebar),
-    ("Right", SidebarExpand, Ctx::Sidebar),
-    ("L", SidebarExpand, Ctx::Sidebar),
-    ("Left", SidebarCollapse, Ctx::Sidebar),
-    ("H", SidebarCollapse, Ctx::Sidebar),
-    ("Enter", SidebarOpen, Ctx::Sidebar),
-    ("O", SidebarOpen, Ctx::Sidebar),
-    ("Alt+Enter", SidebarOpenKeepFocus, Ctx::Sidebar),
-    ("Space", SidebarMark, Ctx::Sidebar),
-    ("A", SidebarNewFile, Ctx::Sidebar),
-    ("Cmd+N", SidebarNewFile, Ctx::Sidebar),
-    ("Shift+A", SidebarNewFolder, Ctx::Sidebar),
-    ("Cmd+Shift+N", SidebarNewFolder, Ctx::Sidebar),
-    ("R", SidebarRename, Ctx::Sidebar),
-    ("F2", SidebarRename, Ctx::Sidebar),
-    ("C", SidebarCopy, Ctx::Sidebar),
-    ("Cmd+C", SidebarCopy, Ctx::Sidebar),
-    ("X", SidebarCut, Ctx::Sidebar),
-    ("Cmd+X", SidebarCut, Ctx::Sidebar),
-    ("P", SidebarPaste, Ctx::Sidebar),
-    ("V", SidebarPaste, Ctx::Sidebar),
-    ("Cmd+V", SidebarPaste, Ctx::Sidebar),
-    ("Shift+D", SidebarDuplicate, Ctx::Sidebar),
-    ("Y", SidebarCopyPath, Ctx::Sidebar),
-    ("D", SidebarDelete, Ctx::Sidebar),
-    ("Delete", SidebarDelete, Ctx::Sidebar),
-    ("Cmd+Backspace", SidebarDelete, Ctx::Sidebar),
-    (".", ToggleHidden, Ctx::Sidebar),
-    ("F5", RefreshSidebar, Ctx::Sidebar),
-    ("Shift+R", RefreshSidebar, Ctx::Sidebar),
-    ("Esc", SidebarEscape, Ctx::Sidebar),
-    ("Tab", FocusEditor, Ctx::Sidebar),
-];
-
-/// Built-in keys that aren't commands, listed in the keymap viewer for completeness.
-pub const DOC_KEYS: &[(&str, &str, &str)] = &[
-    (
-        "Editor",
-        "Alt+Left / Alt+Right",
-        "Move by word (Ctrl+Left/Right too)",
-    ),
-    ("Editor", "Cmd+Left / Cmd+Right", "Line start / end (macOS)"),
-    ("Editor", "Home / End", "Smart line start / end"),
-    (
-        "Editor",
-        "Cmd+Up / Cmd+Down",
-        "Document start / end (Ctrl+Home/End too)",
-    ),
-    ("Editor", "Shift + any motion", "Extend the selection"),
-    (
-        "Editor",
-        "Alt+Backspace / Alt+Delete",
-        "Delete word left / right",
-    ),
-    ("Editor", "Cmd+Backspace", "Delete to line start"),
-    (
-        "Editor",
-        "Tab / Shift+Tab",
-        "Indent / unindent (selection or line)",
-    ),
-    (
-        "Editor",
-        "Ctrl+Up / Ctrl+Down",
-        "Scroll without moving the cursor",
-    ),
-    ("Editor", "Cmd+1 … Cmd+9", "Go to tab 1–9"),
-    ("Editor", "Esc", "Clear selection, close popups"),
-    ("Palette", ">", "Commands (type in Goto Anything)"),
-    ("Palette", "@", "Symbols in file"),
-    ("Palette", ":", "Goto line"),
-    ("Palette", "#", "Symbols in project"),
-    ("Palette", "name:42", "Open file at line 42"),
-    ("Palette", "Up / Down, Enter, Esc", "Choose, open, cancel"),
-    ("Find panel", "Enter / Shift+Enter", "Next / previous match"),
-    ("Find panel", "Esc", "Close and return to where you started"),
-    ("Prompts", "Tab", "Complete a path"),
-    ("Prompts", "Cmd+U", "Clear the input"),
-    ("Menu bar", "F10", "Open the menu bar"),
-    (
-        "Menu bar",
-        "Left / Right, Up / Down",
-        "Move between menus and items",
-    ),
-    ("Menu bar", "Enter / Esc", "Run the item / close"),
-];
+impl Ctx {
+    fn parse(s: Option<&str>) -> Option<Ctx> {
+        match s.unwrap_or("global") {
+            "global" => Some(Ctx::Global),
+            "editor" => Some(Ctx::Editor),
+            "sidebar" => Some(Ctx::Sidebar),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Spec {
     pub code: KeyCode,
+    /// Cmd (macOS) / Ctrl, or literal Ctrl.
     pub ctrl: bool,
+    /// Written as "Ctrl" (so native menus use Control, not Command, on macOS).
+    pub literal_ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct Binding {
+    pub keys: String,
+    pub spec: Spec,
+    pub cmd: Command,
+    pub ctx: Ctx,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Keymap {
+    pub bindings: Vec<Binding>,
+    pub docs: Vec<KeyDoc>,
+}
+
+pub fn platform() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    }
+}
+
+impl Keymap {
+    /// Build from config. Later entries (the user's keymap.toml) override earlier ones for
+    /// the same key + context; `command = ""` / `"none"` unbinds.
+    pub fn from_config(c: &Config) -> (Keymap, Vec<String>) {
+        let mut km = Keymap {
+            bindings: vec![],
+            docs: c.docs.clone(),
+        };
+        let mut errs = vec![];
+        for kb in &c.keys {
+            if !kb.platforms.is_empty() && !kb.platforms.iter().any(|p| p == platform()) {
+                continue;
+            }
+            let Some(spec) = parse(&kb.keys) else {
+                errs.push(format!("bad key \"{}\"", kb.keys));
+                continue;
+            };
+            let Some(ctx) = Ctx::parse(kb.context.as_deref()) else {
+                errs.push(format!("bad context for \"{}\"", kb.keys));
+                continue;
+            };
+            km.bindings
+                .retain(|b| !(b.ctx == ctx && same_key(&b.spec, &spec)));
+            if kb.command.is_empty() || kb.command == "none" {
+                continue;
+            }
+            match commands::from_id(&kb.command) {
+                Some(cmd) => km.bindings.push(Binding {
+                    keys: kb.keys.clone(),
+                    spec,
+                    cmd,
+                    ctx,
+                }),
+                None => errs.push(format!(
+                    "unknown command \"{}\" for {}",
+                    kb.command, kb.keys
+                )),
+            }
+        }
+        (km, errs)
+    }
+
+    /// Binding for a key in one context (no Global fallback).
+    pub fn lookup(&self, k: Key, ctx: Ctx) -> Option<Command> {
+        self.bindings
+            .iter()
+            .find(|b| b.ctx == ctx && matches(&b.spec, &k))
+            .map(|b| b.cmd)
+    }
+
+    /// Display strings of every key bound to a command.
+    pub fn keys_for(&self, cmd: Command) -> Vec<String> {
+        self.bindings
+            .iter()
+            .filter(|b| b.cmd == cmd)
+            .map(|b| display(&b.keys))
+            .collect()
+    }
+
+    /// The primary shortcut for a command (menus, palette hints).
+    pub fn shortcut(&self, cmd: Command) -> String {
+        self.primary(cmd)
+            .map(|b| display(&b.keys))
+            .unwrap_or_default()
+    }
+
+    /// The binding menus show / emulate: a modifier or F-key shortcut (global/editor first).
+    pub fn primary(&self, cmd: Command) -> Option<&Binding> {
+        let chord = |b: &Binding| b.spec.ctrl || b.spec.alt || matches!(b.spec.code, KeyCode::F(_));
+        let mine = || self.bindings.iter().filter(move |b| b.cmd == cmd);
+        mine()
+            .find(|b| chord(b) && b.ctx != Ctx::Sidebar)
+            .or_else(|| mine().find(|b| chord(b)))
+            .or_else(|| mine().next())
+    }
+}
+
+fn same_key(a: &Spec, b: &Spec) -> bool {
+    a.code == b.code && a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt
 }
 
 pub fn parse(spec: &str) -> Option<Spec> {
     let mut s = Spec {
         code: KeyCode::Esc,
         ctrl: false,
+        literal_ctrl: false,
         shift: false,
         alt: false,
     };
-    // Split on '+' but keep a trailing "+" key ("Cmd++" isn't used; "=" is).
     let parts: Vec<&str> = spec.split('+').collect();
     let (key, mods) = parts.split_last()?;
     for m in mods {
         match *m {
-            "Cmd" | "Ctrl" => s.ctrl = true,
+            "Cmd" => s.ctrl = true,
+            "Ctrl" => {
+                s.ctrl = true;
+                s.literal_ctrl = true;
+            }
             "Shift" => s.shift = true,
             "Alt" => s.alt = true,
             _ => return None,
@@ -238,7 +196,7 @@ pub fn parse(spec: &str) -> Option<Spec> {
     Some(s)
 }
 
-/// How a spec is shown to the user on this platform.
+/// How a spec is shown on this platform.
 pub fn display(spec: &str) -> String {
     let primary = if cfg!(target_os = "macos") {
         "Cmd"
@@ -252,16 +210,16 @@ pub fn display(spec: &str) -> String {
 }
 
 fn matches(s: &Spec, k: &Key) -> bool {
-    s.code == k.code && s.ctrl == k.ctrl && s.shift == k.shift && s.alt == k.alt
-}
-
-/// Binding for a key in a context (no Global fallback).
-pub fn lookup(k: Key, ctx: Ctx) -> Option<Command> {
-    BINDINGS
-        .iter()
-        .filter(|b| b.2 == ctx)
-        .find(|b| parse(b.0).is_some_and(|s| matches(&s, &k)))
-        .map(|b| b.1)
+    same_key(
+        s,
+        &Spec {
+            code: k.code,
+            ctrl: k.ctrl,
+            literal_ctrl: false,
+            shift: k.shift,
+            alt: k.alt,
+        },
+    )
 }
 
 /// The key a typed character corresponds to (for single-letter sidebar commands).
@@ -275,37 +233,41 @@ pub fn key_for_char(c: char) -> Key {
     }
 }
 
-/// Display strings of every key bound to a command (context-specific first).
-pub fn keys_for(cmd: Command) -> Vec<String> {
-    BINDINGS
-        .iter()
-        .filter(|b| b.1 == cmd)
-        .map(|b| display(b.0))
-        .collect()
-}
-
-/// The primary shortcut for a command, for menus and the palette.
-pub fn shortcut(cmd: Command) -> String {
-    keys_for(cmd).into_iter().next().unwrap_or_default()
+/// The key event a binding stands for (used to replay native-menu shortcuts).
+pub fn key_of(spec: &Spec) -> Key {
+    Key {
+        code: spec.code,
+        ctrl: spec.ctrl,
+        alt: spec.alt,
+        shift: spec.shift,
+        sup: spec.ctrl && !spec.literal_ctrl,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::Command::*;
     use std::collections::HashSet;
 
     #[test]
-    fn every_binding_parses_and_none_conflict() {
+    fn defaults_parse_without_conflicts() {
+        let c = Config::builtin();
+        let (km, errs) = Keymap::from_config(&c);
+        assert!(errs.is_empty(), "{errs:?}");
+        // No key is bound twice in the same context in the shipped keymap.
         let mut seen = HashSet::new();
-        for (spec, cmd, ctx) in BINDINGS {
-            let s = parse(spec).unwrap_or_else(|| panic!("bad spec {spec}"));
-            let key = (format!("{:?}", s), format!("{ctx:?}"));
-            assert!(seen.insert(key), "{spec} bound twice in {ctx:?} ({cmd:?})");
+        for kb in &c.keys {
+            if !kb.platforms.is_empty() && !kb.platforms.iter().any(|p| p == platform()) {
+                continue;
+            }
+            let s = parse(&kb.keys).unwrap();
+            let key = (
+                format!("{:?}{}{}{}", s.code, s.ctrl, s.shift, s.alt),
+                kb.context.clone(),
+            );
+            assert!(seen.insert(key), "{} bound twice", kb.keys);
         }
-    }
-
-    #[test]
-    fn lookup_and_display() {
         let k = Key {
             code: KeyCode::Char('p'),
             ctrl: true,
@@ -313,19 +275,53 @@ mod tests {
             shift: true,
             sup: true,
         };
-        assert_eq!(lookup(k, Ctx::Global), Some(ShowCommands));
+        assert_eq!(km.lookup(k, Ctx::Global), Some(ShowCommands));
         assert_eq!(
-            lookup(key_for_char('A'), Ctx::Sidebar),
+            km.lookup(key_for_char('A'), Ctx::Sidebar),
             Some(SidebarNewFolder)
         );
         assert_eq!(
-            lookup(key_for_char('a'), Ctx::Sidebar),
+            km.lookup(key_for_char('a'), Ctx::Sidebar),
             Some(SidebarNewFile)
         );
-        assert_eq!(lookup(key_for_char('.'), Ctx::Sidebar), Some(ToggleHidden));
-        assert!(shortcut(Save).ends_with("+S"));
-        assert_eq!(parse("Cmd+Shift+/").unwrap().code, KeyCode::Char('/'));
-        assert_eq!(parse("F12").unwrap().code, KeyCode::F(12));
+        assert!(km.shortcut(Save).ends_with("+S"));
+        assert_eq!(
+            km.shortcut(SidebarCopy),
+            display("Cmd+C"),
+            "menus prefer modifier keys"
+        );
         assert!(parse("Hyper+X").is_none());
+    }
+
+    #[test]
+    fn user_overrides_and_unbinds() {
+        let mut c = Config::builtin();
+        c.merge_file(
+            "keymap.toml",
+            r#"
+            [[keys]]
+            keys = "Cmd+P"
+            command = "show_keymap"
+            [[keys]]
+            keys = "F12"
+            command = ""
+            context = "editor"
+            [[keys]]
+            keys = "Cmd+K"
+            command = "no_such_command"
+            "#,
+        )
+        .unwrap();
+        let (km, errs) = Keymap::from_config(&c);
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        let k = Key {
+            code: KeyCode::Char('p'),
+            ctrl: true,
+            alt: false,
+            shift: false,
+            sup: false,
+        };
+        assert_eq!(km.lookup(k, Ctx::Global), Some(ShowKeymap));
+        assert_eq!(km.lookup(Key::new(KeyCode::F(12)), Ctx::Editor), None);
     }
 }

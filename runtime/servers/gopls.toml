@@ -1,0 +1,7 @@
+name = "gopls"
+command = "gopls"
+root_markers = ["go.mod", "go.work"]
+description = "Official Go language server"
+
+[install]
+go = "golang.org/x/tools/gopls@latest"

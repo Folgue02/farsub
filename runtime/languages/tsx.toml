@@ -1,0 +1,5 @@
+name = "tsx"
+language_id = "typescriptreact"
+extensions = ["tsx"]
+comment = "//"
+servers = ["ts_ls"]

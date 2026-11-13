@@ -1,0 +1,6 @@
+name = "python"
+extensions = ["py", "pyi", "pyw"]
+first_line = "^#!.*\\bpython"
+comment = "#"
+# Tried in order; the first one that is installed (or on PATH) is used.
+servers = ["pyright", "basedpyright", "pylsp"]

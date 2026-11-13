@@ -11,6 +11,8 @@ pub struct Syntax {
     pub ss: SyntaxSet,
     pub theme: Theme,
     pub themes: two_face::theme::LazyThemeSet,
+    /// Themes from Sublime packages (.tmTheme), by name.
+    pub user_themes: Vec<(String, Theme)>,
 }
 
 /// Color + font flags for a highlighted span.
@@ -34,6 +36,7 @@ impl Syntax {
             ss,
             theme: Theme::default(),
             themes,
+            user_themes: vec![],
         };
         s.set_theme(theme);
         s
@@ -41,6 +44,10 @@ impl Syntax {
 
     /// Switch theme by name; falls back to Monokai Extended. Returns false if unknown.
     pub fn set_theme(&mut self, name: &str) -> bool {
+        if let Some((_, t)) = self.user_themes.iter().find(|(n, _)| n == name) {
+            self.theme = t.clone();
+            return true;
+        }
         match self.themes.get(name) {
             Some(t) => {
                 self.theme = t.clone();
@@ -59,6 +66,7 @@ impl Syntax {
 
     pub fn theme_names(&self) -> Vec<String> {
         let mut v: Vec<String> = self.themes.theme_names().map(String::from).collect();
+        v.extend(self.user_themes.iter().map(|(n, _)| n.clone()));
         v.sort();
         v
     }

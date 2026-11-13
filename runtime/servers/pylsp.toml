@@ -1,0 +1,7 @@
+name = "pylsp"
+command = "pylsp"
+root_markers = ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"]
+description = "python-lsp-server: Jedi-based completion, pycodestyle, pyflakes"
+
+[install]
+pip = ["python-lsp-server"]

@@ -11,7 +11,7 @@ use std::thread;
 use serde_json::{Value, json};
 
 use crate::app::{AppEvent, EventTx};
-use crate::config::LanguageConfig;
+use crate::config::{LanguageConfig, ServerConfig};
 use crate::editor::{Pos, char_len};
 
 #[derive(Clone, Debug)]
@@ -31,6 +31,8 @@ pub enum Pending {
 pub struct Client {
     #[allow(dead_code)]
     pub lang: String,
+    /// Server config name (e.g. "pyright").
+    pub server: String,
     pub cmd: String,
     pub root: PathBuf,
     writer: Sender<String>,
@@ -53,11 +55,12 @@ impl Client {
     fn spawn(
         id: usize,
         lang: &LanguageConfig,
+        server: &ServerConfig,
         cmd: &Path,
         root: &Path,
         tx: EventTx,
     ) -> io::Result<Client> {
-        let server = lang.server.clone().unwrap_or_default();
+        let server = server.clone();
         let to_json = |v: &Option<toml::Value>| {
             v.as_ref()
                 .and_then(|v| serde_json::to_value(v).ok())
@@ -118,6 +121,7 @@ impl Client {
         });
         let mut c = Client {
             lang: lang.name.clone(),
+            server: server.name.clone(),
             cmd: cmd
                 .file_name()
                 .unwrap_or_default()
@@ -365,7 +369,7 @@ fn which(cmd: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file())
 }
 
-fn find_server(cmd: &str) -> Option<PathBuf> {
+pub fn find_server(cmd: &str) -> Option<PathBuf> {
     if let Some(p) = which(cmd) {
         return Some(p);
     }
@@ -424,13 +428,18 @@ impl Manager {
         }
     }
 
-    /// Get (or lazily start) the server for a file. Returns `Err` with a reason if unavailable.
-    pub fn client_for(&mut self, lang: &LanguageConfig, file: &Path) -> Result<usize, String> {
-        let Some(server) = &lang.server else {
-            return Err(format!("no language server configured for {}", lang.name));
-        };
-        let root = find_root(file, &lang.roots);
-        let key = (lang.name.clone(), root.clone());
+    /// Get (or lazily start) `server` (already resolved to `cmd`) for a file.
+    pub fn client_for(
+        &mut self,
+        lang: &LanguageConfig,
+        server: &ServerConfig,
+        cmd: &Path,
+        file: &Path,
+    ) -> Result<usize, String> {
+        let mut markers = server.root_markers.clone();
+        markers.extend(lang.roots.iter().cloned());
+        let root = find_root(file, &markers);
+        let key = (server.name.clone(), root.clone());
         if let Some(&i) = self.keys.get(&key) {
             return match self.clients.get(&i) {
                 Some(c) if c.alive => Ok(i),
@@ -438,27 +447,37 @@ impl Manager {
                 None => Err("server gone".into()),
             };
         }
-        if self.failed.contains(&lang.name) {
-            return Err(format!("{} is not available", server.command));
+        if self.failed.contains(&server.name) {
+            return Err(format!("{} failed to start", server.name));
         }
-        let Some(cmd) = find_server(&server.command) else {
-            self.failed.insert(lang.name.clone());
-            return Err(format!(
-                "install `{}` for {} LSP support (or set another server in the config)",
-                server.command, lang.name
-            ));
-        };
         let id = self.next;
         self.next += 1;
-        match Client::spawn(id, lang, &cmd, &root, self.tx.clone()) {
+        match Client::spawn(id, lang, server, cmd, &root, self.tx.clone()) {
             Ok(c) => {
                 self.clients.insert(id, c);
                 self.keys.insert(key, id);
                 Ok(id)
             }
             Err(e) => {
-                self.failed.insert(lang.name.clone());
+                self.failed.insert(server.name.clone());
                 Err(format!("failed to start {}: {e}", cmd.display()))
+            }
+        }
+    }
+
+    /// Forget clients/failures for one server so it is started fresh next time.
+    pub fn reset_server(&mut self, name: &str) {
+        self.failed.remove(name);
+        let ids: Vec<usize> = self
+            .keys
+            .iter()
+            .filter(|(k, _)| k.0 == name)
+            .map(|(_, v)| *v)
+            .collect();
+        self.keys.retain(|k, _| k.0 != name);
+        for id in ids {
+            if let Some(mut c) = self.clients.remove(&id) {
+                c.shutdown();
             }
         }
     }
