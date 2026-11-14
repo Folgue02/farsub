@@ -2134,7 +2134,18 @@ fn bench_frame_cost() {
         .map(|i| format!("    let value_{i} = compute({i}, \"some string\");\n"))
         .collect();
     let d = project("perfprobe", &[("big.rs", big.as_str())]);
-    std::fs::copy("src/app.rs", d.join("app.rs")).unwrap();
+    // A real ~6k-line Rust file: the app modules glued together.
+    let mut real = String::new();
+    let mut parts: Vec<_> = std::fs::read_dir("src/app")
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    parts.sort();
+    for p in parts {
+        real += &std::fs::read_to_string(p).unwrap();
+    }
+    std::fs::write(d.join("app.rs"), real).unwrap();
     let mut h = harness(&d);
     for (name, f) in [
         ("app.rs (6.4k lines)", "app.rs"),
