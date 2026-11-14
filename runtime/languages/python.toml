@@ -1,4 +1,5 @@
 name = "python"
+title = "Python"
 extensions = ["py", "pyi", "pyw"]
 first_line = "^#!.*\\bpython"
 comment = "#"

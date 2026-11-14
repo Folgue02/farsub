@@ -1,4 +1,5 @@
 name = "javascript"
+title = "JavaScript"
 extensions = ["js", "mjs", "cjs"]
 first_line = "^#!.*\\bnode"
 comment = "//"

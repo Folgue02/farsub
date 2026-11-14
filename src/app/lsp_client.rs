@@ -51,6 +51,18 @@ impl App {
                         "No {lang} language server found (install {})",
                         cmds.join(" or ")
                     ));
+                } else if self.config.editor.auto_install
+                    && self.config.data_dir.is_some()
+                    && !self.install_failed.contains_key(&installable[0])
+                {
+                    // Frictionless: install the first installable server; the file
+                    // attaches to it when it's ready.
+                    let name = installable[0].clone();
+                    crate::log::info(
+                        "lsp",
+                        format!("{lang} needs a language server: installing {name}"),
+                    );
+                    self.install_server(&name);
                 } else {
                     self.msg(format!(
                         "No {lang} language server installed — Tools › Language Servers can install {}",

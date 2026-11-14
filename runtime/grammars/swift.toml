@@ -1,0 +1,4 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "swift"
+crate = "tree-sitter-swift"
+version = "0.7.4"

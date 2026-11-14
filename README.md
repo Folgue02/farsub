@@ -1,7 +1,7 @@
 # farsub
 
 A Sublime Text-style code editor in Rust (egui/eframe): Goto Anything, command palette,
-symbol search, syntax highlighting with Sublime packages, LSP with a built-in server
+symbol search, tree-sitter syntax highlighting, LSP with a built-in server
 installer, and a sidebar you can drive entirely from the keyboard, including file
 operations. The mouse works too.
 
@@ -86,7 +86,9 @@ folder override them:
   servers/<name>.toml     add/replace a language server (nvim-lspconfig style)
   keymap.toml          add/override/unbind keys (like Sublime's user keymap)
   menus.toml           replace the menu layout
-  Packages/            Sublime packages: .sublime-syntax grammars, .tmTheme themes
+  themes/*.toml        color themes
+  queries/<grammar>/highlights.scm   override a grammar's highlighting
+  Packages/            packages: themes, highlight queries, icons
 ~/.local/share/farsub/                ($FARSUB_DATA or --data-dir)
   servers/<name>/      servers installed by the server manager
   workspaces/          sessions for folders opened without a project file
@@ -219,9 +221,17 @@ GraphQL, Protocol Buffers, PowerShell, Batch, Perl, Julia, Fish, AWK, Groovy / G
 Jenkinsfile, Crystal, F#, Vue, XML, INI / .editorconfig, .env, nginx, Solidity, GLSL,
 WGSL, Starlark / Bazel, Make, Just, KDL and Meson.
 
-Grammars: the 220 from bat's set (via two-face) plus farsub's own Gleam, Just, KDL,
-Prisma and Meson grammars in `runtime/syntaxes/`. They're precompiled at build time.
-Grammars dropped into `Packages/` are added on top.
+Highlighting uses tree-sitter. 21 common grammars are compiled in; 35 more (C#, Swift,
+Haskell, SQL, Zig, Dockerfile, Vue, …) **install themselves** the first time you open such
+a file: farsub downloads the grammar's source and compiles it in the background with your
+C compiler (Xcode Command Line Tools, gcc/clang, or Visual Studio Build Tools). Language
+servers farsub can install are set up the same way. Turn this off with
+`auto_install = false`; then **Tools → Install Grammar…** / Language Servers install them.
+Any other tree-sitter grammar installs from a source folder or archive on your computer:
+**Grammars: Install Grammar from File…/Folder…** or `farsub --install-grammar PATH`.
+`farsub --list-grammars` shows them all.
+AWK, BibTeX, Clojure, Crystal, .env, GraphQL, Groovy, Just, Kotlin, LaTeX, Meson, Nim,
+Perl, Terraform, Typst and WGSL have no grammar yet and show as plain text.
 
 **Tools → Language Servers** (Cmd+Alt+L) is a Mason-like manager: it lists every server
 with its status (installed, on PATH, not installed, failed), and `i` installs, `u` updates,
@@ -277,7 +287,8 @@ first_line = "^#!.*\\blua"        # shebang detection
 comment = "--"
 tab_size = 2
 servers = ["lua_ls"]
-# syntax = "Lua"                  # force a grammar
+title = "Lua"                    # display name
+# grammar = "lua"                # tree-sitter grammar (defaults to the name)
 ```
 
 **LSP Info** (Cmd+Alt+I, Tools → LSP Info, or click the server name / "no LSP" in the
@@ -410,21 +421,50 @@ The caret uses Sublime's settings: `caret_style = "smooth"` (fade, the default),
 
 ## Syntax per file
 
-Like Sublime, click the syntax name at the right of the status bar (or View → Syntax…) to
-pick a syntax for the current file from a fuzzy list. The file's language follows the
-syntax, so choosing "Bourne Again Shell" for an extension-less script also gives it `#`
-comments and bash-language-server. The choice is remembered in the workspace.
+Click the language name at the right of the status bar (or View → Syntax…) to pick the
+current file's language from a fuzzy list. Highlighting, comments, indentation and the
+language server follow it, so choosing "Bash" for an extension-less script also gives it
+`#` comments and bash-language-server. The choice is remembered in the workspace.
 
-## Syntax packages (Sublime-style)
+## Themes, highlighting and packages
 
-Drop Sublime Text packages into `~/.config/farsub/Packages/`: any `.sublime-syntax` file
-adds or overrides a grammar, and any `.tmTheme` becomes a color theme (pick it with
-Preferences → Color Theme or `theme = "..."`). They load in the background at startup.
+Highlighting is tree-sitter based, and everything visual is data in farsub's own formats:
 
-- **Packages: Install Package (git URL)…** clones a package repository into `Packages/`.
-- **Packages: Remove Package…** moves one to the Trash.
-- **Packages: Browse Packages Folder** opens it in your file manager.
-- **Packages: Reload Syntaxes & Themes** reloads after editing grammars by hand.
+- **Themes** are TOML (`runtime/themes/*.toml`; add your own in `~/.config/farsub/themes/`):
+  an `[editor]` table of colors and a `[syntax]` table keyed by highlight capture, with
+  fallback from specific to general (`function.builtin` → `function`):
+
+  ```toml
+  name = "My Theme"
+  [editor]
+  background = "#1E1E1E"
+  foreground = "#D4D4D4"
+  selection = "#264F78"
+  [syntax]
+  keyword = "#C586C0"
+  string = "#CE9178"
+  comment = { fg = "#6A9955", italic = true }
+  ```
+
+- **Highlight queries** (`runtime/queries/<grammar>/highlights.scm`) decide what gets which
+  capture; a file at `~/.config/farsub/queries/<grammar>/highlights.scm` replaces one.
+- **Grammar recipes** (`grammars/<name>.toml`) say where an installable grammar's source is:
+
+  ```toml
+  name = "fsharp"
+  crate = "tree-sitter-fsharp"   # crates.io source (or: source = "/path/to/grammar")
+  version = "0.3.12"
+  path = "fsharp"                # folder holding src/parser.c, if not the root
+  ```
+
+- **Packages** are folders in `~/.config/farsub/Packages/` that can hold `themes/`,
+  `queries/`, `grammars/` (recipes) and an `icons.toml`.
+  - **Packages: Install Package (git URL)…** clones one into `Packages/`.
+  - **Packages: Install Package from File… / from Folder…** picks a `.zip` / `.tar.gz`
+    archive or a folder on your computer (also `farsub --install-package PATH`).
+  - **Packages: Remove Package…** moves one to the Trash.
+  - **Packages: Browse Packages Folder** opens the folder.
+  - **Packages: Reload Syntaxes & Themes** applies changes.
 
 ## Tests
 

@@ -1,4 +1,4 @@
 name = "markdown"
+title = "Markdown"
 extensions = ["md", "markdown", "mdown", "mkd"]
-syntax = "Markdown"
 servers = ["marksman"]

@@ -1,0 +1,67 @@
+# Converted from the gruvbox-dark color scheme.
+name = "gruvbox-dark"
+
+[editor]
+background = "#282828"
+foreground = "#EBDBB2"
+selection = "#3C3836"
+line_highlight = "#3C3836"
+gutter = "#928374"
+guide = "#EBDBB2"
+active_guide = "#EBDBB2"
+caret = "#A89984"
+
+[syntax]
+"comment"               = { fg = "#928374", italic = true }
+"comment.documentation" = { fg = "#928374", italic = true }
+"string"                = { fg = "#B8BB26" }
+"string.escape"         = { fg = "#FB4934" }
+"string.special"        = { fg = "#B8BB26" }
+"string.regexp"         = { fg = "#B8BB26" }
+"character"             = { fg = "#D3869B" }
+"number"                = { fg = "#D3869B" }
+"boolean"               = { fg = "#D3869B" }
+"constant"              = { fg = "#FABD2F" }
+"constant.builtin"      = { fg = "#D3869B" }
+"keyword"               = { fg = "#FB4934" }
+"keyword.operator"      = { fg = "#8EC07C" }
+"keyword.function"      = { fg = "#8EC07C" }
+"keyword.storage"       = { fg = "#FB4934" }
+"keyword.import"        = { fg = "#FB4934" }
+"keyword.return"        = { fg = "#FB4934" }
+"operator"              = { fg = "#8EC07C" }
+"type"                  = { fg = "#FABD2F" }
+"type.builtin"          = { fg = "#FB4934" }
+"constructor"           = { fg = "#B8BB26" }
+"function"              = { fg = "#B8BB26" }
+"function.call"         = { fg = "#83A598" }
+"function.method"       = { fg = "#B8BB26" }
+"function.builtin"      = { fg = "#8EC07C" }
+"function.macro"        = { fg = "#B8BB26" }
+"variable"              = { fg = "#83A598" }
+"variable.parameter"    = { fg = "#FBF1C7" }
+"variable.builtin"      = { fg = "#D3869B" }
+"variable.member"       = { fg = "#83A598" }
+"property"              = { fg = "#83A598" }
+"attribute"             = { fg = "#FABD2F" }
+"label"                 = { fg = "#B8BB26" }
+"namespace"             = { fg = "#FABD2F" }
+"module"                = { fg = "#FE8019" }
+"tag"                   = { fg = "#83A598" }
+"tag.attribute"         = { fg = "#FABD2F" }
+"punctuation"           = { fg = "#FBF1C7" }
+"punctuation.bracket"   = { fg = "#FBF1C7" }
+"punctuation.delimiter" = { fg = "#FBF1C7" }
+"punctuation.special"   = { fg = "#8EC07C" }
+"escape"                = { fg = "#FB4934" }
+"embedded"              = { fg = "#FBF1C7" }
+"markup.heading"        = { fg = "#B8BB26" }
+"markup.bold"           = { fg = "#FE8019", bold = true }
+"markup.italic"         = { fg = "#FB4934", italic = true }
+"markup.strikethrough"  = { fg = "#928374", italic = true }
+"markup.raw"            = { fg = "#FABD2F" }
+"markup.list"           = { fg = "#83A598" }
+"markup.quote"          = { fg = "#D3869B" }
+"diff.plus"             = { fg = "#B8BB26" }
+"diff.minus"            = { fg = "#FB4934" }
+"diff.delta"            = { fg = "#FABD2F" }

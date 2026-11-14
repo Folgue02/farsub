@@ -1,0 +1,59 @@
+# Converted from the Catppuccin Frappe color scheme.
+name = "Catppuccin Frappe"
+
+[editor]
+background = "#303446"
+foreground = "#C6D0F5"
+selection = "#949CBB"
+line_highlight = "#414559"
+gutter = "#838BA7"
+active_guide = "#51576D"
+caret = "#F2D5CF"
+
+[syntax]
+"comment"               = { fg = "#949CBB", italic = true }
+"comment.documentation" = { fg = "#949CBB", italic = true }
+"string"                = { fg = "#A6D189" }
+"string.escape"         = { fg = "#F4B8E4" }
+"string.special"        = { fg = "#A6D189" }
+"string.regexp"         = { fg = "#A6D189" }
+"character"             = { fg = "#A6D189" }
+"number"                = { fg = "#EF9F76" }
+"boolean"               = { fg = "#EF9F76" }
+"constant"              = { fg = "#EF9F76" }
+"constant.builtin"      = { fg = "#E78284" }
+"keyword"               = { fg = "#CA9EE6" }
+"keyword.operator"      = { fg = "#CA9EE6" }
+"keyword.function"      = { fg = "#CA9EE6" }
+"keyword.storage"       = { fg = "#CA9EE6" }
+"keyword.import"        = { fg = "#CA9EE6" }
+"keyword.return"        = { fg = "#CA9EE6" }
+"operator"              = { fg = "#81C8BE" }
+"type"                  = { fg = "#E5C890", italic = true }
+"type.builtin"          = { fg = "#CA9EE6" }
+"constructor"           = { fg = "#8CAAEE", italic = true }
+"function"              = { fg = "#8CAAEE", italic = true }
+"function.call"         = { fg = "#8CAAEE", italic = true }
+"function.method"       = { fg = "#8CAAEE", italic = true }
+"function.builtin"      = { fg = "#8CAAEE", italic = true }
+"function.macro"        = { fg = "#8CAAEE", italic = true }
+"variable.parameter"    = { fg = "#EA999C", italic = true }
+"property"              = { fg = "#E5C890", italic = true }
+"attribute"             = { fg = "#E5C890" }
+"label"                 = { fg = "#81C8BE" }
+"namespace"             = { fg = "#E5C890" }
+"module"                = { fg = "#81C8BE" }
+"tag"                   = { fg = "#8CAAEE" }
+"tag.attribute"         = { fg = "#E5C890" }
+"punctuation"           = { fg = "#949CBB" }
+"punctuation.bracket"   = { fg = "#949CBB" }
+"punctuation.delimiter" = { fg = "#949CBB" }
+"punctuation.special"   = { fg = "#949CBB" }
+"escape"                = { fg = "#F4B8E4" }
+"markup.heading"        = { fg = "#81C8BE" }
+"markup.bold"           = { fg = "#E78284", bold = true }
+"markup.italic"         = { fg = "#E78284", italic = true }
+"markup.link"           = { fg = "#8CAAEE" }
+"markup.link.url"       = { fg = "#8CAAEE" }
+"markup.list"           = { fg = "#949CBB" }
+"markup.quote"          = { fg = "#F4B8E4" }

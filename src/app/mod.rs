@@ -56,10 +56,11 @@ pub enum AppEvent {
     LspExit(usize),
     Files(PathBuf, Vec<String>),
     Install(String, InstallEvent),
-    Packages(Box<packages::Loaded>),
     PackageInstalled(Result<String, String>),
     /// A native menu item was chosen (command id).
     Menu(String),
+    /// Progress of a grammar install (grammar name).
+    Grammar(String, InstallEvent),
 }
 
 /// Event sender that also wakes the GUI so background results show up immediately.
@@ -369,6 +370,15 @@ struct HoverTrack {
     requested: bool,
 }
 
+/// A file or folder the GUI should ask for with the system's picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileRequest {
+    PackageFile,
+    PackageFolder,
+    GrammarFile,
+    GrammarFolder,
+}
+
 /// Most editor groups (layout columns).
 pub const MAX_GROUPS: usize = 4;
 
@@ -443,6 +453,8 @@ pub struct App {
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
     pub settings_view: Option<SettingsView>,
+    /// Set by commands that need a file/folder from the user; the GUI shows the picker.
+    pub file_request: Option<FileRequest>,
     /// Columns the focused editor wraps at (set by the GUI each frame), None if not
     /// wrapping: Up/Down then move by visual rows.
     pub wrap_cols: Option<usize>,
@@ -451,8 +463,12 @@ pub struct App {
     /// Server name → install log (present while installing or after a failure).
     pub install_log: HashMap<String, Vec<String>>,
     pub installing: HashSet<String>,
+    /// Grammars being installed.
+    pub installing_grammars: HashSet<String>,
+    /// Grammars we already told the user can be installed (once per session).
+    grammar_hinted: HashSet<String>,
     pub install_failed: HashMap<String, String>,
-    /// Installed Sublime packages (folder names).
+    /// Installed packages (folder names in Packages/).
     pub packages: Vec<String>,
     tx: EventTx,
 }
@@ -518,10 +534,13 @@ impl App {
             group_split: vec![1.0],
             settings_view: None,
             wrap_cols: None,
+            file_request: None,
             keymap: Keymap::default(),
             menus: vec![],
             install_log: HashMap::new(),
             installing: HashSet::new(),
+            installing_grammars: HashSet::new(),
+            grammar_hinted: HashSet::new(),
             install_failed: HashMap::new(),
             packages: vec![],
             config,
@@ -534,11 +553,8 @@ impl App {
         if let Some(e) = app.config.error.clone().or(errs) {
             app.msg(format!("Config error: {e}"));
         }
-        // User syntaxes/themes from Packages/ load in the background.
-        if let Some(dir) = app.config.packages_dir().filter(|d| d.is_dir()) {
-            app.packages = packages::list(&dir);
-            packages::load_async(Some(dir), app.tx.clone());
-        }
+        // Themes and highlight queries from Packages/ and the config folder.
+        app.reload_syntax();
         app
     }
 

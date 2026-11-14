@@ -1,4 +1,5 @@
 name = "go"
+title = "Go"
 extensions = ["go"]
 comment = "//"
 use_tabs = true

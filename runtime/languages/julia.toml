@@ -1,4 +1,5 @@
 name = "julia"
+title = "Julia"
 extensions = ["jl"]
 first_line = '^#!.*\bjulia'
 comment = "#"

@@ -1,0 +1,56 @@
+# Converted from the OneHalfLight color scheme.
+name = "OneHalfLight"
+
+[editor]
+background = "#FAFAFA"
+foreground = "#383A42"
+selection = "#BFCEFF"
+line_highlight = "#F0F0F0"
+gutter = "#D4D4D4"
+caret = "#383A42"
+
+[syntax]
+"comment"               = { fg = "#A0A1A7" }
+"comment.documentation" = { fg = "#A0A1A7" }
+"string"                = { fg = "#50A14F" }
+"string.escape"         = { fg = "#0997B3" }
+"string.special"        = { fg = "#50A14F" }
+"string.regexp"         = { fg = "#50A14F" }
+"character"             = { fg = "#C18401" }
+"number"                = { fg = "#C18401" }
+"boolean"               = { fg = "#C18401" }
+"constant"              = { fg = "#E45649" }
+"constant.builtin"      = { fg = "#C18401" }
+"keyword"               = { fg = "#A626A4" }
+"keyword.operator"      = { fg = "#A626A4" }
+"keyword.function"      = { fg = "#A626A4" }
+"keyword.storage"       = { fg = "#A626A4" }
+"keyword.import"        = { fg = "#A626A4" }
+"keyword.return"        = { fg = "#A626A4" }
+"operator"              = { fg = "#A626A4" }
+"type"                  = { fg = "#A626A4" }
+"type.builtin"          = { fg = "#A626A4" }
+"constructor"           = { fg = "#0184BC" }
+"function"              = { fg = "#0184BC" }
+"function.call"         = { fg = "#E45649" }
+"function.method"       = { fg = "#0184BC" }
+"function.builtin"      = { fg = "#0184BC" }
+"function.macro"        = { fg = "#0184BC" }
+"variable"              = { fg = "#E45649" }
+"variable.parameter"    = { fg = "#E45649" }
+"variable.builtin"      = { fg = "#E45649" }
+"variable.member"       = { fg = "#E45649" }
+"property"              = { fg = "#E45649" }
+"attribute"             = { fg = "#C18401" }
+"label"                 = { fg = "#E45649" }
+"tag"                   = { fg = "#E45649" }
+"tag.attribute"         = { fg = "#C18401" }
+"escape"                = { fg = "#0997B3" }
+"markup.heading"        = { fg = "#0184BC" }
+"markup.bold"           = { fg = "#A626A4" }
+"markup.italic"         = { fg = "#A626A4" }
+"markup.raw"            = { fg = "#50A14F" }
+"markup.quote"          = { fg = "#50A14F" }
+"diff.plus"             = { fg = "#98C379" }
+"diff.minus"            = { fg = "#E06C75" }
+"diff.delta"            = { fg = "#E5C07B" }

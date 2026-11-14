@@ -388,8 +388,13 @@ impl Gui {
         );
 
         let deadline = Instant::now() + Duration::from_millis(12);
-        let hl_done =
-            b.hl.ensure(&self.app.syn, &b.lines, b.scroll_y + visible, deadline);
+        let hl_done = b.hl.ensure(
+            &self.app.syn,
+            &b.lines,
+            b.scroll_y,
+            b.scroll_y + visible + 1,
+            deadline,
+        );
 
         let sel = b.selection();
         let clip = p.with_clip_rect(r);
@@ -548,7 +553,7 @@ impl Gui {
                 }
             }
             // Text.
-            let spans = b.hl.lines.get(ln);
+            let spans = b.hl.line(ln);
             if wrap.is_some() {
                 let n = row.seg.end - row.seg.start;
                 if n > 0 {

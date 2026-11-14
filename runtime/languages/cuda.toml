@@ -1,5 +1,5 @@
 name = "cuda"
+title = "CUDA"
 extensions = ["cu", "cuh"]
 comment = "//"
-syntax = "C++"
 servers = ["clangd"]

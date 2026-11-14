@@ -1,7 +1,7 @@
 name = "yaml"
+title = "YAML"
 extensions = ["yaml", "yml"]
 filenames = [".clang-format", ".clangd"]
 comment = "#"
 tab_size = 2
-syntax = "YAML"
 servers = ["yamlls"]

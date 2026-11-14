@@ -1,8 +1,8 @@
 name = "ruby"
+title = "Ruby"
 extensions = ["rb", "rake", "gemspec", "ru", "rbi"]
 filenames = ["Gemfile", "Rakefile", "Guardfile", "Vagrantfile", "Podfile", "Brewfile", "Fastfile"]
 first_line = '^#!.*\bruby'
 comment = "#"
 tab_size = 2
-syntax = "Ruby"
 servers = ["ruby_lsp", "solargraph"]

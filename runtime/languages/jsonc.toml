@@ -1,8 +1,9 @@
 name = "jsonc"
+title = "JSON with Comments"
+grammar = "json"
 language_id = "jsonc"
 extensions = ["jsonc", "json5", "code-workspace"]
 filenames = ["tsconfig.json", "jsconfig.json"]
 comment = "//"
 tab_size = 2
-syntax = "JSON"
 servers = ["jsonls"]

@@ -1,4 +1,7 @@
 name = "wgsl"
+title = "WGSL"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["wgsl"]
 comment = "//"
 tab_size = 4

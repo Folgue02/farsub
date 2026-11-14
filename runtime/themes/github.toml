@@ -1,0 +1,50 @@
+# Converted from the GitHub color scheme.
+name = "GitHub"
+
+[editor]
+background = "#FFFFFF"
+foreground = "#333333"
+selection = "#B0CDE7"
+line_highlight = "#F8EEC7"
+caret = "#333333"
+
+[syntax]
+"comment"               = { fg = "#969896" }
+"comment.documentation" = { fg = "#969896" }
+"string"                = { fg = "#183691" }
+"string.escape"         = { fg = "#183691" }
+"string.special"        = { fg = "#009926" }
+"string.regexp"         = { fg = "#009926" }
+"character"             = { fg = "#183691" }
+"number"                = { fg = "#0086B3" }
+"boolean"               = { fg = "#0086B3" }
+"constant"              = { fg = "#0086B3" }
+"constant.builtin"      = { fg = "#0086B3" }
+"keyword"               = { fg = "#A71D5D" }
+"keyword.operator"      = { fg = "#A71D5D" }
+"keyword.function"      = { fg = "#A71D5D" }
+"keyword.storage"       = { fg = "#A71D5D" }
+"keyword.import"        = { fg = "#A71D5D" }
+"keyword.return"        = { fg = "#A71D5D" }
+"operator"              = { fg = "#A71D5D" }
+"type"                  = { fg = "#000000" }
+"type.builtin"          = { fg = "#A71D5D" }
+"constructor"           = { fg = "#795DA3" }
+"function"              = { fg = "#795DA3" }
+"function.call"         = { fg = "#0086B3" }
+"function.method"       = { fg = "#795DA3" }
+"function.builtin"      = { fg = "#0086B3" }
+"function.macro"        = { fg = "#795DA3" }
+"variable"              = { fg = "#0086B3" }
+"variable.parameter"    = { fg = "#0086B3" }
+"variable.builtin"      = { fg = "#DF5000" }
+"variable.member"       = { fg = "#0086B3" }
+"property"              = { fg = "#030303" }
+"attribute"             = { fg = "#795DA3" }
+"label"                 = { fg = "#63A35C" }
+"tag"                   = { fg = "#63A35C" }
+"tag.attribute"         = { fg = "#795DA3" }
+"escape"                = { fg = "#183691" }
+"diff.plus"             = { fg = "#003300" }
+"diff.minus"            = { fg = "#770000" }
+"diff.delta"            = { fg = "#ECECEC" }

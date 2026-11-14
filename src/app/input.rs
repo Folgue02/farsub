@@ -355,7 +355,7 @@ impl App {
                 }
                 Err(e) => self.msg(format!("Package install failed: {e}")),
             },
-            AppEvent::Packages(l) => self.on_packages(*l),
+            AppEvent::Grammar(name, ev) => self.on_grammar_event(name, ev),
             AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Files(root, list) => {
                 self.indexing.remove(&root);

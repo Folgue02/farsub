@@ -554,8 +554,31 @@ impl Buffer {
         self.lsp_changes.push((ua, ub, text.to_string()));
     }
 
+    /// Byte offset of `p` in the whole text (lines joined with "\n") and its byte column.
+    fn byte_offset(&self, p: Pos) -> (usize, usize) {
+        let col = byte_idx(&self.lines[p.line], p.col);
+        let before: usize = self.lines[..p.line].iter().map(|l| l.len() + 1).sum();
+        (before + col, col)
+    }
+
     fn raw_insert(&mut self, pos: Pos, text: &str) -> Pos {
-        self.hl.invalidate(pos.line);
+        if self.hl.wants_edits() {
+            // Tell the syntax tree exactly what changed (incremental re-parse).
+            let (start, col) = self.byte_offset(pos);
+            let rows = text.matches('\n').count();
+            let end_col = match text.rfind('\n') {
+                Some(i) => text.len() - i - 1,
+                None => col + text.len(),
+            };
+            self.hl.edit(
+                start,
+                start,
+                start + text.len(),
+                (pos.line, col),
+                (pos.line, col),
+                (pos.line + rows, end_col),
+            );
+        }
         self.record_lsp(pos, pos, text);
         let mut parts = text.split('\n');
         let first = parts.next().unwrap_or("");
@@ -577,7 +600,18 @@ impl Buffer {
         if a >= b {
             return String::new();
         }
-        self.hl.invalidate(a.line);
+        if self.hl.wants_edits() {
+            let (start, acol) = self.byte_offset(a);
+            let (end, bcol) = self.byte_offset(b);
+            self.hl.edit(
+                start,
+                end,
+                start,
+                (a.line, acol),
+                (b.line, bcol),
+                (a.line, acol),
+            );
+        }
         self.record_lsp(a, b, "");
         if a.line == b.line {
             let line = &mut self.lines[a.line];

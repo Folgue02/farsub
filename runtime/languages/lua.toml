@@ -1,7 +1,7 @@
 name = "lua"
+title = "Lua"
 extensions = ["lua"]
 filenames = [".luacheckrc"]
 first_line = '^#!.*\blua'
 comment = "--"
-syntax = "Lua"
 servers = ["lua_ls"]

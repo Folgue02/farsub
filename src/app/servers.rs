@@ -217,29 +217,176 @@ impl App {
         }
     }
 
-    pub(super) fn on_packages(&mut self, l: packages::Loaded) {
-        let n_syn = l.syntaxes.syntaxes().len();
-        self.syn.ss = l.syntaxes;
-        self.syn.user_themes = l.themes;
-        self.syn.set_theme(&self.config.editor.theme);
-        self.packages = l.packages;
-        // Re-detect syntaxes for open files (a package may provide a better grammar).
+    /// Grammars, highlight queries and themes: the built-ins, then each package in
+    /// Packages/, then the config folder (later ones override earlier ones).
+    pub(super) fn reload_syntax(&mut self) {
+        let mut syn = Syntax::load(&self.config.editor.theme);
+        if let Some(data) = &self.config.data_dir {
+            syn.add_installed(data);
+        }
+        self.packages = match self.config.packages_dir() {
+            Some(dir) => {
+                let names = packages::list(&dir);
+                for n in &names {
+                    syn.add_dir(&dir.join(n));
+                }
+                names
+            }
+            None => vec![],
+        };
+        if let Some(dir) = self.config.config_dir() {
+            syn.add_dir(&dir);
+        }
+        if !syn.set_theme(&self.config.editor.theme) {
+            self.msg(format!("Unknown theme '{}'", self.config.editor.theme));
+        }
+        for e in &syn.errors {
+            crate::log::error("syntax", e);
+        }
+        if !syn.errors.is_empty() {
+            self.msg(format!("Theme/query errors: {}", syn.errors.join("; ")));
+        }
+        self.syn = syn;
+        // Re-parse open files: a grammar may have been installed, or a query overridden.
         for i in 0..self.buffers.len() {
-            match self.buffers[i].path.clone() {
-                Some(p) => self.set_buffer_path(i, p),
-                None => self.buffers[i].hl.invalidate(0),
+            let name = self.buffers[i].hl.syntax.clone();
+            let grammar = self
+                .language_for_syntax(&name)
+                .and_then(|l| self.grammar_of(&l));
+            self.buffers[i].hl.reset(name, grammar);
+        }
+    }
+
+    /// Progress / result of a background grammar install.
+    pub(super) fn on_grammar_event(&mut self, name: String, ev: InstallEvent) {
+        match ev {
+            InstallEvent::Log(m) => crate::log::info("grammar", format!("{name}: {m}")),
+            InstallEvent::Done(res) => {
+                self.installing_grammars.remove(&name);
+                match res {
+                    Ok(lib) => {
+                        // Installs from a file only learn the grammar's name at the end.
+                        let real = lib
+                            .parent()
+                            .and_then(|d| d.file_name())
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or(name);
+                        self.reload_syntax();
+                        self.msg(format!("Installed the {real} grammar"));
+                    }
+                    Err(e) => {
+                        crate::log::error("grammar", format!("{name}: {e}"));
+                        self.msg(format!("Couldn't install the {name} grammar: {e}"));
+                    }
+                }
             }
         }
-        for e in &l.errors {
-            crate::log::error("packages", e);
+    }
+
+    /// Install a grammar from a source folder or archive on this computer (background).
+    pub fn install_grammar_from(&mut self, path: PathBuf) {
+        let Some(data) = self.config.data_dir.clone() else {
+            return self.msg("No data folder to install grammars into");
+        };
+        let label = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "grammar".into());
+        self.msg(format!("Installing a grammar from {label}…"));
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let log = |m: String| {
+                tx.send(AppEvent::Grammar(label.clone(), InstallEvent::Log(m)));
+            };
+            let res =
+                crate::grammar_install::install_from_path(&data, &path, &log).map(|(_, lib)| lib);
+            if let Err(e) = &res {
+                log(format!("error: {e}"));
+            }
+            tx.send(AppEvent::Grammar(label.clone(), InstallEvent::Done(res)));
+        });
+    }
+
+    /// Install a package from a folder or archive on this computer.
+    pub fn install_package_from(&mut self, path: PathBuf) {
+        let Some(dir) = self.config.packages_dir() else {
+            return self.msg("No config folder for packages");
+        };
+        match packages::install_from_path(&dir, &path) {
+            Ok(name) => {
+                self.reload_config();
+                self.msg(format!("Installed package {name}"));
+            }
+            Err(e) => self.msg(format!("Couldn't install the package: {e}")),
         }
-        if !l.errors.is_empty() {
-            self.msg(format!("Package errors: {}", l.errors.join("; ")));
-        } else if !self.packages.is_empty() {
-            self.msg(format!(
-                "Loaded {} package(s), {n_syn} syntaxes",
-                self.packages.len()
-            ));
+    }
+
+    /// Start installing a grammar from its recipe (download + compile, in the background).
+    pub fn install_grammar(&mut self, name: &str) {
+        let Some(r) = self.config.grammar_recipe(name).cloned() else {
+            return self.msg(format!("No recipe for a `{name}` grammar"));
+        };
+        let Some(data) = self.config.data_dir.clone() else {
+            return self.msg("No data folder to install grammars into");
+        };
+        if !self.installing_grammars.insert(name.to_string()) {
+            return;
         }
+        self.msg(format!(
+            "Installing the {name} grammar ({})…",
+            r.source_desc()
+        ));
+        crate::grammar_install::install(data, r, self.tx.clone());
+    }
+
+    /// The language and grammar for a file, from the languages config (extensions, file
+    /// names, first-line patterns); Plain Text if none matches.
+    pub(super) fn syntax_for(&self, path: Option<&Path>, first: &str) -> (String, Option<String>) {
+        let lang = self
+            .config
+            .language_for(path.unwrap_or(Path::new("")), first);
+        match lang {
+            Some(l) => (l.name.clone(), self.grammar_of(l)),
+            None => ("Plain Text".to_string(), None),
+        }
+    }
+
+    /// A file needs a grammar that isn't installed: install it in the background (with
+    /// `auto_install`), or say once per session how to get it.
+    pub(super) fn hint_grammar(&mut self, l: &crate::config::LanguageConfig) {
+        let g = l.grammar_name().to_string();
+        if g.is_empty()
+            || self.config.grammar_recipe(&g).is_none()
+            || !self.grammar_hinted.insert(g.clone())
+        {
+            return;
+        }
+        if self.config.editor.auto_install && self.config.data_dir.is_some() {
+            crate::log::info(
+                "grammar",
+                format!("{} needs the {g} grammar: installing it", l.title()),
+            );
+            return self.install_grammar(&g);
+        }
+        let m = format!(
+            "{} highlighting needs its grammar: Grammars: Install Grammar… ({g})",
+            l.title()
+        );
+        crate::log::info("grammar", m.clone());
+        self.msg(m);
+    }
+
+    /// A language's tree-sitter grammar, if farsub has it.
+    pub(super) fn grammar_of(&self, l: &crate::config::LanguageConfig) -> Option<String> {
+        let g = l.grammar_name();
+        (!g.is_empty() && self.syn.has_grammar(g)).then(|| g.to_string())
+    }
+
+    /// Display name for a language name ("cpp" → "C++").
+    pub fn language_title(&self, name: &str) -> String {
+        self.config
+            .language(name)
+            .map(|l| l.title().to_string())
+            .unwrap_or_else(|| name.to_string())
     }
 }

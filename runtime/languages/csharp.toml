@@ -1,4 +1,6 @@
 name = "csharp"
+title = "C#"
+grammar = "c_sharp"
 language_id = "csharp"
 extensions = ["cs", "csx"]
 comment = "//"

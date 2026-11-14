@@ -1,0 +1,46 @@
+# Converted from the InspiredGitHub color scheme.
+name = "InspiredGitHub"
+
+[editor]
+background = "#FFFFFF"
+foreground = "#323232"
+selection = "#F8EEC7"
+line_highlight = "#F5F5F5"
+gutter = "#B3B3B3"
+guide = "#E8E8E8"
+active_guide = "#B3B3B3"
+caret = "#323232"
+
+[syntax]
+"comment"               = { fg = "#969896", italic = true }
+"comment.documentation" = { fg = "#969896", italic = true }
+"string"                = { fg = "#183691" }
+"string.escape"         = { fg = "#0086B3" }
+"string.special"        = { fg = "#183691" }
+"string.regexp"         = { fg = "#183691" }
+"character"             = { fg = "#0086B3" }
+"number"                = { fg = "#0086B3" }
+"boolean"               = { fg = "#0086B3" }
+"constant"              = { fg = "#0086B3" }
+"constant.builtin"      = { fg = "#0086B3" }
+"keyword"               = { fg = "#A71D5D", bold = true }
+"keyword.operator"      = { fg = "#A71D5D", bold = true }
+"keyword.function"      = { fg = "#A71D5D", bold = true }
+"keyword.storage"       = { fg = "#A71D5D", bold = true }
+"keyword.import"        = { fg = "#A71D5D", bold = true }
+"keyword.return"        = { fg = "#A71D5D", bold = true }
+"operator"              = { fg = "#A71D5D", bold = true }
+"type"                  = { fg = "#0086B3" }
+"type.builtin"          = { fg = "#A71D5D", bold = true }
+"constructor"           = { fg = "#795DA3", bold = true }
+"function"              = { fg = "#795DA3", bold = true }
+"function.call"         = { fg = "#62A35C" }
+"function.method"       = { fg = "#795DA3", bold = true }
+"function.builtin"      = { fg = "#62A35C" }
+"function.macro"        = { fg = "#795DA3", bold = true }
+"property"              = { fg = "#0086B3" }
+"attribute"             = { fg = "#795DA3" }
+"label"                 = { fg = "#63A35C" }
+"tag"                   = { fg = "#63A35C" }
+"tag.attribute"         = { fg = "#795DA3" }
+"escape"                = { fg = "#0086B3" }

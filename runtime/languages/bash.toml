@@ -1,8 +1,8 @@
 name = "bash"
+title = "Bash"
 language_id = "shellscript"
 extensions = ["sh", "bash", "zsh", "ksh"]
 filenames = [".bashrc", ".bash_profile", ".profile", ".zshrc", "PKGBUILD"]
 first_line = "^#!.*\\b(ba|z|k)?sh\\b"
 comment = "#"
 servers = ["bashls"]
-syntax = "Bourne Again Shell (bash)"

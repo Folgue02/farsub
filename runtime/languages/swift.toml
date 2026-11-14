@@ -1,4 +1,5 @@
 name = "swift"
+title = "Swift"
 extensions = ["swift"]
 comment = "//"
 servers = ["sourcekit_lsp"]

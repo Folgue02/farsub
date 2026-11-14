@@ -193,7 +193,7 @@ fn install_into(
     Err("the [install] section names no source (npm, pip, cargo, go or script)".into())
 }
 
-fn http_get(url: &str) -> Result<ureq::Response, String> {
+pub(crate) fn http_get(url: &str) -> Result<ureq::Response, String> {
     let mut req = ureq::get(url).set("User-Agent", "farsub-installer");
     if url.starts_with("https://api.github.com/") {
         req = req.set("Accept", "application/vnd.github+json");
@@ -276,7 +276,7 @@ fn github_install(
 
 /// Unpack `.zip`, `.tar.gz`/`.tgz`, `.tar.xz`, `.tar`, a single gzipped file
 /// (written as `bin`), or a plain executable.
-fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), String> {
+pub(crate) fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), String> {
     let name = archive
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())

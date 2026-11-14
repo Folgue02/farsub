@@ -1,6 +1,8 @@
 name = "just"
+title = "Just"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["just"]
 filenames = ["justfile", "Justfile", ".justfile"]
 comment = "#"
 tab_size = 4
-syntax = "Just"

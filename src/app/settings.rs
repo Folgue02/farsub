@@ -89,9 +89,7 @@ impl App {
         if let Some(e) = self.rebuild_keys_and_menus() {
             self.msg(format!("Config error: {e}"));
         }
-        if !self.syn.set_theme(&self.config.editor.theme) {
-            self.msg(format!("Unknown theme '{}'", self.config.editor.theme));
-        }
+        self.reload_syntax();
         for b in &mut self.buffers {
             b.hl.invalidate(0);
         }

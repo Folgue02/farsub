@@ -1,4 +1,5 @@
 name = "typescript"
+title = "TypeScript"
 extensions = ["ts", "mts", "cts"]
 comment = "//"
 servers = ["ts_ls"]

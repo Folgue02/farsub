@@ -1,4 +1,5 @@
 name = "scss"
+title = "SCSS"
 extensions = ["scss"]
 comment = "//"
 tab_size = 2

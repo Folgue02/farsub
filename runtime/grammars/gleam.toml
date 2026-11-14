@@ -1,0 +1,4 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "gleam"
+crate = "tree-sitter-gleam"
+version = "1.0.0"

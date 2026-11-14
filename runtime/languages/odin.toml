@@ -1,4 +1,5 @@
 name = "odin"
+title = "Odin"
 extensions = ["odin"]
 comment = "//"
 use_tabs = true

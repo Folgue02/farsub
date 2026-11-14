@@ -1,4 +1,5 @@
 name = "ocaml"
+title = "OCaml"
 extensions = ["ml", "mli"]
 tab_size = 2
 servers = ["ocamllsp"]

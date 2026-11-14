@@ -1,0 +1,67 @@
+# Converted from the gruvbox-light color scheme.
+name = "gruvbox-light"
+
+[editor]
+background = "#FBF1C7"
+foreground = "#3C3836"
+selection = "#EBDBB2"
+line_highlight = "#EBDBB2"
+gutter = "#928374"
+guide = "#3C3836"
+active_guide = "#3C3836"
+caret = "#7C6F64"
+
+[syntax]
+"comment"               = { fg = "#928374", italic = true }
+"comment.documentation" = { fg = "#928374", italic = true }
+"string"                = { fg = "#79740E" }
+"string.escape"         = { fg = "#9D0006" }
+"string.special"        = { fg = "#79740E" }
+"string.regexp"         = { fg = "#79740E" }
+"character"             = { fg = "#8F3F71" }
+"number"                = { fg = "#8F3F71" }
+"boolean"               = { fg = "#8F3F71" }
+"constant"              = { fg = "#B57614" }
+"constant.builtin"      = { fg = "#8F3F71" }
+"keyword"               = { fg = "#9D0006" }
+"keyword.operator"      = { fg = "#427B58" }
+"keyword.function"      = { fg = "#427B58" }
+"keyword.storage"       = { fg = "#9D0006" }
+"keyword.import"        = { fg = "#9D0006" }
+"keyword.return"        = { fg = "#9D0006" }
+"operator"              = { fg = "#427B58" }
+"type"                  = { fg = "#B57614" }
+"type.builtin"          = { fg = "#9D0006" }
+"constructor"           = { fg = "#79740E" }
+"function"              = { fg = "#79740E" }
+"function.call"         = { fg = "#076678" }
+"function.method"       = { fg = "#79740E" }
+"function.builtin"      = { fg = "#427B58" }
+"function.macro"        = { fg = "#79740E" }
+"variable"              = { fg = "#076678" }
+"variable.parameter"    = { fg = "#282828" }
+"variable.builtin"      = { fg = "#8F3F71" }
+"variable.member"       = { fg = "#076678" }
+"property"              = { fg = "#076678" }
+"attribute"             = { fg = "#B57614" }
+"label"                 = { fg = "#79740E" }
+"namespace"             = { fg = "#B57614" }
+"module"                = { fg = "#AF3A03" }
+"tag"                   = { fg = "#076678" }
+"tag.attribute"         = { fg = "#B57614" }
+"punctuation"           = { fg = "#282828" }
+"punctuation.bracket"   = { fg = "#282828" }
+"punctuation.delimiter" = { fg = "#282828" }
+"punctuation.special"   = { fg = "#427B58" }
+"escape"                = { fg = "#9D0006" }
+"embedded"              = { fg = "#282828" }
+"markup.heading"        = { fg = "#79740E" }
+"markup.bold"           = { fg = "#AF3A03", bold = true }
+"markup.italic"         = { fg = "#9D0006", italic = true }
+"markup.strikethrough"  = { fg = "#928374", italic = true }
+"markup.raw"            = { fg = "#B57614" }
+"markup.list"           = { fg = "#076678" }
+"markup.quote"          = { fg = "#8F3F71" }
+"diff.plus"             = { fg = "#79740E" }
+"diff.minus"            = { fg = "#9D0006" }
+"diff.delta"            = { fg = "#B57614" }

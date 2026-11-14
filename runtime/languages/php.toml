@@ -1,4 +1,5 @@
 name = "php"
+title = "PHP"
 extensions = ["php", "phtml", "php3", "php4", "php5", "phpt"]
 first_line = '^#!.*\bphp'
 comment = "//"

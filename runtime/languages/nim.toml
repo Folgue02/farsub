@@ -1,4 +1,7 @@
 name = "nim"
+title = "Nim"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["nim", "nims", "nimble"]
 comment = "#"
 tab_size = 2

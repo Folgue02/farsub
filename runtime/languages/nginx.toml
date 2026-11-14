@@ -1,5 +1,5 @@
 name = "nginx"
+title = "nginx"
 filenames = ["nginx.conf", "mime.types"]
 comment = "#"
 tab_size = 4
-syntax = "nginx"

@@ -9,6 +9,15 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
 - **Sublime Text feel.** Layout, keys, palettes and behaviors follow Sublime Text unless a
   decision below says otherwise. Where VS Code has the better-known convention (integrated
   terminal), we follow VS Code.
+- **Inspired by Sublime, not built from Sublime.** farsub borrows Sublime's good
+  experiences (layout, keys, behaviors) but not its file formats or engines: no
+  `.sublime-syntax`, `.tmTheme` or Sublime packages. Highlighting is tree-sitter; themes,
+  queries and packages are farsub's own formats (decided 2026-11-14, done the same day).
+- **Frictionless.** Users never have to install things by hand to get a working editor:
+  what a file needs (its grammar, its language server) installs itself in the background
+  when the file opens (`auto_install`, on by default). Configuration is for customizing
+  and enjoying the app, not for making it work. Installing extras is one step: pick a
+  file or folder, or a name from a list.
 - **Keyboard first, mouse welcome.** Every action is reachable from the keyboard (shortcut,
   command palette, or F10 menus). Mouse interactions mirror what Sublime/VS Code do.
 - **Nothing hard-coded.** Languages, servers, key bindings and menus ship as data in
@@ -121,18 +130,68 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   word and the popup, on typing, or on Esc. Cmd+I shows the same at the cursor.
 - Right-click moves the cursor to the click (unless it lands inside the selection, which is
   kept) and opens the editor context menu.
-- Syntax: detected from extension/first line/packages; the status-bar syntax picker
-  overrides it per file, and the file's language (comment token, indentation defaults, LSP
-  server) follows the chosen syntax.
-- Bundled grammars: two-face's 220 (bat's set: Lua, Ruby, Java, Kotlin, Swift, Zig, Nix,
-  Terraform, Svelte, Vue, TOML, YAML, Dockerfile, …) plus farsub's own in
-  `runtime/syntaxes/` (Gleam, Just, KDL, Prisma, Meson). build.rs precompiles them into
-  one dump, so startup cost doesn't grow with the number of grammars. `Packages/` grammars
-  are added on top at runtime.
+- Language: chosen from the languages config (extensions, file names, first-line
+  patterns); the status-bar picker (languages by title, plus Plain Text) overrides it per
+  file, and highlighting, comment token, indentation defaults and LSP server follow.
+- **Highlighting (tree-sitter):** 21 common grammars are compiled in (Bash, C, C++, CSS,
+  Go, HTML, INI, Java, JavaScript, JSON, Lua, Make, Markdown, PHP, Python, Ruby, Rust,
+  TOML, TSX, TypeScript, XML, YAML); the others are installed at runtime (below). Each buffer keeps a parser and
+  syntax tree; every edit is reported to the tree (byte offsets + points) so re-parsing is
+  incremental, and a long parse is spread over frames (the UI never waits more than the
+  frame budget; highlighting catches up). Only the visible lines are highlighted, by
+  running the grammar's highlight query over that byte range. Inner nodes win over outer
+  ones; for the same node the earliest query pattern wins.
+- Highlight queries are data: `runtime/queries/<grammar>/highlights.scm` (copied from the
+  grammar crates, licenses in `runtime/queries/LICENSES.md`), overridable per grammar
+  from a package or `~/.config/farsub/queries/<grammar>/highlights.scm`.
+- Themes are TOML (`themes/*.toml`): `[editor]` colors (background, foreground,
+  selection, line_highlight, gutter, guide, active_guide, caret) and `[syntax]` styles
+  per capture (`"#RRGGBB"` or `{ fg, bold, italic, underline }`), looked up from specific to
+  general (`function.builtin` → `function`). The 29 bundled themes were converted once from
+  the color schemes farsub used before.
+- A language names its grammar with `grammar = "…"` (default: its name); `grammar = ""`
+  means plain text. Languages with no grammar at all yet: AWK, BibTeX, Clojure, Crystal,
+  .env, GraphQL, Groovy, Just, Kotlin, LaTeX, Meson, Nim, Perl, Terraform, Typst, WGSL (a
+  test keeps this list current, and checks every recipe has a bundled query).
+- **Installable grammars** (decided 2026-11-14 to keep the binary small: ~33 MB instead
+  of ~100 MB): a recipe `grammars/<name>.toml` (runtime/, the config folder, or a
+  package's `grammars/`) names a grammar's source: `crate` + `version` on crates.io, or a
+  local `source` folder; optional `path` (where `src/` is) and `symbol` (default
+  `tree_sitter_<name>`). "Grammars: Install Grammar…" (Tools menu) or `--install-grammar`
+  downloads the crate's source tarball and compiles `src/parser.c` (+ `scanner.c` /
+  `scanner.cc`) into a shared library with the system C compiler, like Helix, into
+  `<data>/grammars/<name>/`; it's checked to load and be accepted by the parser, then
+  open files pick it up without a restart. "Grammars: Remove Grammar…" /
+  `--uninstall-grammar` remove one; `--list-grammars` lists all with status.
+- **Automatic:** with `auto_install` (default on), opening a file whose grammar is
+  installable but missing installs it in the background (once per session per grammar;
+  a failure is logged with its reason and the file stays plain text). Language servers
+  the manager can install are installed the same way when a file needs one. With it off,
+  farsub says what's missing and the Tools menu installs it.
+- **From this computer:** "Grammars: Install Grammar from File…/Folder…" (system file
+  picker) or `--install-grammar PATH` compiles a grammar source folder or archive
+  (`.zip`, `.tar.gz`, `.tgz`, `.tar`, `.crate`) holding `src/parser.c` (also in a
+  subfolder). Its name comes from `tree-sitter.json`, else from the language function in
+  `parser.c`; a language whose name (or `grammar`) matches uses it right away. Each install
+  writes `<data>/grammars/<name>/grammar.toml` (name, symbol, library, source), so
+  installed grammars load with or without a recipe.
+- Needs a C compiler (Xcode Command Line Tools, gcc/clang, or Visual Studio Build Tools);
+  without one the install fails with that advice. Libraries stay loaded for the session
+  (an update loads as a new file, versioned by name).
+- An installed grammar uses farsub's bundled query (`runtime/queries/<name>/`), else the
+  one from its source. Opening a file whose grammar is installable but missing shows it as
+  plain text and says once (status bar + console) how to install it.
+- 35 recipes ship: Batch, C#, CMake, CUDA, Dart, Dockerfile, Elixir, Elm, Erlang, Fish,
+  F#, Gleam, GLSL, Haskell, Julia, KDL, Less, nginx, Nix, OCaml, Odin, PowerShell, Prisma,
+  Protocol Buffers, R, Scala, SCSS, Solidity, SQL, Starlark, Svelte, Swift, Vim script,
+  Vue, Zig. Compiling from source also covers grammars whose crates are too old to link
+  in (Dockerfile, Svelte, Vue).
+- Large files: typing re-parses incrementally (about 7 ms per keystroke in a realistic
+  200k-line file); one giant function/block parses slower, capped by the frame budget.
 - Built-in languages (`runtime/languages/`, ~75): each gives file extensions / file names
   / shebang detection, line-comment token, indentation defaults, grammar, and servers.
   Invariants (enforced by tests): no two built-in languages claim the same extension or
-  file name, every claimed file gets a real grammar (never Plain Text), and every listed
+  file name, every named grammar exists, and every listed
   server exists. Languages whose only comments are block comments (HTML, CSS, XML,
   Markdown, OCaml, Svelte, Vue) have no comment token yet, so Toggle Comment does nothing
   there. Block-comment support is still to do.
@@ -159,8 +218,8 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   `runtime/icons.toml` (`[[icons]]` with `names` / `extensions`, `label`, `color`;
   `[default]`, `folder_color`). Exact names win over extensions, the longest extension
   wins (`.d.ts` beats `.ts`), and later rules win ties.
-- **Icon packages:** any folder in `Packages/` with an `icons.toml` (e.g. installed with
-  "Packages: Install Package (git URL)") is an icon package. Its rules may use `image =
+- **Icon packages:** any folder in `Packages/` with an `icons.toml` (installed with
+  "Packages: Install Package (git URL)", "…from File…" or "…from Folder…") is an icon package. Its rules may use `image =
   "path.png"` (relative to the package) instead of a label, plus `folder_image` /
   `folder_open_image`. All packages load in name order after the built-ins, then the
   user's own `icons.toml` on top. `icon_theme = "<package>"` uses only that package. PNG
@@ -246,6 +305,15 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
   click outside closes. Disabled items are dimmed and skipped.
 - egui's own widget focus is never used: every key goes through the app's routing, so Tab
   never moves focus to (and Enter never "clicks") a menu-bar button.
+
+## 7a. Packages
+
+- A package is a folder in `Packages/` that can hold `themes/`, `queries/`, `grammars/`
+  (recipes) and `icons.toml`. Install one with "Packages: Install Package (git URL)…",
+  "Packages: Install Package from File…" (a `.zip` / `.tar.gz` / `.tgz` / `.tar`, picked
+  with the system file picker), "…from Folder…", or `--install-package PATH`. It applies
+  immediately; installing a package that exists replaces it (the old copy goes to the
+  Trash).
 
 ## 8. Sidebar
 

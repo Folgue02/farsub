@@ -1,4 +1,5 @@
 name = "elm"
+title = "Elm"
 extensions = ["elm"]
 comment = "--"
 tab_size = 4

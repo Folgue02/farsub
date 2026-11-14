@@ -1,6 +1,8 @@
 name = "latex"
+title = "LaTeX"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["tex", "ltx", "sty", "cls"]
 comment = "%"
 tab_size = 2
-syntax = "LaTeX"
 servers = ["texlab"]

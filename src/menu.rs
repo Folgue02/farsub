@@ -156,6 +156,12 @@ pub fn default_label(cmd: Command) -> String {
         MoveToGroup4 => Some("Move File to Group 4"),
         FocusNextGroup => Some("Focus Next Group"),
         ToggleWordWrap => Some("Word Wrap"),
+        InstallGrammar => Some("Install Grammar…"),
+        RemoveGrammar => Some("Remove Grammar…"),
+        InstallGrammarFromFile => Some("Install Grammar from File…"),
+        InstallGrammarFromFolder => Some("Install Grammar from Folder…"),
+        InstallPackageFromFile => Some("Install Package from File…"),
+        InstallPackageFromFolder => Some("Install Package from Folder…"),
         _ => None,
     };
     if let Some(s) = special {

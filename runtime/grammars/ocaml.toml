@@ -1,0 +1,5 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "ocaml"
+crate = "tree-sitter-ocaml"
+version = "0.26.0"
+path = "grammars/ocaml"

@@ -1,0 +1,44 @@
+# Converted from the Sublime Snazzy color scheme.
+name = "Sublime Snazzy"
+
+[editor]
+background = "#282A36"
+foreground = "#F8F8F2"
+selection = "#57C7FF"
+line_highlight = "#000000"
+caret = "#97979B"
+
+[syntax]
+"comment"               = { fg = "#686868" }
+"comment.documentation" = { fg = "#686868" }
+"string"                = { fg = "#F3F99D" }
+"string.escape"         = { fg = "#5AF78E" }
+"string.special"        = { fg = "#F3F99D" }
+"string.regexp"         = { fg = "#F3F99D" }
+"character"             = { fg = "#5AF78E" }
+"number"                = { fg = "#F1F1F0" }
+"boolean"               = { fg = "#5AF78E" }
+"constant"              = { fg = "#5AF78E" }
+"constant.builtin"      = { fg = "#5AF78E" }
+"keyword"               = { fg = "#FF5C57" }
+"keyword.operator"      = { fg = "#FF5C57" }
+"keyword.function"      = { fg = "#9AEDFE", italic = true }
+"keyword.storage"       = { fg = "#FF5C57" }
+"keyword.import"        = { fg = "#FF5C57" }
+"keyword.return"        = { fg = "#FF5C57" }
+"operator"              = { fg = "#FF5C57" }
+"type"                  = { fg = "#F3F99D" }
+"type.builtin"          = { fg = "#9AEDFE", italic = true }
+"constructor"           = { fg = "#9AEDFE" }
+"function"              = { fg = "#9AEDFE" }
+"function.call"         = { fg = "#F3F99D" }
+"function.method"       = { fg = "#9AEDFE" }
+"function.builtin"      = { fg = "#F3F99D" }
+"function.macro"        = { fg = "#9AEDFE" }
+"variable.parameter"    = { fg = "#FF6AC1", italic = true }
+"property"              = { fg = "#F3F99D" }
+"attribute"             = { fg = "#9AEDFE" }
+"label"                 = { fg = "#5AF78E" }
+"tag"                   = { fg = "#5AF78E" }
+"tag.attribute"         = { fg = "#9AEDFE" }
+"escape"                = { fg = "#5AF78E" }

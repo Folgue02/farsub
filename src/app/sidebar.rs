@@ -292,14 +292,18 @@ impl App {
     pub(super) fn set_buffer_path(&mut self, i: usize, path: PathBuf) {
         let first = self.buffers[i].lines[0].clone();
         let lang = self.config.language_for(&path, &first).cloned();
-        let syntax = lang
-            .as_ref()
-            .and_then(|l| l.syntax.as_deref())
-            .and_then(|s| self.syn.find_by_name(s))
-            .unwrap_or_else(|| self.syn.detect(Some(&path), &first));
+        let (syntax, grammar) = match &lang {
+            Some(l) => (l.name.clone(), self.grammar_of(l)),
+            None => ("Plain Text".to_string(), None),
+        };
+        if grammar.is_none()
+            && let Some(l) = &lang
+        {
+            self.hint_grammar(l);
+        }
         let b = &mut self.buffers[i];
         b.set_path(path);
         b.apply_language(lang.as_ref(), &self.config.editor);
-        b.hl.reset(syntax);
+        b.hl.reset(syntax, grammar);
     }
 }

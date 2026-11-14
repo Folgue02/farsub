@@ -66,6 +66,23 @@ pub struct Args {
     #[arg(long, value_name = "NAME")]
     pub uninstall_server: Vec<String>,
 
+    /// Print the built-in and installable tree-sitter grammars, then exit.
+    #[arg(long)]
+    pub list_grammars: bool,
+
+    /// Install a grammar, then exit: a recipe NAME (downloads the source) or a PATH to a
+    /// source folder / archive. Compiles it with your C compiler. Repeatable.
+    #[arg(long, value_name = "NAME|PATH")]
+    pub install_grammar: Vec<String>,
+
+    /// Install a package from a folder or archive (.zip, .tar.gz), then exit. Repeatable.
+    #[arg(long, value_name = "PATH")]
+    pub install_package: Vec<PathBuf>,
+
+    /// Remove an installed grammar, then exit. Repeatable.
+    #[arg(long, value_name = "NAME")]
+    pub uninstall_grammar: Vec<String>,
+
     /// Validate config, keymap, menus (and --project) and exit; non-zero on errors.
     #[arg(long)]
     pub check_config: bool,
@@ -321,6 +338,96 @@ pub fn run_headless(args: &Args, config: &Config) -> Option<i32> {
             );
         }
         return Some(0);
+    }
+    if !args.install_package.is_empty() {
+        let Some(dir) = config.packages_dir() else {
+            eprintln!("no config folder for packages");
+            return Some(1);
+        };
+        let mut code = 0;
+        for p in &args.install_package {
+            match crate::packages::install_from_path(&dir, p) {
+                Ok(name) => println!("installed package {name}"),
+                Err(e) => {
+                    eprintln!("{}: {e}", p.display());
+                    code = 1;
+                }
+            }
+        }
+        return Some(code);
+    }
+    if args.list_grammars {
+        let mut rows: Vec<(String, String, String)> = crate::grammars::builtin()
+            .into_iter()
+            .map(|(n, _)| (n.to_string(), "built in".to_string(), String::new()))
+            .collect();
+        for r in &config.grammars {
+            let status = match data
+                .as_deref()
+                .and_then(|d| crate::grammar_install::installed_lib(d, &r.name))
+            {
+                Some(p) => format!("installed  {}", p.display()),
+                None => "not installed".into(),
+            };
+            rows.push((r.name.clone(), status, r.source_desc()));
+        }
+        rows.sort();
+        for (name, status, src) in rows {
+            let langs: Vec<&str> = config
+                .languages
+                .iter()
+                .filter(|l| l.grammar_name() == name)
+                .map(|l| l.name.as_str())
+                .collect();
+            println!("{name:<14} {:<22} {status:<60} {src}", langs.join(","));
+        }
+        return Some(0);
+    }
+    if !args.install_grammar.is_empty() || !args.uninstall_grammar.is_empty() {
+        let Some(data) = data else {
+            eprintln!("no data folder (set $HOME, $FARSUB_DATA or --data-dir)");
+            return Some(1);
+        };
+        let mut code = 0;
+        for name in &args.uninstall_grammar {
+            match crate::grammar_install::uninstall(&data, name) {
+                Ok(()) => println!("uninstalled {name}"),
+                Err(e) => {
+                    eprintln!("{name}: {e}");
+                    code = 1;
+                }
+            }
+        }
+        for name in &args.install_grammar {
+            // A path installs from that file or folder.
+            if Path::new(name).exists() {
+                println!("installing a grammar from {name}…");
+                match crate::grammar_install::install_from_path(&data, Path::new(name), &|l| {
+                    println!("  {l}")
+                }) {
+                    Ok((g, p)) => println!("{g}: {}", p.display()),
+                    Err(e) => {
+                        eprintln!("{name}: {e}");
+                        code = 1;
+                    }
+                }
+                continue;
+            }
+            let Some(r) = config.grammar_recipe(name) else {
+                eprintln!("no recipe for `{name}` (see --list-grammars)");
+                code = 1;
+                continue;
+            };
+            println!("installing {name} ({})…", r.source_desc());
+            match crate::grammar_install::run_install(&data, r, &|l| println!("  {l}")) {
+                Ok(p) => println!("{name}: {}", p.display()),
+                Err(e) => {
+                    eprintln!("{name}: {e}");
+                    code = 1;
+                }
+            }
+        }
+        return Some(code);
     }
     if !args.install_server.is_empty() || !args.uninstall_server.is_empty() {
         let Some(data) = data else {

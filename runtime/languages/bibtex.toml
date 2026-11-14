@@ -1,6 +1,8 @@
 name = "bibtex"
+title = "BibTeX"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["bib"]
 comment = "%"
 tab_size = 2
-syntax = "BibTeX"
 servers = ["texlab"]

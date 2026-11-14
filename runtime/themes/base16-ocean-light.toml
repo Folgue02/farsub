@@ -1,0 +1,55 @@
+# Converted from the base16-ocean.light color scheme.
+name = "base16-ocean.light"
+
+[editor]
+background = "#EFF1F5"
+foreground = "#4F5B66"
+selection = "#DFE1E8"
+line_highlight = "#A7ADBA"
+caret = "#4F5B66"
+
+[syntax]
+"comment"               = { fg = "#A7ADBA" }
+"comment.documentation" = { fg = "#A7ADBA" }
+"string"                = { fg = "#A3BE8C" }
+"string.escape"         = { fg = "#96B5B4" }
+"string.special"        = { fg = "#96B5B4" }
+"string.regexp"         = { fg = "#96B5B4" }
+"character"             = { fg = "#D08770" }
+"number"                = { fg = "#D08770" }
+"boolean"               = { fg = "#D08770" }
+"constant"              = { fg = "#BF616A" }
+"constant.builtin"      = { fg = "#D08770" }
+"keyword"               = { fg = "#B48EAD" }
+"keyword.function"      = { fg = "#B48EAD" }
+"keyword.storage"       = { fg = "#B48EAD" }
+"keyword.import"        = { fg = "#B48EAD" }
+"keyword.return"        = { fg = "#B48EAD" }
+"type"                  = { fg = "#B48EAD" }
+"type.builtin"          = { fg = "#B48EAD" }
+"constructor"           = { fg = "#8FA1B3" }
+"function"              = { fg = "#8FA1B3" }
+"function.call"         = { fg = "#8FA1B3" }
+"function.method"       = { fg = "#8FA1B3" }
+"function.builtin"      = { fg = "#96B5B4" }
+"function.macro"        = { fg = "#8FA1B3" }
+"variable"              = { fg = "#BF616A" }
+"variable.parameter"    = { fg = "#BF616A" }
+"variable.builtin"      = { fg = "#BF616A" }
+"variable.member"       = { fg = "#BF616A" }
+"property"              = { fg = "#BF616A" }
+"attribute"             = { fg = "#D08770" }
+"label"                 = { fg = "#BF616A" }
+"tag"                   = { fg = "#BF616A" }
+"tag.attribute"         = { fg = "#D08770" }
+"punctuation.special"   = { fg = "#AB7967" }
+"escape"                = { fg = "#96B5B4" }
+"markup.heading"        = { fg = "#8FA1B3" }
+"markup.bold"           = { fg = "#D08770", bold = true }
+"markup.italic"         = { fg = "#B48EAD", italic = true }
+"markup.raw"            = { fg = "#A3BE8C" }
+"markup.list"           = { fg = "#BF616A" }
+"markup.quote"          = { fg = "#D08770" }
+"diff.plus"             = { fg = "#A3BE8C" }
+"diff.minus"            = { fg = "#BF616A" }
+"diff.delta"            = { fg = "#B48EAD" }

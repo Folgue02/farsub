@@ -1,4 +1,5 @@
 name = "elixir"
+title = "Elixir"
 extensions = ["ex", "exs"]
 first_line = '^#!.*\belixir'
 comment = "#"

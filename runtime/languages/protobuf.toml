@@ -1,6 +1,7 @@
 name = "protobuf"
+title = "Protocol Buffers"
+grammar = "proto"
 language_id = "proto"
 extensions = ["proto"]
 comment = "//"
 tab_size = 2
-syntax = "Protocol Buffer"

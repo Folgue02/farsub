@@ -1,4 +1,5 @@
 name = "svelte"
+title = "Svelte"
 extensions = ["svelte"]
 tab_size = 2
 servers = ["svelte"]

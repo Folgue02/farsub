@@ -1,5 +1,5 @@
 name = "ini"
+title = "INI"
 extensions = ["ini", "cfg", "inf", "desktop", "service"]
 filenames = [".editorconfig"]
 comment = ";"
-syntax = "INI"

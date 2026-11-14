@@ -1,4 +1,5 @@
 name = "dart"
+title = "Dart"
 extensions = ["dart"]
 comment = "//"
 tab_size = 2

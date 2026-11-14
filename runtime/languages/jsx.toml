@@ -1,4 +1,6 @@
 name = "jsx"
+title = "JavaScript (JSX)"
+grammar = "javascript"
 language_id = "javascriptreact"
 extensions = ["jsx"]
 comment = "//"

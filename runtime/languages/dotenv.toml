@@ -1,4 +1,6 @@
 name = "dotenv"
+title = ".env"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 filenames = [".env", ".env.local", ".env.example", ".env.development", ".env.production", ".env.test", ".envrc"]
 comment = "#"
-syntax = "DotENV"

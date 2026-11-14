@@ -1,0 +1,61 @@
+# Converted from the Coldark-Cold color scheme.
+name = "Coldark-Cold"
+
+[editor]
+background = "#E3EAF2"
+foreground = "#111B27"
+selection = "#D0DAE7"
+line_highlight = "#D0DAE7"
+gutter = "#3C526D"
+caret = "#111B27"
+
+[syntax]
+"comment"               = { fg = "#3C526D" }
+"comment.documentation" = { fg = "#3C526D" }
+"string"                = { fg = "#116B00" }
+"string.escape"         = { fg = "#AF00AF" }
+"string.special"        = { fg = "#AF00AF" }
+"string.regexp"         = { fg = "#AF00AF" }
+"character"             = { fg = "#AF00AF" }
+"number"                = { fg = "#755F00" }
+"boolean"               = { fg = "#755F00" }
+"constant"              = { fg = "#005A8E" }
+"constant.builtin"      = { fg = "#755F00" }
+"keyword"               = { fg = "#A04900" }
+"keyword.operator"      = { fg = "#A04900" }
+"keyword.function"      = { fg = "#A04900" }
+"keyword.storage"       = { fg = "#AF00AF" }
+"keyword.import"        = { fg = "#A04900" }
+"keyword.return"        = { fg = "#A04900" }
+"operator"              = { fg = "#A04900" }
+"type"                  = { fg = "#005A8E" }
+"type.builtin"          = { fg = "#A04900" }
+"constructor"           = { fg = "#7C00AA" }
+"function"              = { fg = "#7C00AA" }
+"function.call"         = { fg = "#AF00AF" }
+"function.method"       = { fg = "#7C00AA" }
+"function.builtin"      = { fg = "#AF00AF" }
+"function.macro"        = { fg = "#7C00AA" }
+"variable"              = { fg = "#005A8E" }
+"variable.parameter"    = { fg = "#006D6D" }
+"variable.builtin"      = { fg = "#005A8E", bold = true }
+"variable.member"       = { fg = "#005A8E" }
+"property"              = { fg = "#005A8E" }
+"attribute"             = { fg = "#755F00" }
+"label"                 = { fg = "#006D6D" }
+"namespace"             = { fg = "#005A8E" }
+"module"                = { fg = "#005A8E" }
+"tag"                   = { fg = "#006D6D" }
+"tag.attribute"         = { fg = "#755F00" }
+"punctuation.special"   = { fg = "#006D6D" }
+"escape"                = { fg = "#AF00AF" }
+"markup.heading"        = { fg = "#005A8E", bold = true }
+"markup.bold"           = { fg = "#111B27", bold = true }
+"markup.italic"         = { fg = "#111B27", italic = true }
+"markup.link"           = { fg = "#755F00" }
+"markup.link.url"       = { fg = "#755F00" }
+"markup.raw"            = { fg = "#006D6D" }
+"markup.quote"          = { fg = "#111B27", italic = true }
+"diff.plus"             = { fg = "#116B00" }
+"diff.minus"            = { fg = "#C22F2E" }
+"diff.delta"            = { fg = "#755F00" }

@@ -1,4 +1,5 @@
 name = "c"
+title = "C"
 extensions = ["c", "h"]
 comment = "//"
 servers = ["clangd"]

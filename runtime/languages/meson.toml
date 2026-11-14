@@ -1,5 +1,7 @@
 name = "meson"
+title = "Meson"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 filenames = ["meson.build", "meson_options.txt", "meson.options"]
 comment = "#"
 tab_size = 2
-syntax = "Meson"

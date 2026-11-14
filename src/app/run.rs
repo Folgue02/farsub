@@ -259,7 +259,10 @@ impl App {
                 p.title = "Set syntax for this file".into();
                 self.modal = Some(Modal::Palette(p));
                 self.populate_palette();
-                let cur = self.buf().map(|b| b.hl.syntax.clone()).unwrap_or_default();
+                let cur = self
+                    .buf()
+                    .map(|b| self.language_title(&b.hl.syntax))
+                    .unwrap_or_default();
                 if let Some(Modal::Palette(p)) = &mut self.modal
                     && let Some(i) = p.shown.iter().position(|(i, _)| p.items[*i].label == cur)
                 {
@@ -421,10 +424,30 @@ impl App {
                 }));
             }
             InstallPackage => self.prompt(
-                "Install package from git URL (Sublime packages with .sublime-syntax / .tmTheme)",
+                "Install package from git URL (themes, highlight queries, icons)",
                 "https://github.com/",
                 PromptKind::PackageUrl,
             ),
+            InstallGrammarFromFile => self.file_request = Some(FileRequest::GrammarFile),
+            InstallGrammarFromFolder => self.file_request = Some(FileRequest::GrammarFolder),
+            InstallPackageFromFile => self.file_request = Some(FileRequest::PackageFile),
+            InstallPackageFromFolder => self.file_request = Some(FileRequest::PackageFolder),
+            InstallGrammar | RemoveGrammar => {
+                let mode = if cmd == InstallGrammar {
+                    Mode::Grammars
+                } else {
+                    Mode::GrammarsRemove
+                };
+                let mut p = Palette::new(mode, "");
+                p.title = if cmd == InstallGrammar {
+                    "Install a grammar (downloads its source, compiles it with your C compiler)"
+                        .into()
+                } else {
+                    "Remove an installed grammar".into()
+                };
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+            }
             RemovePackage => {
                 if self.packages.is_empty() {
                     return self.msg("No packages installed");
@@ -441,10 +464,9 @@ impl App {
             }
             ReloadPackages => {
                 // Icon packages live in the config (icons.toml files).
+                // Themes, highlight queries and icons from packages are all config data.
                 self.reload_config();
-                let dir = self.config.packages_dir();
-                self.packages = dir.as_deref().map(packages::list).unwrap_or_default();
-                packages::load_async(dir, self.tx.clone());
+                self.msg(format!("Reloaded {} package(s)", self.packages.len()));
             }
             ShowKeymap => {
                 self.completion = None;

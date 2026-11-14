@@ -1,4 +1,5 @@
 name = "zig"
+title = "Zig"
 extensions = ["zig", "zon"]
 comment = "//"
 servers = ["zls"]

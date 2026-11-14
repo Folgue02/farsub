@@ -1,0 +1,50 @@
+# Converted from the zenburn color scheme.
+name = "zenburn"
+
+[editor]
+background = "#3F3F3F"
+foreground = "#DEDEDE"
+selection = "#838383"
+line_highlight = "#303030"
+caret = "#D6D6D6"
+
+[syntax]
+"comment"               = { fg = "#87AE86" }
+"comment.documentation" = { fg = "#87AE86" }
+"string"                = { fg = "#D68686" }
+"string.escape"         = { fg = "#FF8080" }
+"string.special"        = { fg = "#C76F41" }
+"string.regexp"         = { fg = "#C76F41" }
+"character"             = { fg = "#FF8080" }
+"number"                = { fg = "#87D6D5" }
+"boolean"               = { fg = "#D6D6AE", bold = true }
+"constant"              = { fg = "#FED6AF" }
+"constant.builtin"      = { fg = "#D6D6AE", bold = true }
+"keyword"               = { fg = "#FED6AF" }
+"keyword.operator"      = { fg = "#ECECEC" }
+"keyword.function"      = { fg = "#FFFB9D" }
+"keyword.storage"       = { fg = "#FFFB9D" }
+"keyword.import"        = { fg = "#FED6AF" }
+"keyword.return"        = { fg = "#FED6AF" }
+"operator"              = { fg = "#ECECEC" }
+"type"                  = { fg = "#D6D6D6" }
+"type.builtin"          = { fg = "#FFFB9D" }
+"constructor"           = { fg = "#FFFD87" }
+"function"              = { fg = "#FFFD87" }
+"function.call"         = { fg = "#FED6AF" }
+"function.method"       = { fg = "#FFFD87" }
+"function.builtin"      = { fg = "#FFFD87" }
+"function.macro"        = { fg = "#FFFD87" }
+"variable"              = { fg = "#FED6AF" }
+"variable.parameter"    = { fg = "#FED6AF" }
+"variable.builtin"      = { fg = "#FED6AF" }
+"variable.member"       = { fg = "#FED6AF" }
+"property"              = { fg = "#FED6AF" }
+"attribute"             = { fg = "#FED6AF" }
+"label"                 = { fg = "#D6D7AF" }
+"namespace"             = { fg = "#FF8000", bold = true }
+"module"                = { fg = "#FF8000", bold = true }
+"tag"                   = { fg = "#D6D7AF" }
+"tag.attribute"         = { fg = "#FED6AF" }
+"punctuation.special"   = { fg = "#898989" }
+"escape"                = { fg = "#FF8080" }

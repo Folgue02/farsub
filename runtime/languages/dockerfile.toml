@@ -1,7 +1,7 @@
 name = "dockerfile"
+title = "Dockerfile"
 language_id = "dockerfile"
 extensions = ["dockerfile", "containerfile"]
 filenames = ["Dockerfile", "Containerfile"]
 comment = "#"
-syntax = "Dockerfile"
 servers = ["dockerls"]

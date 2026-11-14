@@ -8,7 +8,7 @@
 //!   servers/*.toml       language servers, nvim-lspconfig style, with mason-style [install]
 //!   keymap.toml          extra/overriding [[keys]] (like Sublime's user keymap)
 //!   menus.toml           replaces the menu layout
-//!   Packages/            Sublime-style packages: *.sublime-syntax, *.tmTheme
+//!   Packages/            farsub packages: themes/*.toml, queries/<grammar>/highlights.scm, icons.toml
 //! ~/.local/share/farsub/servers/<name>/   servers installed by the server manager
 //! ```
 
@@ -41,6 +41,9 @@ pub struct EditorConfig {
     pub word_wrap: bool,
     /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
     pub terminal_shell: Option<String>,
+    /// Install what a file needs (its tree-sitter grammar, its language server) in the
+    /// background as soon as it's opened, instead of asking.
+    pub auto_install: bool,
     /// File icons in the sidebar, tabs and Goto Anything.
     pub file_icons: bool,
     /// Use only this icon package (a folder in Packages/ with an icons.toml); empty or
@@ -76,6 +79,7 @@ impl Default for EditorConfig {
             highlight_current_line: false,
             word_wrap: true,
             terminal_shell: None,
+            auto_install: true,
             file_icons: true,
             icon_theme: None,
             caret_style: CaretStyle::Smooth,
@@ -292,9 +296,12 @@ pub struct LanguageConfig {
     /// Extra project-root markers (servers have their own).
     #[serde(default)]
     pub roots: Vec<String>,
-    /// Syntax name override (otherwise detected from the extension / packages).
+    /// Display name ("C++", "JavaScript"); defaults to `name`.
     #[serde(default)]
-    pub syntax: Option<String>,
+    pub title: Option<String>,
+    /// Tree-sitter grammar for highlighting (defaults to `name`); see `grammars.rs`.
+    #[serde(default)]
+    pub grammar: Option<String>,
     /// Server names, tried in order; the first installed one runs.
     #[serde(default)]
     pub servers: Vec<String>,
@@ -304,6 +311,14 @@ pub struct LanguageConfig {
 }
 
 impl LanguageConfig {
+    pub fn title(&self) -> &str {
+        self.title.as_deref().unwrap_or(&self.name)
+    }
+
+    pub fn grammar_name(&self) -> &str {
+        self.grammar.as_deref().unwrap_or(&self.name)
+    }
+
     pub fn language_id(&self) -> &str {
         self.language_id.as_deref().unwrap_or(&self.name)
     }
@@ -391,6 +406,8 @@ pub struct Config {
     pub menus: Vec<MenuDef>,
     /// Right-click menus (context name → items), like Sublime's Context.sublime-menu.
     pub context_menus: HashMap<String, Vec<String>>,
+    /// Installable grammar recipes (grammars/*.toml).
+    pub grammars: Vec<crate::grammar_install::GrammarRecipe>,
     /// File icons (icons.toml): later entries win.
     pub icons: Vec<IconDef>,
     pub icon_default: Option<IconDef>,
@@ -466,7 +483,7 @@ impl Config {
         if let Some(p) = &path {
             if let Some(dir) = p.parent() {
                 // Folder overrides first, then config.toml on top.
-                for sub in ["languages", "servers"] {
+                for sub in ["languages", "servers", "grammars"] {
                     let mut files: Vec<PathBuf> = std::fs::read_dir(dir.join(sub))
                         .map(|rd| rd.flatten().map(|e| e.path()).collect())
                         .unwrap_or_default();
@@ -532,6 +549,12 @@ impl Config {
                     a.section == b.section && a.keys == b.keys
                 });
             }
+        } else if let Some(file) = name.strip_prefix("grammars/") {
+            let mut r: crate::grammar_install::GrammarRecipe = toml::from_str(text).map_err(err)?;
+            if r.name.is_empty() {
+                r.name = file.trim_end_matches(".toml").to_string();
+            }
+            upsert(&mut self.grammars, r, |a, b| a.name == b.name);
         } else if name == "icons.toml" {
             self.merge_icons(text, None)?;
         } else if name == "menus.toml" {
@@ -576,7 +599,8 @@ impl Config {
         Ok(())
     }
 
-    /// Icon packages: every `Packages/<name>/icons.toml` (or only `icon_theme`'s), in
+    /// Packages: grammar recipes from every package; icons from every
+    /// `Packages/<name>/icons.toml` (or only `icon_theme`'s), in
     /// name order, then the user's own icons.toml on top.
     fn load_icon_packages(&mut self, errs: &mut Vec<String>) {
         let Some(dir) = self.packages_dir() else {
@@ -584,10 +608,29 @@ impl Config {
         };
         let theme = self.editor.icon_theme.clone().filter(|t| !t.is_empty());
         for name in crate::packages::list(&dir) {
+            let pkg = dir.join(&name);
+            // Grammar recipes a package provides (from every package).
+            if let Ok(rd) = std::fs::read_dir(pkg.join("grammars")) {
+                let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+                files.sort();
+                for f in files
+                    .iter()
+                    .filter(|f| f.extension().is_some_and(|e| e == "toml"))
+                {
+                    if let Ok(text) = std::fs::read_to_string(f)
+                        && let Err(e) = self.merge_file(
+                            &format!("grammars/{}", f.file_name().unwrap().to_string_lossy()),
+                            &text,
+                        )
+                    {
+                        errs.push(format!("{}: {e}", f.display()));
+                    }
+                }
+            }
+            // Icons only from the chosen icon theme, if one is set.
             if theme.as_ref().is_some_and(|t| *t != name) {
                 continue;
             }
-            let pkg = dir.join(&name);
             let f = pkg.join("icons.toml");
             let Ok(text) = std::fs::read_to_string(&f) else {
                 continue;
@@ -654,6 +697,10 @@ impl Config {
             })
     }
 
+    pub fn grammar_recipe(&self, name: &str) -> Option<&crate::grammar_install::GrammarRecipe> {
+        self.grammars.iter().find(|g| g.name == name)
+    }
+
     pub fn language(&self, name: &str) -> Option<&LanguageConfig> {
         self.languages.iter().find(|l| l.name == name)
     }
@@ -704,7 +751,8 @@ pub const DEFAULT_SETTINGS: &str = r##"# farsub default settings (read-only refe
 #   servers/<name>.toml     add or replace a language server (with optional [install])
 #   keymap.toml             add/override key bindings: [[keys]] keys = "Cmd+K", command = "hover"
 #   menus.toml              replace the menu layout and context menus
-#   Packages/               Sublime packages (.sublime-syntax, .tmTheme); see "Packages:" commands
+#   themes/*.toml           color themes; queries/<grammar>/highlights.scm  highlight overrides
+#   Packages/               packages adding themes, queries, icons; see "Packages:" commands
 # Manage servers with Tools → Language Servers (Cmd+Shift+P "LSP: Manage Language Servers").
 
 [editor]
@@ -723,6 +771,9 @@ highlight_current_line = false
 word_wrap = true
 # Shell for the terminal panel (default: $SHELL).
 # terminal_shell = "/bin/zsh"
+# Install a file's grammar and language server automatically (in the background) when it
+# opens. Off: farsub tells you what's missing and you install from the Tools menu.
+auto_install = true
 # File icons in the sidebar, tabs and Goto Anything; mapping in icons.toml.
 file_icons = true
 # Use only one icon package from Packages/ (one with an icons.toml):
@@ -737,7 +788,7 @@ caret_extra_bottom = 1.0
 hot_exit = true
 restore_session = true
 # Any bundled theme ("Monokai Extended", "OneHalfDark", "Nord", "Dracula", "GitHub",
-# "Solarized (dark)", "Visual Studio Dark+", …) or a .tmTheme from Packages/.
+# "Solarized (dark)", "Catppuccin Mocha", "gruvbox-dark", …) or one from themes/ or a package.
 theme = "Monokai Extended"
 
 # Example: a language defined inline here instead of languages/lua.toml.

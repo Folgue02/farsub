@@ -1,3 +1,4 @@
 name = "vue"
+title = "Vue"
 extensions = ["vue"]
 tab_size = 2

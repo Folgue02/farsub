@@ -1,0 +1,4 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "batch"
+crate = "tree-sitter-batch"
+version = "0.11.1"

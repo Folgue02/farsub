@@ -1,7 +1,9 @@
 name = "clojure"
+title = "Clojure"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["clj", "cljs", "cljc", "edn", "bb"]
 first_line = '^#!.*\bbb\b'
 comment = ";;"
 tab_size = 2
-syntax = "Clojure"
 servers = ["clojure_lsp"]

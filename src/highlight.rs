@@ -1,19 +1,26 @@
-//! Incremental syntect highlighting. Parse state is cached at the start of every line so an
-//! edit only re-highlights from the changed line down to the bottom of the viewport.
+//! Syntax highlighting with tree-sitter.
+//!
+//! Each buffer keeps a parser and its syntax tree. Edits are fed to the tree as they happen
+//! (`HlCache::edit`), so re-parsing is incremental; a long first parse is spread over
+//! frames. Only the visible lines are highlighted, by running the grammar's highlight query
+//! over that byte range.
+//!
+//! Everything visual is data: grammars' queries in `queries/<grammar>/highlights.scm` and
+//! themes in `themes/*.toml` (built-ins in runtime/, overridable from packages and the
+//! config folder).
 
+use std::cmp::Reverse;
+use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use eframe::egui::Color32;
-use syntect::highlighting::{FontStyle, HighlightIterator, HighlightState, Highlighter, Theme};
-use syntect::parsing::{ParseState, ScopeStack, SyntaxSet};
-
-pub struct Syntax {
-    pub ss: SyntaxSet,
-    pub theme: Theme,
-    pub themes: two_face::theme::LazyThemeSet,
-    /// Themes from Sublime packages (.tmTheme), by name.
-    pub user_themes: Vec<(String, Theme)>,
-}
+use serde::Deserialize;
+use tree_sitter::{
+    InputEdit, Language, Node, ParseOptions, Parser, Point, Query, QueryCursor, StreamingIterator,
+    TextProvider, Tree,
+};
 
 /// Color + font flags for a highlighted span.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,374 +31,762 @@ pub struct Style {
     pub underline: bool,
 }
 
-pub fn rgb(c: syntect::highlighting::Color) -> Color32 {
-    Color32::from_rgb(c.r, c.g, c.b)
+/// (start byte, end byte, style) within one line.
+pub type Span = (usize, usize, Style);
+
+// ---------------------------------------------------------------- themes
+
+/// A color theme (`themes/*.toml`): editor colors and a style per highlight capture.
+#[derive(Clone, Debug, Default)]
+pub struct Theme {
+    pub name: String,
+    editor: HashMap<String, Color32>,
+    syntax: HashMap<String, Style>,
 }
 
-/// Every grammar that ships with farsub: two-face's 220 (bat's set) plus the ones in
-/// runtime/syntaxes, precompiled by build.rs.
-pub fn builtin_syntaxes() -> SyntaxSet {
-    syntect::dumps::from_uncompressed_data(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/syntaxes.packdump"
-    )))
-    .expect("bundled syntax dump")
+#[derive(Deserialize)]
+struct ThemeFile {
+    name: Option<String>,
+    #[serde(default)]
+    editor: HashMap<String, String>,
+    #[serde(default)]
+    syntax: HashMap<String, StyleDef>,
 }
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StyleDef {
+    Color(String),
+    Full {
+        fg: Option<String>,
+        #[serde(default)]
+        bold: bool,
+        #[serde(default)]
+        italic: bool,
+        #[serde(default)]
+        underline: bool,
+    },
+}
+
+fn color(s: &str) -> Option<Color32> {
+    crate::config::parse_hex_color(s).map(|(r, g, b)| Color32::from_rgb(r, g, b))
+}
+
+impl Theme {
+    /// Parse a theme file; `fallback_name` is used when it has no `name`.
+    pub fn parse(text: &str, fallback_name: &str) -> Result<Theme, String> {
+        let f: ThemeFile = toml::from_str(text).map_err(|e| e.message().to_string())?;
+        let editor: HashMap<String, Color32> = f
+            .editor
+            .iter()
+            .filter_map(|(k, v)| Some((k.clone(), color(v)?)))
+            .collect();
+        let fg = editor
+            .get("foreground")
+            .copied()
+            .unwrap_or(Color32::from_rgb(248, 248, 242));
+        let syntax = f
+            .syntax
+            .into_iter()
+            .filter_map(|(k, v)| {
+                let st = match v {
+                    StyleDef::Color(c) => Style {
+                        fg: color(&c)?,
+                        bold: false,
+                        italic: false,
+                        underline: false,
+                    },
+                    StyleDef::Full {
+                        fg: c,
+                        bold,
+                        italic,
+                        underline,
+                    } => Style {
+                        fg: c.as_deref().and_then(color).unwrap_or(fg),
+                        bold,
+                        italic,
+                        underline,
+                    },
+                };
+                Some((k, st))
+            })
+            .collect();
+        Ok(Theme {
+            name: f.name.unwrap_or_else(|| fallback_name.to_string()),
+            editor,
+            syntax,
+        })
+    }
+
+    /// Style for a capture name, falling back through its parents
+    /// (`function.builtin.static` → `function.builtin` → `function`).
+    pub fn style_for(&self, capture: &str) -> Option<Style> {
+        let mut name = capture;
+        loop {
+            if let Some(s) = self.syntax.get(name) {
+                return Some(*s);
+            }
+            name = &name[..name.rfind('.')?];
+        }
+    }
+
+    fn editor_color(&self, key: &str) -> Option<Color32> {
+        self.editor.get(key).copied()
+    }
+}
+
+// ---------------------------------------------------------------- grammars
+
+/// A grammar and its highlight query (compiled on first use).
+pub struct Grammar {
+    pub name: String,
+    pub language: Language,
+    query_src: String,
+    query: OnceLock<Result<Arc<Query>, String>>,
+}
+
+impl Grammar {
+    fn query(&self) -> Result<Arc<Query>, String> {
+        self.query
+            .get_or_init(|| {
+                Query::new(&self.language, &self.query_src)
+                    .map(Arc::new)
+                    .map_err(|e| format!("{}: highlights.scm: {e}", self.name))
+            })
+            .clone()
+    }
+}
+
+/// Grammars and themes.
+pub struct Syntax {
+    grammars: HashMap<String, Arc<Grammar>>,
+    /// Bundled highlight queries for grammars that aren't compiled in (installed ones).
+    spare_queries: HashMap<String, String>,
+    themes: Vec<Theme>,
+    pub theme: Theme,
+    /// Bumped on every theme change (cached highlighting must be redone).
+    pub theme_gen: u64,
+    /// Problems loading themes / queries (shown in the console).
+    pub errors: Vec<String>,
+}
+
+const DEFAULT_THEME: &str = "Monokai Extended";
 
 impl Syntax {
+    /// The built-in grammars, queries and themes (runtime/).
     pub fn load(theme: &str) -> Self {
-        let ss = builtin_syntaxes();
-        let themes = two_face::theme::LazyThemeSet::from(two_face::theme::extra());
+        let mut queries: HashMap<String, String> = HashMap::new();
+        let mut themes = vec![];
+        let mut errors = vec![];
+        for (path, text) in crate::config::RUNTIME_FILES {
+            if let Some(rest) = path.strip_prefix("queries/")
+                && let Some(g) = rest.strip_suffix("/highlights.scm")
+            {
+                queries.insert(g.to_string(), text.to_string());
+            } else if let Some(file) = path.strip_prefix("themes/") {
+                match Theme::parse(text, file.trim_end_matches(".toml")) {
+                    Ok(t) => themes.push(t),
+                    Err(e) => errors.push(format!("built-in {path}: {e}")),
+                }
+            }
+        }
+        let grammars = crate::grammars::builtin()
+            .into_iter()
+            .map(|(name, language)| {
+                let g = Grammar {
+                    name: name.to_string(),
+                    language,
+                    query_src: queries.remove(name).unwrap_or_default(),
+                    query: OnceLock::new(),
+                };
+                (name.to_string(), Arc::new(g))
+            })
+            .collect();
         let mut s = Syntax {
-            ss,
-            theme: Theme::default(),
+            grammars,
+            spare_queries: queries,
             themes,
-            user_themes: vec![],
+            theme: Theme::default(),
+            theme_gen: 0,
+            errors,
         };
         s.set_theme(theme);
         s
     }
 
-    /// Switch theme by name; falls back to Monokai Extended. Returns false if unknown.
-    pub fn set_theme(&mut self, name: &str) -> bool {
-        if let Some((_, t)) = self.user_themes.iter().find(|(n, _)| n == name) {
-            self.theme = t.clone();
-            return true;
-        }
-        match self.themes.get(name) {
-            Some(t) => {
-                self.theme = t.clone();
-                true
+    /// Grammars installed from recipes (compiled libraries in the data folder). Built-in
+    /// grammars win; the query is farsub's bundled one, else the one from the source.
+    pub fn add_installed(&mut self, data: &Path) {
+        use crate::grammar_install::{installed, installed_query, load};
+        for (r, lib) in installed(data) {
+            if self.grammars.contains_key(&r.name) {
+                continue;
             }
-            None => {
-                self.theme = self
-                    .themes
-                    .get("Monokai Extended")
-                    .cloned()
-                    .unwrap_or_default();
-                false
+            match load(&lib, &r.symbol) {
+                Ok(language) => {
+                    let query_src = self
+                        .spare_queries
+                        .get(&r.name)
+                        .cloned()
+                        .or_else(|| installed_query(data, &r.name))
+                        .unwrap_or_default();
+                    let g = Grammar {
+                        name: r.name.clone(),
+                        language,
+                        query_src,
+                        query: OnceLock::new(),
+                    };
+                    self.grammars.insert(r.name.clone(), Arc::new(g));
+                }
+                Err(e) => self.errors.push(format!("grammar {}: {e}", r.name)),
             }
         }
     }
 
+    /// Add themes (`themes/*.toml`) and highlight-query overrides
+    /// (`queries/<grammar>/highlights.scm`) from a package or the config folder.
+    pub fn add_dir(&mut self, dir: &Path) {
+        if let Ok(rd) = std::fs::read_dir(dir.join("themes")) {
+            let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+            files.sort();
+            for f in files
+                .iter()
+                .filter(|f| f.extension().is_some_and(|e| e == "toml"))
+            {
+                let stem = f.file_stem().unwrap_or_default().to_string_lossy();
+                match std::fs::read_to_string(f)
+                    .map_err(|e| e.to_string())
+                    .and_then(|t| Theme::parse(&t, &stem))
+                {
+                    Ok(t) => {
+                        self.themes.retain(|x| x.name != t.name);
+                        self.themes.push(t);
+                    }
+                    Err(e) => self.errors.push(format!("{}: {e}", f.display())),
+                }
+            }
+        }
+        if let Ok(rd) = std::fs::read_dir(dir.join("queries")) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let q = e.path().join("highlights.scm");
+                let Some(g) = self.grammars.get(&name) else {
+                    continue;
+                };
+                if let Ok(src) = std::fs::read_to_string(&q) {
+                    let ng = Grammar {
+                        name: name.clone(),
+                        language: g.language.clone(),
+                        query_src: src,
+                        query: OnceLock::new(),
+                    };
+                    if let Err(err) = ng.query() {
+                        self.errors.push(format!("{}: {err}", q.display()));
+                        continue;
+                    }
+                    self.grammars.insert(name, Arc::new(ng));
+                }
+            }
+        }
+    }
+
+    /// Switch theme by name; falls back to Monokai Extended. Returns false if unknown.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        let found = self.themes.iter().find(|t| t.name == name).cloned();
+        let ok = found.is_some();
+        self.theme = found
+            .or_else(|| {
+                self.themes
+                    .iter()
+                    .find(|t| t.name == DEFAULT_THEME)
+                    .cloned()
+            })
+            .or_else(|| self.themes.first().cloned())
+            .unwrap_or_default();
+        self.theme_gen += 1;
+        ok
+    }
+
     pub fn theme_names(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.themes.theme_names().map(String::from).collect();
-        v.extend(self.user_themes.iter().map(|(n, _)| n.clone()));
+        let mut v: Vec<String> = self.themes.iter().map(|t| t.name.clone()).collect();
+        v.sort();
+        v.dedup();
+        v
+    }
+
+    pub fn has_grammar(&self, name: &str) -> bool {
+        self.grammars.contains_key(name)
+    }
+
+    #[cfg(test)]
+    pub fn grammar_names(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.grammars.keys().cloned().collect();
         v.sort();
         v
     }
 
-    pub fn find_by_name(&self, name: &str) -> Option<String> {
-        self.ss
-            .syntaxes()
-            .iter()
-            .find(|s| s.name.eq_ignore_ascii_case(name))
-            .map(|s| s.name.clone())
-    }
-
-    pub fn detect(&self, path: Option<&Path>, first_line: &str) -> String {
-        let by_path = path.and_then(|p| {
-            let ext = p.extension().and_then(|e| e.to_str());
-            let name = p.file_name().and_then(|e| e.to_str());
-            ext.and_then(|e| self.ss.find_syntax_by_extension(e))
-                .or_else(|| name.and_then(|n| self.ss.find_syntax_by_extension(n)))
-        });
-        by_path
-            .or_else(|| self.ss.find_syntax_by_first_line(first_line))
-            .unwrap_or_else(|| self.ss.find_syntax_plain_text())
-            .name
-            .clone()
+    pub fn grammar(&self, name: &str) -> Option<Arc<Grammar>> {
+        self.grammars.get(name).cloned()
     }
 
     pub fn bg(&self) -> Color32 {
         self.theme
-            .settings
-            .background
-            .map(rgb)
+            .editor_color("background")
             .unwrap_or(Color32::from_rgb(39, 40, 34))
     }
     pub fn fg(&self) -> Color32 {
         self.theme
-            .settings
-            .foreground
-            .map(rgb)
+            .editor_color("foreground")
             .unwrap_or(Color32::from_rgb(248, 248, 242))
     }
     pub fn selection(&self) -> Color32 {
         self.theme
-            .settings
-            .selection
-            .map(rgb)
+            .editor_color("selection")
             .unwrap_or(Color32::from_rgb(73, 72, 62))
     }
     pub fn line_highlight(&self) -> Color32 {
         self.theme
-            .settings
-            .line_highlight
-            .map(rgb)
+            .editor_color("line_highlight")
             .unwrap_or(Color32::from_rgb(50, 51, 44))
     }
     pub fn guide(&self) -> Option<Color32> {
-        self.theme.settings.guide.map(rgb)
+        self.theme.editor_color("guide")
     }
     pub fn active_guide(&self) -> Option<Color32> {
-        self.theme.settings.active_guide.map(rgb)
+        self.theme.editor_color("active_guide")
     }
     pub fn gutter(&self) -> Color32 {
         self.theme
-            .settings
-            .gutter_foreground
-            .map(rgb)
+            .editor_color("gutter")
             .unwrap_or(Color32::from_rgb(117, 113, 94))
     }
 }
 
-pub type Span = (usize, usize, Style);
+// ---------------------------------------------------------------- per-buffer state
 
+/// A buffer's parser, syntax tree and the highlighted visible lines.
 pub struct HlCache {
+    /// The language shown to the user ("rust", "Plain Text").
     pub syntax: String,
-    /// Parser state at the start of every CHECKPOINT-th line.
-    checkpoints: Vec<(ParseState, HighlightState)>,
-    /// Running state at the start of line `lines.len()`.
-    frontier: Option<(ParseState, HighlightState)>,
-    pub lines: Vec<Vec<Span>>,
+    /// The tree-sitter grammar, if the language has one.
+    pub grammar: Option<String>,
+    parser: Option<Parser>,
+    tree: Option<Tree>,
+    /// Text changed since the tree was parsed.
+    dirty: bool,
+    /// A parse was cut short by the frame deadline (it resumes next frame).
+    parsing: bool,
+    edits: Vec<InputEdit>,
+    tree_gen: u64,
+    /// Highlighted lines `first .. first + spans.len()`.
+    first: usize,
+    spans: Vec<Vec<Span>>,
+    /// (tree generation, theme generation, from, to) the spans were made for.
+    made_for: Option<(u64, u64, usize, usize)>,
 }
-
-const MAX_HL_LINE: usize = 4000;
-const CHECKPOINT: usize = 64;
 
 impl HlCache {
     pub fn new(syntax: String) -> Self {
         HlCache {
             syntax,
-            checkpoints: vec![],
-            frontier: None,
-            lines: vec![],
+            grammar: None,
+            parser: None,
+            tree: None,
+            dirty: true,
+            parsing: false,
+            edits: vec![],
+            tree_gen: 0,
+            first: 0,
+            spans: vec![],
+            made_for: None,
         }
     }
 
-    pub fn reset(&mut self, syntax: String) {
-        self.syntax = syntax;
-        self.checkpoints.clear();
-        self.frontier = None;
-        self.lines.clear();
+    /// Switch language / grammar (drops the tree).
+    pub fn reset(&mut self, syntax: String, grammar: Option<String>) {
+        *self = HlCache {
+            grammar,
+            ..HlCache::new(syntax)
+        };
     }
 
-    pub fn invalidate(&mut self, line: usize) {
-        if line >= self.lines.len() {
+    /// Whether edits should be reported (only when there's a grammar to keep in sync).
+    pub fn wants_edits(&self) -> bool {
+        self.grammar.is_some()
+    }
+
+    /// The text changed without exact edit info: parse again from scratch.
+    pub fn invalidate(&mut self, _line: usize) {
+        self.tree = None;
+        self.edits.clear();
+        if self.parsing {
+            if let Some(p) = &mut self.parser {
+                p.reset();
+            }
+            self.parsing = false;
+        }
+        self.dirty = true;
+        self.made_for = None;
+    }
+
+    /// Report an edit, in bytes and (row, byte column) points, so the tree is re-parsed
+    /// incrementally.
+    pub fn edit(
+        &mut self,
+        start_byte: usize,
+        old_end_byte: usize,
+        new_end_byte: usize,
+        start: (usize, usize),
+        old_end: (usize, usize),
+        new_end: (usize, usize),
+    ) {
+        if self.grammar.is_none() {
             return;
         }
-        let k = line / CHECKPOINT;
-        self.checkpoints.truncate(k + 1);
-        self.lines.truncate(k * CHECKPOINT);
-        self.frontier = None;
+        let pt = |(row, column): (usize, usize)| Point { row, column };
+        self.edits.push(InputEdit {
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+            start_position: pt(start),
+            old_end_position: pt(old_end),
+            new_end_position: pt(new_end),
+        });
+        self.dirty = true;
+        self.made_for = None;
     }
 
-    /// Highlight lines up to `upto`, stopping at `deadline`. Returns true when done, so a
-    /// jump deep into a huge file never freezes the UI; the rest fills in over later frames.
+    /// Highlight spans for line `ln`, if it's in the highlighted range.
+    pub fn line(&self, ln: usize) -> Option<&Vec<Span>> {
+        ln.checked_sub(self.first).and_then(|i| self.spans.get(i))
+    }
+
+    /// Make sure lines `from..to` are highlighted, working until `deadline`. Returns false
+    /// if parsing isn't finished yet (the caller should ask for another frame).
     pub fn ensure(
         &mut self,
         syn: &Syntax,
         text: &[String],
-        upto: usize,
+        from: usize,
+        to: usize,
         deadline: std::time::Instant,
     ) -> bool {
-        let upto = upto.min(text.len());
-        if self.lines.len() >= upto {
+        let to = to.min(text.len());
+        let Some(g) = self.grammar.as_deref().and_then(|n| syn.grammar(n)) else {
+            self.spans.clear();
             return true;
-        }
-        let hl = Highlighter::new(&syn.theme);
-        if self.frontier.is_none() {
-            self.frontier = Some(match self.checkpoints.get(self.lines.len() / CHECKPOINT) {
-                Some(st) => st.clone(),
-                None => {
-                    let sr = syn
-                        .ss
-                        .find_syntax_by_name(&self.syntax)
-                        .unwrap_or_else(|| syn.ss.find_syntax_plain_text());
-                    self.lines.clear();
-                    self.checkpoints.clear();
-                    (
-                        ParseState::new(sr),
-                        HighlightState::new(&hl, ScopeStack::new()),
-                    )
-                }
-            });
-        }
-        let (ps, hs) = self.frontier.as_mut().unwrap();
-        let mut line = String::new();
-        while self.lines.len() < upto {
-            let i = self.lines.len();
-            if i % CHECKPOINT == 0 && self.checkpoints.len() == i / CHECKPOINT {
-                self.checkpoints.push((ps.clone(), hs.clone()));
+        };
+        let Ok(query) = g.query() else {
+            self.spans.clear();
+            return true;
+        };
+        if self.parser.is_none() {
+            let mut p = Parser::new();
+            if p.set_language(&g.language).is_err() {
+                self.grammar = None;
+                return true;
             }
-            let src = &text[i];
-            let mut spans = Vec::new();
-            if src.len() <= MAX_HL_LINE {
-                line.clear();
-                line.push_str(src);
-                line.push('\n');
-                let ops = ps.parse_line(&line, &syn.ss).unwrap_or_default();
-                let mut off = 0;
-                for (style, piece) in HighlightIterator::new(hs, &ops, &line, &hl) {
-                    let end = (off + piece.len()).min(src.len());
-                    if end > off {
-                        spans.push((off, end, to_style(style)));
+            self.parser = Some(p);
+            self.tree = None;
+            self.dirty = true;
+        }
+        let mut done = true;
+        if self.dirty || self.tree.is_none() {
+            let parser = self.parser.as_mut().unwrap();
+            if !self.edits.is_empty() {
+                // New edits invalidate a parse that was cut short.
+                if self.parsing {
+                    parser.reset();
+                    self.parsing = false;
+                }
+                if let Some(t) = &mut self.tree {
+                    for e in &self.edits {
+                        t.edit(e);
                     }
-                    off += piece.len();
+                }
+                self.edits.clear();
+            }
+            let mut input = |_byte: usize, p: Point| -> &[u8] {
+                match text.get(p.row) {
+                    Some(line) if p.column < line.len() => &line.as_bytes()[p.column..],
+                    Some(_) if p.row + 1 < text.len() => b"\n",
+                    _ => &[],
+                }
+            };
+            let mut stop = |_: &tree_sitter::ParseState| {
+                if std::time::Instant::now() > deadline {
+                    ControlFlow::Break(())
+                } else {
+                    ControlFlow::Continue(())
+                }
+            };
+            let opts = ParseOptions::new().progress_callback(&mut stop);
+            match parser.parse_with_options(&mut input, self.tree.as_ref(), Some(opts)) {
+                Some(t) => {
+                    self.tree = Some(t);
+                    self.dirty = false;
+                    self.parsing = false;
+                    self.tree_gen += 1;
+                }
+                None => {
+                    self.parsing = true;
+                    done = false;
                 }
             }
-            self.lines.push(spans);
-            if i % 32 == 31 && std::time::Instant::now() > deadline {
-                return self.lines.len() >= upto;
-            }
         }
-        true
+        let key = (self.tree_gen, syn.theme_gen, from, to);
+        if self.made_for == Some(key) {
+            return done;
+        }
+        let Some(tree) = &self.tree else {
+            return done;
+        };
+        self.spans = highlight_lines(tree, &query, &syn.theme, text, from, to);
+        self.first = from;
+        self.made_for = Some(key);
+        done
     }
 }
 
-fn to_style(s: syntect::highlighting::Style) -> Style {
-    Style {
-        fg: rgb(s.foreground),
-        bold: s.font_style.contains(FontStyle::BOLD),
-        italic: s.font_style.contains(FontStyle::ITALIC),
-        underline: s.font_style.contains(FontStyle::UNDERLINE),
+/// Node text for query predicates (`#eq?`, `#match?`), read straight from the lines.
+struct Lines<'a>(&'a [String]);
+
+impl<'a> TextProvider<&'a [u8]> for Lines<'a> {
+    type I = std::vec::IntoIter<&'a [u8]>;
+    fn text(&mut self, node: Node) -> Self::I {
+        let (s, e) = (node.start_position(), node.end_position());
+        let mut out = vec![];
+        for row in s.row..=e.row.min(self.0.len().saturating_sub(1)) {
+            let line = self.0[row].as_bytes();
+            let a = if row == s.row {
+                s.column.min(line.len())
+            } else {
+                0
+            };
+            let b = if row == e.row {
+                e.column.min(line.len())
+            } else {
+                line.len()
+            };
+            if a < b {
+                out.push(&line[a..b]);
+            }
+            if row < e.row {
+                out.push(&b"\n"[..]);
+            }
+        }
+        out.into_iter()
+    }
+}
+
+/// Run the highlight query over lines `from..to` and turn captures into per-line spans.
+/// Inner nodes win over the nodes containing them; for the same node, the earliest pattern
+/// in the query wins (tree-sitter's usual precedence).
+fn highlight_lines(
+    tree: &Tree,
+    query: &Query,
+    theme: &Theme,
+    text: &[String],
+    from: usize,
+    to: usize,
+) -> Vec<Vec<Span>> {
+    let mut out: Vec<Vec<Span>> = vec![vec![]; to.saturating_sub(from)];
+    if from >= to {
+        return out;
+    }
+    let start_byte: usize = text[..from].iter().map(|l| l.len() + 1).sum();
+    let end_byte: usize = start_byte + text[from..to].iter().map(|l| l.len() + 1).sum::<usize>();
+    let styles: Vec<Option<Style>> = query
+        .capture_names()
+        .iter()
+        .map(|n| theme.style_for(n))
+        .collect();
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(start_byte..end_byte);
+    let mut caps = cursor.captures(query, tree.root_node(), Lines(text));
+    // (start byte, end byte, pattern, style, start point, end point)
+    let mut found: Vec<(usize, usize, usize, Style, Point, Point)> = vec![];
+    while let Some((m, i)) = caps.next() {
+        let c = m.captures()[*i];
+        let Some(style) = styles[c.index as usize] else {
+            continue;
+        };
+        let n = c.node;
+        found.push((
+            n.start_byte(),
+            n.end_byte(),
+            m.pattern_index,
+            style,
+            n.start_position(),
+            n.end_position(),
+        ));
+    }
+    // Paint outer nodes first, inner ones over them; for the same node, later patterns first
+    // so the earliest pattern ends up on top.
+    found.sort_by_key(|f| (f.0, Reverse(f.1), Reverse(f.2)));
+    let mut paint: Vec<Vec<Option<Style>>> = vec![vec![]; out.len()];
+    for (_, _, _, style, s, e) in found {
+        for row in s.row.max(from)..=e.row.min(to - 1) {
+            let len = text[row].len();
+            let line = &mut paint[row - from];
+            if line.is_empty() {
+                line.resize(len, None);
+            }
+            let a = if row == s.row { s.column.min(len) } else { 0 };
+            let b = if row == e.row { e.column.min(len) } else { len };
+            for cell in &mut line[a..b] {
+                *cell = Some(style);
+            }
+        }
+    }
+    for (i, cells) in paint.into_iter().enumerate() {
+        let mut spans: Vec<Span> = vec![];
+        let mut b = 0;
+        while b < cells.len() {
+            let st = cells[b];
+            let mut e = b + 1;
+            while e < cells.len() && cells[e] == st {
+                e += 1;
+            }
+            if let Some(st) = st {
+                spans.push((b, e, st));
+            }
+            b = e;
+        }
+        out[i] = spans;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(s: &str) -> Vec<String> {
+        s.split('\n').map(String::from).collect()
+    }
+
+    #[test]
+    fn themes_parse_and_fall_back_through_capture_parents() {
+        let t = Theme::parse(
+            "name = \"T\"\n[editor]\nforeground = \"#FFFFFF\"\n[syntax]\nfunction = \"#00FF00\"\ncomment = { fg = \"#777777\", italic = true }\n",
+            "x",
+        )
+        .unwrap();
+        assert_eq!(
+            t.style_for("function.builtin.static").unwrap().fg,
+            Color32::from_rgb(0, 255, 0)
+        );
+        assert!(t.style_for("comment.documentation").unwrap().italic);
+        assert!(t.style_for("variable").is_none());
+        // Every bundled theme parses and has the basics.
+        let s = Syntax::load("Monokai Extended");
+        assert!(s.errors.is_empty(), "{:?}", s.errors);
+        assert!(s.theme_names().len() >= 25);
+        assert_eq!(s.theme.name, "Monokai Extended");
+        assert!(s.theme.style_for("keyword").is_some() && s.theme.style_for("string").is_some());
+    }
+
+    #[test]
+    fn every_bundled_query_compiles() {
+        let s = Syntax::load("Monokai Extended");
+        let mut bad = vec![];
+        for name in s.grammar_names() {
+            let g = s.grammar(&name).unwrap();
+            if g.query_src.is_empty() {
+                bad.push(format!("{name}: no highlights.scm"));
+            } else if let Err(e) = g.query() {
+                bad.push(e);
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn highlights_visible_lines_and_reparses_incrementally() {
+        let s = Syntax::load("Monokai Extended");
+        let mut text = lines("// note\nfn main() {\n    let s = \"hi\";\n}\n");
+        let mut hl = HlCache::new("rust".into());
+        hl.reset("rust".into(), Some("rust".into()));
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        let style_at = |hl: &HlCache, ln: usize, col: usize| {
+            hl.line(ln)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let comment = s.theme.style_for("comment").unwrap();
+        let keyword = s.theme.style_for("keyword").unwrap();
+        let string = s.theme.style_for("string").unwrap();
+        assert_eq!(style_at(&hl, 0, 3), Some(comment));
+        assert_eq!(style_at(&hl, 1, 0), Some(keyword), "fn");
+        assert_eq!(style_at(&hl, 2, 13), Some(string), "\"hi\"");
+        // Edit: turn line 2's string into a number; report the edit, re-highlight.
+        let start = text[..2].iter().map(|l| l.len() + 1).sum::<usize>() + 12;
+        text[2] = "    let s = 42;".into();
+        hl.edit(start, start + 4, start + 2, (2, 12), (2, 16), (2, 14));
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(style_at(&hl, 2, 12), s.theme.style_for("number"));
+        // Only the requested range is highlighted.
+        assert!(hl.ensure(&s, &text, 1, 2, far));
+        assert!(hl.line(0).is_none() && hl.line(1).is_some() && hl.line(2).is_none());
     }
 }
 
 #[cfg(test)]
-mod bundled_tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    /// Scopes the parser assigns to `text`, as "scope: token" strings.
-    fn scopes(ss: &SyntaxSet, syntax: &str, text: &str) -> Vec<String> {
-        let syn = ss
-            .find_syntax_by_name(syntax)
-            .unwrap_or_else(|| panic!("{syntax}"));
-        let mut state = ParseState::new(syn);
-        let mut stack = ScopeStack::new();
-        let mut out = vec![];
-        for line in text.lines() {
-            let line = format!("{line}\n");
-            let ops = state.parse_line(&line, ss).expect("parse");
-            let mut last = 0;
-            for (i, op) in ops {
-                if i > last {
-                    let tok = line[last..i].trim();
-                    if !tok.is_empty()
-                        && let Some(top) = stack.as_slice().last()
-                    {
-                        out.push(format!("{top}: {tok}"));
-                    }
-                }
-                last = i;
-                stack.apply(&op).unwrap();
-            }
-        }
-        out
-    }
-
-    fn has(v: &[String], scope_prefix: &str, tok: &str) -> bool {
-        v.iter()
-            .any(|s| s.starts_with(scope_prefix) && s.ends_with(&format!(": {tok}")))
-    }
-
+mod coverage {
     #[test]
-    fn bundled_grammars_load_and_highlight() {
-        let ss = builtin_syntaxes();
-        assert!(ss.syntaxes().len() >= 225, "{}", ss.syntaxes().len());
-        let g = scopes(
-            &ss,
-            "Gleam",
-            "// hi\npub fn add(a: Int) -> Int {\n  a + 1 |> io.debug\n}\nconst s = \"x\\n\"",
-        );
-        assert!(has(&g, "comment", "// hi"));
-        assert!(has(&g, "entity.name.function", "add"));
-        assert!(has(&g, "storage.type", "Int"));
-        assert!(has(&g, "keyword.operator", "|>"));
-        let j = scopes(
-            &ss,
-            "Just",
-            "# build it\nset shell := [\"bash\", \"-c\"]\nversion := `git describe`\nbuild target='x': deps\n    cargo build {{target}}",
-        );
-        assert!(has(&j, "comment", "# build it"));
-        assert!(has(&j, "keyword.control", "set"));
-        assert!(has(&j, "entity.name.function", "build"));
-        assert!(has(&j, "entity.name.function", "deps"));
-        assert!(has(&j, "variable.other", "target"));
-        let k = scopes(
-            &ss,
-            "KDL",
-            "// cfg\npackage name=\"farsub\" {\n  version 1.2\n  dev #true\n}",
-        );
-        assert!(has(&k, "entity.name.tag", "package"));
-        assert!(has(&k, "entity.other.attribute-name", "name"));
-        assert!(has(&k, "constant.numeric", "1.2"));
-        let p = scopes(
-            &ss,
-            "Prisma",
-            "model User {\n  id    Int    @id @default(autoincrement())\n  email String @unique\n}",
-        );
-        assert!(has(&p, "entity.name.type", "User"));
-        assert!(has(&p, "support.type", "Int"));
-        assert!(has(&p, "entity.other.attribute-name", "@id"));
-        let m = scopes(
-            &ss,
-            "Meson",
-            "project('farsub', 'c', version: '1.0')\nif get_option('x')\nendif",
-        );
-        assert!(has(&m, "support.function", "project"));
-        assert!(has(&m, "keyword.control", "endif"));
-        assert!(has(&m, "variable.parameter", "version"));
-    }
-
-    #[test]
-    fn every_language_resolves_to_a_grammar_and_known_servers() {
-        let cfg = crate::config::Config::builtin();
-        let syn = Syntax::load("Monokai Extended");
-        assert!(cfg.languages.len() >= 70, "{}", cfg.languages.len());
-        let mut owner: HashMap<String, String> = HashMap::new();
-        let mut no_grammar = vec![];
-        for l in &cfg.languages {
-            if let Some(s) = &l.syntax {
-                assert!(syn.find_by_name(s).is_some(), "{}: no syntax {s:?}", l.name);
-            }
-            for s in &l.servers {
-                assert!(cfg.server(s).is_some(), "{}: unknown server {s}", l.name);
-            }
-            if let Some(re) = &l.first_line {
-                regex::Regex::new(re).unwrap_or_else(|e| panic!("{}: {e}", l.name));
-            }
-            let names = l
-                .extensions
-                .iter()
-                .map(|e| format!("x.{e}"))
-                .chain(l.filenames.iter().cloned());
-            for n in names {
-                // No two built-in languages claim the same extension or file name.
-                if let Some(prev) = owner.insert(n.clone(), l.name.clone()) {
-                    panic!("{n} claimed by {prev} and {}", l.name);
-                }
-                // Every claimed file gets real highlighting, not Plain Text.
-                let p = Path::new(&n);
-                let lang = cfg.language_for(p, "").map(|l| l.name.as_str());
-                assert_eq!(lang, Some(l.name.as_str()), "{n}");
-                let grammar = l.syntax.clone().unwrap_or_else(|| syn.detect(Some(p), ""));
-                if grammar == "Plain Text" {
-                    no_grammar.push(format!("{n} ({})", l.name));
-                }
+    fn every_language_grammar_exists() {
+        let s = super::Syntax::load("Monokai Extended");
+        let c = crate::config::Config::builtin();
+        let mut plain = vec![];
+        for l in &c.languages {
+            let g = l.grammar_name();
+            if g.is_empty() {
+                plain.push(l.name.as_str());
+            } else {
+                // Built in, or installable from a recipe.
+                assert!(
+                    s.has_grammar(g) || c.grammar_recipe(g).is_some(),
+                    "{}: unknown grammar `{g}`",
+                    l.name
+                );
             }
         }
-        assert!(
-            no_grammar.is_empty(),
-            "files without a grammar: {no_grammar:?}"
-        );
-        // Every built-in server's install recipe (if any) has a source.
-        for s in &cfg.servers {
-            if let Some(i) = &s.install {
-                assert_ne!(i.source(), "none", "{}", s.name);
-            }
+        // Every recipe has a bundled highlight query (installed grammars use it).
+        for r in &c.grammars {
+            assert!(
+                crate::config::RUNTIME_FILES
+                    .iter()
+                    .any(|(p, _)| *p == format!("queries/{}/highlights.scm", r.name)),
+                "grammar recipe `{}` has no runtime/queries/{0}/highlights.scm",
+                r.name
+            );
         }
+        plain.sort();
+        // Known gaps: no bundled tree-sitter grammar yet (shown as plain text).
+        assert_eq!(
+            plain,
+            [
+                "awk",
+                "bibtex",
+                "clojure",
+                "crystal",
+                "dotenv",
+                "graphql",
+                "groovy",
+                "just",
+                "kotlin",
+                "latex",
+                "meson",
+                "nim",
+                "perl",
+                "terraform",
+                "typst",
+                "wgsl"
+            ]
+        );
     }
 }

@@ -1,8 +1,8 @@
 name = "erlang"
+title = "Erlang"
 extensions = ["erl", "hrl", "escript"]
 filenames = ["rebar.config"]
 first_line = '^#!.*\bescript'
 comment = "%"
 tab_size = 4
-syntax = "Erlang"
 servers = ["erlang_ls"]

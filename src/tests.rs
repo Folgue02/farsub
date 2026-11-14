@@ -37,6 +37,8 @@ fn test_config(root: &Path) -> Config {
         terminal_shell: Some("/bin/sh".into()),
         // Most tests check columns on unwrapped lines; wrapping has its own tests.
         word_wrap: false,
+        // Tests never download or compile anything unless they ask to.
+        auto_install: false,
         ..EditorConfig::default()
     };
     // Never touch the user's real config or data folders.
@@ -732,39 +734,19 @@ fn server_manager_install_and_uninstall() {
     h.state_mut().app.lsp.shutdown();
 }
 
-const TM_THEME: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>name</key><string>Farsub Test Theme</string>
-<key>settings</key><array>
-<dict><key>settings</key><dict>
-<key>background</key><string>#102030</string><key>foreground</key><string>#E0E0E0</string>
-</dict></dict>
-<dict><key>scope</key><string>keyword</string><key>settings</key><dict><key>foreground</key><string>#FF8800</string></dict></dict>
-</array></dict></plist>"#;
-
 #[test]
-fn sublime_packages_add_syntax_and_theme() {
-    let syntax = "%YAML 1.2\n---\nname: Farsub Test Lang\nfile_extensions: [fstl]\nscope: source.fstl\ncontexts:\n  main:\n    - match: '\\b(let|fn)\\b'\n      scope: keyword.control.fstl\n";
+fn packages_add_themes_and_highlight_queries() {
+    let theme = "name = \"Farsub Test Theme\"\n[editor]\nbackground = \"#102030\"\nforeground = \"#E0E0E0\"\n[syntax]\nkeyword = \"#FF8800\"\nstring = \"#00FF88\"\n";
     let d = project(
         "pkgs",
         &[
-            ("Packages/TestLang/TestLang.sublime-syntax", syntax),
-            ("Packages/TestTheme/Test.tmTheme", TM_THEME),
-            ("code.fstl", "let x = fn\n"),
+            ("Packages/TestTheme/themes/test.toml", theme),
+            ("code.rs", "fn main() { let s = \"hi\"; }\n"),
         ],
     );
     let mut h = harness(&d);
-    assert!(wait(&mut h, 30, |g| g
-        .app
-        .syn
-        .ss
-        .find_syntax_by_extension("fstl")
-        .is_some()));
-    assert_eq!(h.state().app.packages, ["TestLang", "TestTheme"]);
-    h.state_mut().app.open_file(&d.join("code.fstl"), true);
     steps(&mut h, 2);
-    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "Farsub Test Lang");
+    assert_eq!(h.state().app.packages, ["TestTheme"]);
     assert!(
         h.state()
             .app
@@ -774,17 +756,35 @@ fn sublime_packages_add_syntax_and_theme() {
             .any(|t| t == "Farsub Test Theme")
     );
     assert!(h.state_mut().app.syn.set_theme("Farsub Test Theme"));
-    h.state_mut().app.buffers[0].hl.invalidate(0);
+    h.state_mut().app.open_file(&d.join("code.rs"), true);
     steps(&mut h, 3);
-    // The keyword picked up the package theme's color.
-    let spans = &h.state().app.buffers[0].hl.lines[0];
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(
+        (b.hl.syntax.as_str(), b.hl.grammar.as_deref()),
+        ("rust", Some("rust"))
+    );
+    let orange = egui::Color32::from_rgb(0xFF, 0x88, 0x00);
+    let spans = b.hl.line(0).unwrap().clone();
     assert!(
-        spans
-            .iter()
-            .any(|s| s.2.fg == egui::Color32::from_rgb(0xFF, 0x88, 0x00)),
-        "{spans:?}"
+        spans.iter().any(|s| s.0 == 0 && s.2.fg == orange),
+        "fn is a keyword: {spans:?}"
     );
     shot(&mut h, "package_theme");
+    // A package can override a grammar's highlight query (here: everything is a string).
+    let q = d.join("Packages/TestTheme/queries/rust");
+    std::fs::create_dir_all(&q).unwrap();
+    std::fs::write(q.join("highlights.scm"), "(identifier) @string\n").unwrap();
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::ReloadPackages);
+    h.state_mut().app.syn.set_theme("Farsub Test Theme");
+    steps(&mut h, 3);
+    let spans = h.state().app.buf().unwrap().hl.line(0).unwrap().clone();
+    let green = egui::Color32::from_rgb(0x00, 0xFF, 0x88);
+    assert!(
+        spans.iter().any(|s| s.2.fg == green) && !spans.iter().any(|s| s.2.fg == orange),
+        "{spans:?}"
+    );
 }
 
 #[test]
@@ -1107,14 +1107,13 @@ fn status_bar_syntax_picker_changes_language() {
     assert!(
         matches!(&h.state().app.modal, Some(Modal::Palette(p)) if p.mode == crate::palette::Mode::Syntaxes)
     );
-    typ(&mut h, "bourne again");
+    typ(&mut h, "bash");
     shot(&mut h, "syntax_picker");
     press(&mut h, Modifiers::NONE, Key::Enter);
     let b = h.state().app.buf().unwrap();
-    assert!(
-        b.hl.syntax.starts_with("Bourne Again Shell"),
-        "{}",
-        b.hl.syntax
+    assert_eq!(
+        (b.hl.syntax.as_str(), b.hl.grammar.as_deref()),
+        ("bash", Some("bash"))
     );
     assert_eq!(
         b.lang.as_deref(),
@@ -1127,15 +1126,7 @@ fn status_bar_syntax_picker_changes_language() {
     h.state_mut().app.save_workspace();
     let mut h2 = project_harness(proj(), test_config(&d));
     h2.state_mut().app.restore_workspace();
-    assert!(
-        h2.state()
-            .app
-            .buf()
-            .unwrap()
-            .hl
-            .syntax
-            .starts_with("Bourne Again Shell")
-    );
+    assert_eq!(h2.state().app.buf().unwrap().hl.syntax, "bash");
 }
 
 #[test]
@@ -2136,8 +2127,14 @@ fn editor_scrollbars() {
 #[ignore]
 /// Frame-time benchmark (run: cargo test --release -- --ignored bench_frame_cost --nocapture).
 fn bench_frame_cost() {
-    let big: String = (0..200_000)
-        .map(|i| format!("    let value_{i} = compute({i}, \"some string\");\n"))
+    // 200k lines of valid Rust: 10,000 functions of 20 lines.
+    let big: String = (0..10_000)
+        .map(|f| {
+            let body: String = (0..18)
+                .map(|i| format!("    let value_{i} = compute({i}, \"some string\");\n"))
+                .collect();
+            format!("fn f{f}() {{\n{body}}}\n")
+        })
         .collect();
     let d = project("perfprobe", &[("big.rs", big.as_str())]);
     // A real ~6k-line Rust file: the app modules glued together.
@@ -2409,4 +2406,177 @@ fn smooth_scrolling_by_pixels() {
         .goto(crate::editor::Pos::new(150, 0));
     steps(&mut h, 2);
     assert_eq!(h.state().app.buf().unwrap().scroll_px, 0.0);
+}
+
+#[test]
+fn install_a_grammar_from_the_palette() {
+    // Compile Prisma's grammar from the local cargo registry (no network); skip if absent.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let reg = PathBuf::from(&home).join(".cargo/registry/src");
+    let src = std::fs::read_dir(&reg)
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("tree-sitter-prisma-0.2.2"))
+        .find(|p| p.is_dir());
+    let Some(src) = src else {
+        eprintln!("tree-sitter-prisma source not in the cargo registry; skipping");
+        return;
+    };
+    let d = project(
+        "grammarinst",
+        &[("schema.prisma", "model User {\n  id Int @id\n}\n")],
+    );
+    let mut cfg = test_config(&d);
+    let mut r = cfg.grammar_recipe("prisma").unwrap().clone();
+    r.krate = None;
+    r.version = None;
+    r.source = Some(src.display().to_string());
+    cfg.grammars.retain(|g| g.name != "prisma");
+    cfg.grammars.push(r);
+    let mut h = project_harness(crate::project::Project::from_folders(vec![d.clone()]), cfg);
+    h.state_mut().app.open_file(&d.join("schema.prisma"), true);
+    steps(&mut h, 2);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(
+        (b.hl.syntax.as_str(), b.hl.grammar.as_deref()),
+        ("prisma", None),
+        "not installed yet"
+    );
+    assert!(
+        !crate::log::entries(crate::log::Level::Info, "needs its grammar").is_empty(),
+        "the console says how to get the grammar"
+    );
+    // Grammars: Install Grammar… → pick Prisma.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::InstallGrammar);
+    typ(&mut h, "prisma");
+    shot(&mut h, "install_grammar_palette");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        wait(&mut h, 60, |g| g.app.buf().is_some_and(|b| b
+            .hl
+            .grammar
+            .as_deref()
+            == Some("prisma"))),
+        "installed and attached: {:?}",
+        h.state().app.status
+    );
+    steps(&mut h, 3);
+    let spans = h
+        .state()
+        .app
+        .buf()
+        .unwrap()
+        .hl
+        .line(0)
+        .cloned()
+        .unwrap_or_default();
+    assert!(!spans.is_empty(), "highlighted after install");
+    shot(&mut h, "installed_grammar");
+    // Remove it again: back to plain text.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::RemoveGrammar);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().hl.grammar, None);
+}
+
+#[test]
+fn opening_a_file_installs_its_grammar_automatically() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let src = std::fs::read_dir(PathBuf::from(&home).join(".cargo/registry/src"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("tree-sitter-prisma-0.2.2"))
+        .find(|p| p.is_dir());
+    let Some(src) = src else {
+        eprintln!("tree-sitter-prisma source not in the cargo registry; skipping");
+        return;
+    };
+    let d = project(
+        "autogrammar",
+        &[("schema.prisma", "model Post {\n  id Int @id\n}\n")],
+    );
+    let mut cfg = test_config(&d);
+    cfg.editor.auto_install = true;
+    // Language servers would be fetched from the network: keep prisma's out of this test.
+    if let Some(l) = cfg.languages.iter_mut().find(|l| l.name == "prisma") {
+        l.servers.clear();
+    }
+    let mut r = cfg.grammar_recipe("prisma").unwrap().clone();
+    (r.krate, r.version, r.source) = (None, None, Some(src.display().to_string()));
+    cfg.grammars.retain(|g| g.name != "prisma");
+    cfg.grammars.push(r);
+    let mut h = project_harness(crate::project::Project::from_folders(vec![d.clone()]), cfg);
+    // Just open the file: nothing else.
+    h.state_mut().app.open_file(&d.join("schema.prisma"), true);
+    assert!(
+        wait(&mut h, 60, |g| g.app.buf().is_some_and(|b| b
+            .hl
+            .grammar
+            .as_deref()
+            == Some("prisma"))),
+        "grammar installed on open: {:?}",
+        h.state().app.status
+    );
+    steps(&mut h, 3);
+    assert!(
+        !h.state()
+            .app
+            .buf()
+            .unwrap()
+            .hl
+            .line(0)
+            .cloned()
+            .unwrap_or_default()
+            .is_empty()
+    );
+}
+
+#[test]
+fn install_a_grammar_from_a_folder() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let src = std::fs::read_dir(PathBuf::from(&home).join(".cargo/registry/src"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path().join("tree-sitter-vue-0.0.3"))
+        .find(|p| p.is_dir());
+    let Some(src) = src else {
+        eprintln!("tree-sitter-vue source not in the cargo registry; skipping");
+        return;
+    };
+    let d = project(
+        "grammarfolder",
+        &[("App.vue", "<template><p>{{ msg }}</p></template>\n")],
+    );
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("App.vue"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().hl.grammar, None);
+    // What "Grammars: Install Grammar from Folder…" does with the picked folder.
+    h.state_mut().app.install_grammar_from(src);
+    assert!(
+        wait(&mut h, 60, |g| g.app.buf().is_some_and(|b| b
+            .hl
+            .grammar
+            .as_deref()
+            == Some("vue"))),
+        "{:?}",
+        h.state().app.status
+    );
+    assert!(
+        h.state()
+            .app
+            .status
+            .as_ref()
+            .is_some_and(|s| s.0.contains("Installed the vue grammar"))
+    );
 }

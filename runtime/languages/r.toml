@@ -1,8 +1,8 @@
 name = "r"
+title = "R"
 extensions = ["r", "R", "Rprofile"]
 filenames = [".Rprofile"]
 first_line = '^#!.*\bRscript'
 comment = "#"
 tab_size = 2
-syntax = "R"
 servers = ["r_language_server"]

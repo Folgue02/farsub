@@ -68,7 +68,7 @@ impl Gui {
                 Some(crate::commands::Command::Indentation),
             ));
             right.push((
-                b.hl.syntax.clone(),
+                self.app.language_title(&b.hl.syntax),
                 Some(crate::commands::Command::SetSyntax),
             ));
         }

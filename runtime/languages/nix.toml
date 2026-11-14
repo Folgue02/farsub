@@ -1,4 +1,5 @@
 name = "nix"
+title = "Nix"
 extensions = ["nix"]
 comment = "#"
 tab_size = 2

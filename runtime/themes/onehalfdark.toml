@@ -1,0 +1,58 @@
+# Converted from the OneHalfDark color scheme.
+name = "OneHalfDark"
+
+[editor]
+background = "#282C34"
+foreground = "#DCDFE4"
+selection = "#474E5D"
+line_highlight = "#313640"
+gutter = "#919BAA"
+caret = "#A3B3CC"
+
+[syntax]
+"comment"               = { fg = "#5C6370" }
+"comment.documentation" = { fg = "#5C6370" }
+"string"                = { fg = "#98C379" }
+"string.escape"         = { fg = "#56B6C2" }
+"string.special"        = { fg = "#98C379" }
+"string.regexp"         = { fg = "#98C379" }
+"character"             = { fg = "#E5C07B" }
+"number"                = { fg = "#E5C07B" }
+"boolean"               = { fg = "#E5C07B" }
+"constant"              = { fg = "#E06C75" }
+"constant.builtin"      = { fg = "#E5C07B" }
+"keyword"               = { fg = "#C678DD" }
+"keyword.operator"      = { fg = "#C678DD" }
+"keyword.function"      = { fg = "#C678DD" }
+"keyword.storage"       = { fg = "#C678DD" }
+"keyword.import"        = { fg = "#C678DD" }
+"keyword.return"        = { fg = "#C678DD" }
+"operator"              = { fg = "#C678DD" }
+"type"                  = { fg = "#E5C07B" }
+"type.builtin"          = { fg = "#C678DD" }
+"constructor"           = { fg = "#61AFEF" }
+"function"              = { fg = "#61AFEF" }
+"function.call"         = { fg = "#E06C75" }
+"function.method"       = { fg = "#61AFEF" }
+"function.builtin"      = { fg = "#61AFEF" }
+"function.macro"        = { fg = "#61AFEF" }
+"variable"              = { fg = "#E06C75" }
+"variable.parameter"    = { fg = "#E06C75" }
+"variable.builtin"      = { fg = "#E06C75" }
+"variable.member"       = { fg = "#E06C75" }
+"property"              = { fg = "#E06C75" }
+"attribute"             = { fg = "#E5C07B" }
+"label"                 = { fg = "#E5C07B" }
+"namespace"             = { fg = "#E5C07B" }
+"module"                = { fg = "#E5C07B" }
+"tag"                   = { fg = "#E06C75" }
+"tag.attribute"         = { fg = "#E5C07B" }
+"escape"                = { fg = "#56B6C2" }
+"markup.heading"        = { fg = "#61AFEF" }
+"markup.bold"           = { fg = "#C678DD" }
+"markup.italic"         = { fg = "#C678DD" }
+"markup.raw"            = { fg = "#98C379" }
+"markup.quote"          = { fg = "#98C379" }
+"diff.plus"             = { fg = "#98C379" }
+"diff.minus"            = { fg = "#E06C75" }
+"diff.delta"            = { fg = "#E5C07B" }

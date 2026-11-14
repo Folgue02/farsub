@@ -1,0 +1,4 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "solidity"
+crate = "tree-sitter-solidity"
+version = "1.2.13"

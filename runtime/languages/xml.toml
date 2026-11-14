@@ -1,5 +1,5 @@
 name = "xml"
+title = "XML"
 extensions = ["xml", "xsd", "xsl", "xslt", "svg", "plist", "xaml", "csproj", "fsproj", "props", "targets"]
 first_line = '^<\?xml'
 tab_size = 2
-syntax = "XML"

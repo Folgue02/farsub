@@ -1,4 +1,5 @@
 name = "haskell"
+title = "Haskell"
 extensions = ["hs"]
 comment = "--"
 tab_size = 2

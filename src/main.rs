@@ -7,6 +7,8 @@ mod commands;
 mod config;
 mod editor;
 mod fileops;
+mod grammar_install;
+mod grammars;
 mod gui;
 mod highlight;
 mod installer;

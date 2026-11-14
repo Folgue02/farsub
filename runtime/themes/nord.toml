@@ -1,0 +1,58 @@
+# Converted from the Nord color scheme.
+name = "Nord"
+
+[editor]
+background = "#2E3440"
+foreground = "#D8DEE9"
+selection = "#434C5E"
+line_highlight = "#434C5E"
+gutter = "#D8DEE9"
+guide = "#434C5E"
+active_guide = "#88C0D0"
+caret = "#D8DEE9"
+
+[syntax]
+"comment"               = { fg = "#616E88" }
+"comment.documentation" = { fg = "#616E88" }
+"string"                = { fg = "#A3BE8C" }
+"string.escape"         = { fg = "#EBCB8B" }
+"string.special"        = { fg = "#EBCB8B" }
+"string.regexp"         = { fg = "#EBCB8B" }
+"character"             = { fg = "#A3BE8C" }
+"number"                = { fg = "#B48EAD" }
+"boolean"               = { fg = "#81A1C1" }
+"constant"              = { fg = "#81A1C1" }
+"constant.builtin"      = { fg = "#81A1C1" }
+"keyword"               = { fg = "#81A1C1" }
+"keyword.operator"      = { fg = "#81A1C1" }
+"keyword.function"      = { fg = "#81A1C1" }
+"keyword.storage"       = { fg = "#81A1C1" }
+"keyword.import"        = { fg = "#81A1C1" }
+"keyword.return"        = { fg = "#81A1C1" }
+"operator"              = { fg = "#81A1C1" }
+"type"                  = { fg = "#81A1C1" }
+"type.builtin"          = { fg = "#81A1C1" }
+"constructor"           = { fg = "#88C0D0" }
+"function"              = { fg = "#88C0D0" }
+"function.call"         = { fg = "#88C0D0" }
+"function.method"       = { fg = "#88C0D0" }
+"function.builtin"      = { fg = "#88C0D0" }
+"function.macro"        = { fg = "#88C0D0" }
+"variable.builtin"      = { fg = "#81A1C1" }
+"property"              = { fg = "#8FBCBB" }
+"attribute"             = { fg = "#8FBCBB" }
+"label"                 = { fg = "#5E81AC" }
+"namespace"             = { fg = "#8FBCBB" }
+"module"                = { fg = "#8FBCBB" }
+"tag"                   = { fg = "#81A1C1" }
+"tag.attribute"         = { fg = "#8FBCBB" }
+"punctuation.delimiter" = { fg = "#ECEFF4" }
+"escape"                = { fg = "#EBCB8B" }
+"markup.heading"        = { fg = "#88C0D0" }
+"markup.bold"           = { fg = "#D8DEE9", bold = true }
+"markup.italic"         = { fg = "#D8DEE9", italic = true }
+"markup.raw"            = { fg = "#8FBCBB" }
+"markup.quote"          = { fg = "#616E88" }
+"diff.plus"             = { fg = "#A3BE8C" }
+"diff.minus"            = { fg = "#BF616A" }
+"diff.delta"            = { fg = "#EBCB8B" }

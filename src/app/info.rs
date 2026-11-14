@@ -7,40 +7,30 @@ impl App {
 
     /// The language config that goes with a syntax (an explicit `syntax = …` wins, then
     /// shared file extensions).
-    pub(super) fn language_for_syntax(
-        &self,
-        syntax: &str,
-    ) -> Option<crate::config::LanguageConfig> {
-        if let Some(l) = self
-            .config
-            .languages
-            .iter()
-            .rev()
-            .find(|l| l.syntax.as_deref() == Some(syntax))
-        {
-            return Some(l.clone());
-        }
-        let sr = self.syn.ss.find_syntax_by_name(syntax)?;
+    /// The language named `name` (by name or title, any case — older workspaces stored
+    /// titles).
+    pub(super) fn language_for_syntax(&self, name: &str) -> Option<crate::config::LanguageConfig> {
         self.config
             .languages
             .iter()
             .rev()
-            .find(|l| {
-                l.extensions
-                    .iter()
-                    .any(|e| sr.file_extensions.iter().any(|x| x.eq_ignore_ascii_case(e)))
-            })
+            .find(|l| l.name == name || l.title().eq_ignore_ascii_case(name))
             .cloned()
     }
 
-    /// Set a buffer's syntax by hand; its language (comments, indentation, LSP) follows.
+    /// Set a buffer's language by hand ("Plain Text" for none); its highlighting, comments,
+    /// indentation and LSP follow.
     pub fn set_syntax_at(&mut self, i: usize, name: &str) {
-        if self.syn.ss.find_syntax_by_name(name).is_none() {
+        let lang = self.language_for_syntax(name);
+        if lang.is_none() && name != "Plain Text" {
             return;
         }
-        let lang = self.language_for_syntax(name);
+        let (syntax, grammar) = match &lang {
+            Some(l) => (l.name.clone(), self.grammar_of(l)),
+            None => ("Plain Text".to_string(), None),
+        };
         let b = &mut self.buffers[i];
-        b.hl.reset(name.to_string());
+        b.hl.reset(syntax, grammar);
         b.syntax_override = true;
         let new_lang = lang.as_ref().map(|l| l.name.clone());
         if new_lang != b.lang {
@@ -80,7 +70,7 @@ impl App {
                 "syntax",
                 format!(
                     "{}{}",
-                    b.hl.syntax,
+                    self.language_title(&b.hl.syntax),
                     if b.syntax_override {
                         "  (set by hand)"
                     } else {

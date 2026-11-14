@@ -1,6 +1,8 @@
 name = "terraform"
+title = "Terraform"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["tf", "tfvars", "hcl"]
 comment = "#"
 tab_size = 2
-syntax = "Terraform"
 servers = ["terraformls"]

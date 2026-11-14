@@ -1,39 +1,10 @@
-//! Sublime-style packages: folders under `<config>/Packages/` holding `.sublime-syntax`
-//! grammars and `.tmTheme` color schemes. A package can be installed with `git clone`
-//! (like Package Control installing from a repository URL).
+//! farsub packages: folders under `<config>/Packages/` that add data — `themes/*.toml`,
+//! `queries/<grammar>/highlights.scm` (highlight overrides) and `icons.toml` (icon
+//! packages). A package can be installed with `git clone` from a repository URL.
 
 use std::path::{Path, PathBuf};
 
-use syntect::highlighting::{Theme, ThemeSet};
-use syntect::parsing::SyntaxSet;
-
 use crate::app::{AppEvent, EventTx};
-
-pub struct Loaded {
-    pub syntaxes: SyntaxSet,
-    pub themes: Vec<(String, Theme)>,
-    pub errors: Vec<String>,
-    pub packages: Vec<String>,
-}
-
-fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with('.'))
-        {
-            continue;
-        }
-        if p.is_dir() {
-            walk(&p, ext, out);
-        } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case(ext)) {
-            out.push(p);
-        }
-    }
-}
 
 pub fn list(dir: &Path) -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir(dir)
@@ -49,69 +20,51 @@ pub fn list(dir: &Path) -> Vec<String> {
     v
 }
 
-/// Built-in syntaxes plus everything in `dir`. Slow-ish (relinks every grammar), so it runs
-/// on a background thread and is swapped in when ready.
-pub fn load(dir: Option<&Path>) -> Loaded {
-    let base = crate::highlight::builtin_syntaxes();
-    let mut errors = vec![];
-    let mut themes = vec![];
-    let Some(dir) = dir.filter(|d| d.is_dir()) else {
-        return Loaded {
-            syntaxes: base,
-            themes,
-            errors,
-            packages: vec![],
+/// Install a package from a folder or an archive (`.zip`, `.tar.gz`, `.tgz`, `.tar`) on
+/// this computer into `dir` (Packages/). An installed package with the same name is replaced
+/// (the old one goes to the Trash). Returns the package name.
+pub fn install_from_path(dir: &Path, path: &Path) -> Result<String, String> {
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let tmp = dir.join(".from-file");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let result = (|| {
+        let (src, name) = if path.is_dir() {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .ok_or("that folder has no name")?;
+            (path.to_path_buf(), name)
+        } else {
+            let top = crate::grammar_install::unpack(path, &tmp)?;
+            // Name: the archive's single top folder, else the archive name.
+            let name = if top.file_name().is_some_and(|n| n != "unpacked") {
+                top.file_name().unwrap().to_string_lossy().into_owned()
+            } else {
+                let f = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                [".tar.gz", ".tgz", ".zip", ".tar"]
+                    .iter()
+                    .find_map(|e| f.strip_suffix(e))
+                    .unwrap_or(&f)
+                    .to_string()
+            };
+            (top, name)
         };
-    };
-    let mut syn_files = vec![];
-    walk(dir, "sublime-syntax", &mut syn_files);
-    let syntaxes = if syn_files.is_empty() {
-        base
-    } else {
-        let mut b = base.into_builder();
-        for f in &syn_files {
-            // Load one by one so a broken grammar doesn't take the others down.
-            match std::fs::read_to_string(f)
-                .map_err(|e| e.to_string())
-                .and_then(|t| {
-                    syntect::parsing::SyntaxDefinition::load_from_str(&t, true, None)
-                        .map_err(|e| e.to_string())
-                }) {
-                Ok(def) => b.add(def),
-                Err(e) => errors.push(format!("{}: {e}", f.display())),
-            }
+        if name.is_empty() || name.starts_with('.') || name.contains(['/', '\\']) {
+            return Err(format!("bad package name `{name}`"));
         }
-        b.build()
-    };
-    let mut theme_files = vec![];
-    walk(dir, "tmTheme", &mut theme_files);
-    for f in theme_files {
-        match ThemeSet::get_theme(&f) {
-            Ok(t) => {
-                let name = t.name.clone().filter(|n| !n.is_empty()).unwrap_or_else(|| {
-                    f.file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned()
-                });
-                themes.push((name, t));
-            }
-            Err(e) => errors.push(format!("{}: {e}", f.display())),
+        let dest = dir.join(&name);
+        if dest.exists() {
+            crate::fileops::trash(std::slice::from_ref(&dest))?;
         }
-    }
-    Loaded {
-        syntaxes,
-        themes,
-        errors,
-        packages: list(dir),
-    }
-}
-
-pub fn load_async(dir: Option<PathBuf>, tx: EventTx) {
-    std::thread::spawn(move || {
-        let l = load(dir.as_deref());
-        tx.send(AppEvent::Packages(Box::new(l)));
-    });
+        crate::fileops::copy_recursive(&src, &dest).map_err(|e| e.to_string())?;
+        Ok(name)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
 }
 
 /// Folder name for a repository URL: ".../Dracula-sublime.git" → "Dracula-sublime".
@@ -165,42 +118,55 @@ pub fn reveal(dir: &Path) {
 mod tests {
     use super::*;
 
-    const SYNTAX: &str = r#"%YAML 1.2
----
-name: Farsub Test Lang
-file_extensions: [fstl]
-scope: source.fstl
-contexts:
-  main:
-    - match: '\b(let|fn)\b'
-      scope: keyword.control.fstl
-    - match: '"[^"]*"'
-      scope: string.quoted.double.fstl
-"#;
-
     #[test]
-    fn loads_user_syntax_and_reports_broken_ones() {
+    fn lists_packages_and_names_urls() {
         let d = std::env::temp_dir().join(format!("farsub-pkgs-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
-        std::fs::create_dir_all(d.join("MyLang")).unwrap();
-        std::fs::create_dir_all(d.join("Broken")).unwrap();
-        std::fs::write(d.join("MyLang/MyLang.sublime-syntax"), SYNTAX).unwrap();
-        std::fs::write(d.join("Broken/Bad.sublime-syntax"), "not: [valid").unwrap();
-        let l = load(Some(&d));
-        assert!(l.syntaxes.find_syntax_by_extension("fstl").is_some());
-        assert!(
-            l.syntaxes.find_syntax_by_extension("rs").is_some(),
-            "built-ins kept"
-        );
-        assert_eq!(l.errors.len(), 1, "{:?}", l.errors);
-        assert_eq!(l.packages, ["Broken", "MyLang"]);
+        std::fs::create_dir_all(d.join("My Theme/themes")).unwrap();
+        std::fs::create_dir_all(d.join(".hidden")).unwrap();
+        std::fs::create_dir_all(d.join("Icons")).unwrap();
+        assert_eq!(list(&d), ["Icons", "My Theme"]);
         assert_eq!(
-            name_from_url("https://github.com/dracula/sublime.git").as_deref(),
-            Some("sublime")
+            name_from_url("https://github.com/someone/farsub-dracula.git").as_deref(),
+            Some("farsub-dracula")
         );
         assert_eq!(
             name_from_url("git@github.com:a/My-Pkg").as_deref(),
             Some("My-Pkg")
         );
+    }
+
+    #[test]
+    fn installs_packages_from_folders_and_zips() {
+        use std::io::Write;
+        let d = std::env::temp_dir().join(format!("farsub-pkgfile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let pkgs = d.join("Packages");
+        // A folder.
+        let src = d.join("My Theme");
+        std::fs::create_dir_all(src.join("themes")).unwrap();
+        std::fs::write(src.join("themes/t.toml"), "name = \"T\"\n").unwrap();
+        assert_eq!(install_from_path(&pkgs, &src).unwrap(), "My Theme");
+        assert!(pkgs.join("My Theme/themes/t.toml").is_file());
+        // A zip with one top folder.
+        let zpath = d.join("cool-icons.zip");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&zpath).unwrap());
+            let o = zip::write::SimpleFileOptions::default();
+            z.start_file("cool-icons/icons.toml", o).unwrap();
+            z.write_all(b"[[icons]]\nextensions = [\"x\"]\nlabel = \"x\"\ncolor = \"#FFFFFF\"\n")
+                .unwrap();
+            z.finish().unwrap();
+        }
+        assert_eq!(install_from_path(&pkgs, &zpath).unwrap(), "cool-icons");
+        assert!(pkgs.join("cool-icons/icons.toml").is_file());
+        // Installing again replaces it.
+        assert_eq!(install_from_path(&pkgs, &zpath).unwrap(), "cool-icons");
+        assert_eq!(list(&pkgs), ["My Theme", "cool-icons"]);
+        // Not an archive.
+        let txt = d.join("notes.txt");
+        std::fs::write(&txt, "x").unwrap();
+        assert!(install_from_path(&pkgs, &txt).is_err());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

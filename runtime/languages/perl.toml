@@ -1,6 +1,8 @@
 name = "perl"
+title = "Perl"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["pl", "pm", "t", "psgi"]
 first_line = '^#!.*\bperl'
 comment = "#"
 tab_size = 4
-syntax = "Perl"

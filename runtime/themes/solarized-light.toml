@@ -1,0 +1,57 @@
+# Converted from the Solarized (light) color scheme.
+name = "Solarized (light)"
+
+[editor]
+background = "#FDF6E3"
+foreground = "#657B83"
+selection = "#EEE8D5"
+line_highlight = "#3F3D38"
+caret = "#073642"
+
+[syntax]
+"comment"               = { fg = "#93A1A1" }
+"comment.documentation" = { fg = "#93A1A1" }
+"string"                = { fg = "#2AA198" }
+"string.escape"         = { fg = "#DC322F" }
+"string.special"        = { fg = "#2AA198" }
+"string.regexp"         = { fg = "#2AA198" }
+"character"             = { fg = "#CB4B16" }
+"number"                = { fg = "#6C71C4" }
+"boolean"               = { fg = "#B58900" }
+"constant"              = { fg = "#268BD2" }
+"constant.builtin"      = { fg = "#B58900" }
+"keyword"               = { fg = "#859900" }
+"keyword.operator"      = { fg = "#859900" }
+"keyword.function"      = { fg = "#268BD2" }
+"keyword.storage"       = { fg = "#586E75" }
+"keyword.import"        = { fg = "#CB4B16" }
+"keyword.return"        = { fg = "#859900" }
+"operator"              = { fg = "#859900" }
+"type"                  = { fg = "#B58900" }
+"type.builtin"          = { fg = "#268BD2" }
+"constructor"           = { fg = "#B58900" }
+"function"              = { fg = "#B58900" }
+"function.call"         = { fg = "#B58900" }
+"function.method"       = { fg = "#B58900" }
+"function.builtin"      = { fg = "#859900" }
+"function.macro"        = { fg = "#B58900" }
+"variable"              = { fg = "#268BD2" }
+"variable.parameter"    = { fg = "#268BD2" }
+"variable.builtin"      = { fg = "#D33682" }
+"variable.member"       = { fg = "#268BD2" }
+"property"              = { fg = "#268BD2" }
+"attribute"             = { fg = "#B58900" }
+"label"                 = { fg = "#B58900" }
+"namespace"             = { fg = "#B58900" }
+"module"                = { fg = "#B58900" }
+"tag"                   = { fg = "#268BD2" }
+"tag.attribute"         = { fg = "#B58900" }
+"punctuation.bracket"   = { fg = "#268BD2" }
+"escape"                = { fg = "#DC322F" }
+"markup.heading"        = { fg = "#B58900", bold = true }
+"markup.bold"           = { fg = "#657B83", bold = true }
+"markup.italic"         = { fg = "#657B83", italic = true }
+"markup.quote"          = { fg = "#859900" }
+"diff.plus"             = { fg = "#859900" }
+"diff.minus"            = { fg = "#DC322F" }
+"diff.delta"            = { fg = "#B58900" }

@@ -1,0 +1,57 @@
+# Converted from the Monokai Extended Light color scheme.
+name = "Monokai Extended Light"
+
+[editor]
+background = "#FAFAFA"
+foreground = "#49483E"
+selection = "#CCC9AD"
+line_highlight = "#E6E3C4"
+gutter = "#839496"
+active_guide = "#06B512"
+caret = "#666663"
+
+[syntax]
+"comment"               = { fg = "#75715E" }
+"comment.documentation" = { fg = "#75715E" }
+"string"                = { fg = "#998F2F" }
+"string.escape"         = { fg = "#684D99" }
+"string.special"        = { fg = "#F6AA11" }
+"string.regexp"         = { fg = "#F6AA11" }
+"character"             = { fg = "#684D99" }
+"number"                = { fg = "#684D99" }
+"boolean"               = { fg = "#684D99" }
+"constant"              = { fg = "#684D99" }
+"constant.builtin"      = { fg = "#684D99" }
+"keyword"               = { fg = "#F9005A" }
+"keyword.operator"      = { fg = "#F9005A" }
+"keyword.function"      = { fg = "#0089B3", italic = true }
+"keyword.storage"       = { fg = "#F9005A" }
+"keyword.import"        = { fg = "#F9005A" }
+"keyword.return"        = { fg = "#F9005A" }
+"operator"              = { fg = "#F9005A" }
+"type"                  = { fg = "#679C00" }
+"type.builtin"          = { fg = "#0089B3", italic = true }
+"constructor"           = { fg = "#679C00" }
+"function"              = { fg = "#679C00" }
+"function.call"         = { fg = "#0089B3" }
+"function.method"       = { fg = "#679C00" }
+"function.builtin"      = { fg = "#0089B3" }
+"function.macro"        = { fg = "#679C00" }
+"variable.parameter"    = { fg = "#CF7000", italic = true }
+"property"              = { fg = "#0089B3", italic = true }
+"attribute"             = { fg = "#679C00" }
+"label"                 = { fg = "#679C00" }
+"namespace"             = { fg = "#679C00" }
+"module"                = { fg = "#679C00" }
+"tag"                   = { fg = "#F9005A" }
+"tag.attribute"         = { fg = "#679C00" }
+"escape"                = { fg = "#684D99" }
+"markup.heading"        = { fg = "#CF7000" }
+"markup.bold"           = { fg = "#F9005A", bold = true }
+"markup.italic"         = { fg = "#E42E70", italic = true }
+"markup.link"           = { fg = "#679C00", underline = true }
+"markup.link.url"       = { fg = "#679C00", underline = true }
+"markup.quote"          = { fg = "#0089B3", italic = true }
+"diff.plus"             = { fg = "#679C00" }
+"diff.minus"            = { fg = "#F9005A" }
+"diff.delta"            = { fg = "#998F2F" }

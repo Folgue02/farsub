@@ -1,0 +1,4 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+name = "cmake"
+crate = "tree-sitter-cmake"
+version = "0.7.6"

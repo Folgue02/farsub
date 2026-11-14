@@ -1,4 +1,5 @@
 name = "scala"
+title = "Scala"
 extensions = ["scala", "sc", "sbt"]
 comment = "//"
 tab_size = 2

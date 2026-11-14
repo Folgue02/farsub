@@ -338,6 +338,7 @@ impl Gui {
         self.handle_input(&ctx);
         self.pump();
         self.app.reap_terminals();
+        self.answer_file_request();
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.app.quit {
             if self.app.config.editor.hot_exit {
@@ -877,5 +878,37 @@ fn draw_line_edit(
             0.0,
             c.accent,
         );
+    }
+}
+
+impl Gui {
+    /// A command asked for a file or folder: show the system's picker, then install.
+    fn answer_file_request(&mut self) {
+        use crate::app::FileRequest::*;
+        let Some(req) = self.app.file_request.take() else {
+            return;
+        };
+        let archives = ["zip", "gz", "tgz", "tar", "crate"];
+        let picked = match req {
+            PackageFile => rfd::FileDialog::new()
+                .set_title("Install a package (archive)")
+                .add_filter("Package archive", &archives)
+                .pick_file(),
+            PackageFolder => rfd::FileDialog::new()
+                .set_title("Install a package (folder)")
+                .pick_folder(),
+            GrammarFile => rfd::FileDialog::new()
+                .set_title("Install a tree-sitter grammar (source archive)")
+                .add_filter("Grammar source archive", &archives)
+                .pick_file(),
+            GrammarFolder => rfd::FileDialog::new()
+                .set_title("Install a tree-sitter grammar (source folder)")
+                .pick_folder(),
+        };
+        let Some(path) = picked else { return };
+        match req {
+            PackageFile | PackageFolder => self.app.install_package_from(path),
+            GrammarFile | GrammarFolder => self.app.install_grammar_from(path),
+        }
     }
 }

@@ -23,6 +23,10 @@ pub enum Mode {
     Projects,
     Syntaxes,
     Indentation,
+    /// Grammars that can be installed (and reinstalled).
+    Grammars,
+    /// Installed grammars, to remove.
+    GrammarsRemove,
 }
 
 /// Items of the Indentation menu.
@@ -47,6 +51,8 @@ pub enum Action {
     Project(crate::project::Last),
     Syntax(String),
     Indent(IndentAction),
+    InstallGrammar(String),
+    RemoveGrammar(String),
     #[allow(dead_code)]
     None,
 }
@@ -92,6 +98,8 @@ impl Palette {
                     | Mode::Projects
                     | Mode::Syntaxes
                     | Mode::Indentation
+                    | Mode::Grammars
+                    | Mode::GrammarsRemove
             ),
             title: String::new(),
             query: crate::lineedit::LineEdit::new(query),

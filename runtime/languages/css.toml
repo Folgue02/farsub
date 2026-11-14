@@ -1,4 +1,5 @@
 name = "css"
+title = "CSS"
 extensions = ["css"]
 tab_size = 2
 servers = ["cssls"]

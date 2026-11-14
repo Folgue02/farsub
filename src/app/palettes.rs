@@ -195,27 +195,39 @@ impl App {
             }
             Mode::Syntaxes => {
                 let cur = self.buf().map(|b| b.hl.syntax.clone()).unwrap_or_default();
-                let mut v: Vec<Item> = self
-                    .syn
-                    .ss
-                    .syntaxes()
-                    .iter()
-                    .filter(|s| !s.hidden)
-                    .map(|s| Item {
-                        label: s.name.clone(),
-                        detail: if s.name == cur {
+                let mut langs: Vec<&crate::config::LanguageConfig> =
+                    self.config.languages.iter().collect();
+                langs.sort_by_key(|l| l.title().to_lowercase());
+                langs.dedup_by(|a, b| a.name == b.name);
+                let mut v: Vec<Item> = langs
+                    .into_iter()
+                    .map(|l| Item {
+                        label: l.title().to_string(),
+                        detail: if l.name == cur {
                             "current".into()
                         } else {
-                            s.file_extensions
+                            l.extensions
                                 .iter()
                                 .take(4)
                                 .map(|e| format!(".{e}"))
                                 .collect::<Vec<_>>()
                                 .join(" ")
                         },
-                        action: Action::Syntax(s.name.clone()),
+                        action: Action::Syntax(l.name.clone()),
                     })
                     .collect();
+                v.insert(
+                    0,
+                    Item {
+                        label: "Plain Text".into(),
+                        detail: if cur == "Plain Text" {
+                            "current".into()
+                        } else {
+                            String::new()
+                        },
+                        action: Action::Syntax("Plain Text".into()),
+                    },
+                );
                 v.sort_by_key(|i| i.label.to_lowercase());
                 v.dedup_by(|a, b| a.label == b.label);
                 v
@@ -269,6 +281,50 @@ impl App {
                     detail: String::new(),
                     action: Action::Indent(IndentAction::ToTabs),
                 });
+                v
+            }
+            Mode::Grammars | Mode::GrammarsRemove => {
+                let data = self.config.data_dir.clone();
+                let mut v: Vec<Item> = vec![];
+                for r in &self.config.grammars {
+                    let installed = data.as_deref().is_some_and(|d| {
+                        crate::grammar_install::installed_lib(d, &r.name).is_some()
+                    });
+                    if mode == Mode::GrammarsRemove && !installed {
+                        continue;
+                    }
+                    // Label: the languages that use it ("F#", "OCaml"…).
+                    let mut titles: Vec<&str> = self
+                        .config
+                        .languages
+                        .iter()
+                        .filter(|l| l.grammar_name() == r.name)
+                        .map(|l| l.title())
+                        .collect();
+                    titles.dedup();
+                    let label = if titles.is_empty() {
+                        r.name.clone()
+                    } else {
+                        format!("{}  ({})", titles.join(", "), r.name)
+                    };
+                    let state = if self.installing_grammars.contains(&r.name) {
+                        "installing…".to_string()
+                    } else if installed {
+                        format!("installed · {}", r.source_desc())
+                    } else {
+                        r.source_desc()
+                    };
+                    v.push(Item {
+                        label,
+                        detail: state,
+                        action: if mode == Mode::Grammars {
+                            Action::InstallGrammar(r.name.clone())
+                        } else {
+                            Action::RemoveGrammar(r.name.clone())
+                        },
+                    });
+                }
+                v.sort_by_key(|i| i.label.to_lowercase());
                 v
             }
             Mode::Packages => self
@@ -474,6 +530,18 @@ impl App {
                         .clone()
                         .unwrap_or_else(|| "no language".into());
                     self.msg(format!("Syntax: {n} ({lang})"));
+                }
+            }
+            Action::InstallGrammar(n) => self.install_grammar(&n),
+            Action::RemoveGrammar(n) => {
+                if let Some(data) = self.config.data_dir.clone() {
+                    match crate::grammar_install::uninstall(&data, &n) {
+                        Ok(()) => {
+                            self.reload_syntax();
+                            self.msg(format!("Removed the {n} grammar"));
+                        }
+                        Err(e) => self.msg(format!("Couldn't remove the {n} grammar: {e}")),
+                    }
                 }
             }
             Action::Package(n) => {

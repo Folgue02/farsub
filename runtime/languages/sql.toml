@@ -1,3 +1,4 @@
 name = "sql"
+title = "SQL"
 extensions = ["sql", "ddl", "dml"]
 comment = "--"

@@ -1,0 +1,59 @@
+# Converted from the Catppuccin Latte color scheme.
+name = "Catppuccin Latte"
+
+[editor]
+background = "#EFF1F5"
+foreground = "#4C4F69"
+selection = "#7C7F93"
+line_highlight = "#CCD0DA"
+gutter = "#8C8FA1"
+active_guide = "#BCC0CC"
+caret = "#DC8A78"
+
+[syntax]
+"comment"               = { fg = "#7C7F93", italic = true }
+"comment.documentation" = { fg = "#7C7F93", italic = true }
+"string"                = { fg = "#40A02B" }
+"string.escape"         = { fg = "#EA76CB" }
+"string.special"        = { fg = "#40A02B" }
+"string.regexp"         = { fg = "#40A02B" }
+"character"             = { fg = "#40A02B" }
+"number"                = { fg = "#FE640B" }
+"boolean"               = { fg = "#FE640B" }
+"constant"              = { fg = "#FE640B" }
+"constant.builtin"      = { fg = "#D20F39" }
+"keyword"               = { fg = "#8839EF" }
+"keyword.operator"      = { fg = "#8839EF" }
+"keyword.function"      = { fg = "#8839EF" }
+"keyword.storage"       = { fg = "#8839EF" }
+"keyword.import"        = { fg = "#8839EF" }
+"keyword.return"        = { fg = "#8839EF" }
+"operator"              = { fg = "#179299" }
+"type"                  = { fg = "#DF8E1D", italic = true }
+"type.builtin"          = { fg = "#8839EF" }
+"constructor"           = { fg = "#1E66F5", italic = true }
+"function"              = { fg = "#1E66F5", italic = true }
+"function.call"         = { fg = "#1E66F5", italic = true }
+"function.method"       = { fg = "#1E66F5", italic = true }
+"function.builtin"      = { fg = "#1E66F5", italic = true }
+"function.macro"        = { fg = "#1E66F5", italic = true }
+"variable.parameter"    = { fg = "#E64553", italic = true }
+"property"              = { fg = "#DF8E1D", italic = true }
+"attribute"             = { fg = "#DF8E1D" }
+"label"                 = { fg = "#179299" }
+"namespace"             = { fg = "#DF8E1D" }
+"module"                = { fg = "#179299" }
+"tag"                   = { fg = "#1E66F5" }
+"tag.attribute"         = { fg = "#DF8E1D" }
+"punctuation"           = { fg = "#7C7F93" }
+"punctuation.bracket"   = { fg = "#7C7F93" }
+"punctuation.delimiter" = { fg = "#7C7F93" }
+"punctuation.special"   = { fg = "#7C7F93" }
+"escape"                = { fg = "#EA76CB" }
+"markup.heading"        = { fg = "#179299" }
+"markup.bold"           = { fg = "#D20F39", bold = true }
+"markup.italic"         = { fg = "#D20F39", italic = true }
+"markup.link"           = { fg = "#1E66F5" }
+"markup.link.url"       = { fg = "#1E66F5" }
+"markup.list"           = { fg = "#7C7F93" }
+"markup.quote"          = { fg = "#EA76CB" }

@@ -1,4 +1,5 @@
 name = "fsharp"
+title = "F#"
 language_id = "fsharp"
 extensions = ["fs", "fsi", "fsx"]
 comment = "//"

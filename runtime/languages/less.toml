@@ -1,4 +1,5 @@
 name = "less"
+title = "Less"
 extensions = ["less"]
 comment = "//"
 tab_size = 2

@@ -30,11 +30,15 @@ impl App {
             return None;
         }
         let text = String::from_utf8_lossy(&bytes);
-        let first = text.lines().next().unwrap_or("");
-        let syntax = self.syn.detect(Some(&path), first);
         let id = self.next_buf_id;
         self.next_buf_id += 1;
-        let b = Buffer::from_text(id, Some(path.clone()), &text, HlCache::new(syntax));
+        // set_buffer_path picks the language and grammar.
+        let b = Buffer::from_text(
+            id,
+            Some(path.clone()),
+            &text,
+            HlCache::new("Plain Text".into()),
+        );
         let i = self.push_buffer(b);
         self.set_buffer_path(i, path);
         if std::fs::metadata(&self.buffers[i].path.clone().unwrap())
@@ -54,10 +58,14 @@ impl App {
     }
 
     pub fn open_new_path(&mut self, path: PathBuf) {
-        let syntax = self.syn.detect(Some(&path), "");
         let id = self.next_buf_id;
         self.next_buf_id += 1;
-        let b = Buffer::from_text(id, Some(path.clone()), "", HlCache::new(syntax));
+        let b = Buffer::from_text(
+            id,
+            Some(path.clone()),
+            "",
+            HlCache::new("Plain Text".into()),
+        );
         let i = self.push_buffer(b);
         self.set_cur(i);
         self.set_buffer_path(self.cur, path);
@@ -93,8 +101,9 @@ impl App {
         let id = self.next_buf_id;
         self.next_buf_id += 1;
         let first = text.lines().next().unwrap_or("");
-        let syntax = self.syn.detect(None, first);
-        let mut b = Buffer::from_text(id, None, text, HlCache::new(syntax));
+        let (syntax, grammar) = self.syntax_for(None, first);
+        let mut b = Buffer::from_text(id, None, text, HlCache::new(String::new()));
+        b.hl.reset(syntax, grammar);
         b.modified = !text.is_empty();
         let i = self.push_buffer(b);
         self.set_cur(i);

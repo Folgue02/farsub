@@ -1,6 +1,8 @@
 name = "typst"
+title = "Typst"
+# No bundled tree-sitter grammar yet: shown as plain text.
+grammar = ""
 extensions = ["typ"]
 comment = "//"
 tab_size = 2
-syntax = "Typst"
 servers = ["tinymist"]

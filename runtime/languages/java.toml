@@ -1,4 +1,5 @@
 name = "java"
+title = "Java"
 extensions = ["java"]
 comment = "//"
 servers = ["jdtls"]

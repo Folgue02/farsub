@@ -1,0 +1,58 @@
+# Converted from the Dracula color scheme.
+name = "Dracula"
+
+[editor]
+background = "#282A36"
+foreground = "#F8F8F2"
+selection = "#44475A"
+line_highlight = "#44475A"
+active_guide = "#9D550F"
+caret = "#F8F8F0"
+
+[syntax]
+"comment"               = { fg = "#6272A4" }
+"comment.documentation" = { fg = "#6272A4" }
+"string"                = { fg = "#F1FA8C" }
+"string.escape"         = { fg = "#FF79C6" }
+"string.special"        = { fg = "#F1FA8C" }
+"string.regexp"         = { fg = "#F1FA8C" }
+"character"             = { fg = "#BD93F9" }
+"number"                = { fg = "#BD93F9" }
+"boolean"               = { fg = "#BD93F9" }
+"constant"              = { fg = "#FFFFFF" }
+"constant.builtin"      = { fg = "#BD93F9" }
+"keyword"               = { fg = "#FF79C6" }
+"keyword.operator"      = { fg = "#FF79C6" }
+"keyword.function"      = { fg = "#8BE9FD", italic = true }
+"keyword.storage"       = { fg = "#FF79C6" }
+"keyword.import"        = { fg = "#FF79C6" }
+"keyword.return"        = { fg = "#FF79C6" }
+"operator"              = { fg = "#FF79C6" }
+"type"                  = { fg = "#66D9EF", italic = true }
+"type.builtin"          = { fg = "#8BE9FD", italic = true }
+"constructor"           = { fg = "#50FA7B" }
+"function"              = { fg = "#50FA7B" }
+"function.call"         = { fg = "#50FA7B" }
+"function.method"       = { fg = "#50FA7B" }
+"function.builtin"      = { fg = "#8BE9FD" }
+"function.macro"        = { fg = "#50FA7B" }
+"variable"              = { fg = "#FFFFFF" }
+"variable.parameter"    = { fg = "#FFB86C", italic = true }
+"variable.builtin"      = { fg = "#BD93F9" }
+"variable.member"       = { fg = "#FFFFFF" }
+"property"              = { fg = "#FFFFFF" }
+"attribute"             = { fg = "#50FA7B" }
+"label"                 = { fg = "#FF79C6" }
+"namespace"             = { fg = "#66D9EF", italic = true }
+"tag"                   = { fg = "#FF79C6" }
+"tag.attribute"         = { fg = "#50FA7B" }
+"escape"                = { fg = "#FF79C6" }
+"markup.heading"        = { fg = "#8BE9FD" }
+"markup.bold"           = { fg = "#FFB86C", bold = true }
+"markup.italic"         = { fg = "#FFB86C", italic = true }
+"markup.link"           = { fg = "#BD93F9", underline = true }
+"markup.link.url"       = { fg = "#BD93F9", underline = true }
+"markup.quote"          = { fg = "#6272A4", italic = true }
+"diff.plus"             = { fg = "#50FA7B" }
+"diff.minus"            = { fg = "#FF79C6" }
+"diff.delta"            = { fg = "#E6DB74" }

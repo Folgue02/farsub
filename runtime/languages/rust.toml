@@ -1,4 +1,5 @@
 name = "rust"
+title = "Rust"
 extensions = ["rs"]
 comment = "//"
 servers = ["rust_analyzer"]

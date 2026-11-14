@@ -1,0 +1,53 @@
+# Converted from the 1337 color scheme.
+name = "1337"
+
+[editor]
+background = "#191919"
+foreground = "#F8F8F2"
+selection = "#515151"
+line_highlight = "#3D3D3D"
+caret = "#F8F8F0"
+
+[syntax]
+"comment"               = { fg = "#6D6D6D" }
+"comment.documentation" = { fg = "#6D6D6D" }
+"string"                = { fg = "#FBE3BF" }
+"string.escape"         = { fg = "#FDB082" }
+"string.special"        = { fg = "#FBE3BF" }
+"string.regexp"         = { fg = "#FBE3BF" }
+"character"             = { fg = "#FDB082" }
+"number"                = { fg = "#FDB082" }
+"boolean"               = { fg = "#FF8942" }
+"constant"              = { fg = "#E9FDAC" }
+"constant.builtin"      = { fg = "#FF8942" }
+"keyword"               = { fg = "#FF5E5E" }
+"keyword.operator"      = { fg = "#FF5E5E" }
+"keyword.function"      = { fg = "#FBDFB5", italic = true }
+"keyword.storage"       = { fg = "#FF5E5E" }
+"keyword.import"        = { fg = "#FF5E5E" }
+"keyword.return"        = { fg = "#FF5E5E" }
+"operator"              = { fg = "#FF5E5E" }
+"type"                  = { fg = "#FFB2F9" }
+"type.builtin"          = { fg = "#FBDFB5", italic = true }
+"constructor"           = { fg = "#8CDAFF" }
+"function"              = { fg = "#8CDAFF" }
+"function.call"         = { fg = "#E9FDAC" }
+"function.method"       = { fg = "#8CDAFF" }
+"function.builtin"      = { fg = "#6699CC" }
+"function.macro"        = { fg = "#8CDAFF" }
+"variable"              = { fg = "#E9FDAC" }
+"variable.parameter"    = { fg = "#FC9354", italic = true }
+"variable.builtin"      = { fg = "#E9FDAC" }
+"variable.member"       = { fg = "#E9FDAC" }
+"property"              = { fg = "#E9FDAC" }
+"attribute"             = { fg = "#97D8EA" }
+"label"                 = { fg = "#FFB2F9" }
+"namespace"             = { fg = "#FFB2F9" }
+"module"                = { fg = "#FFB2F9" }
+"tag"                   = { fg = "#FF5E5E" }
+"tag.attribute"         = { fg = "#97D8EA" }
+"escape"                = { fg = "#FDB082" }
+"markup.heading"        = { fg = "#75715E" }
+"diff.plus"             = { fg = "#A6E22E" }
+"diff.minus"            = { fg = "#F92672" }
+"diff.delta"            = { fg = "#CC00FF" }

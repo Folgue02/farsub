@@ -32,7 +32,7 @@ items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_colu
 
 [[menu]]
 title = "Tools"
-items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "-", "install_package", "remove_package", "browse_packages", "reload_packages"]
+items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "install_grammar", "-", "install_package", "install_package_from_file", "install_package_from_folder", "remove_package", "browse_packages", "reload_packages"]
 
 [[menu]]
 title = "Project"

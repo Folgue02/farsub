@@ -1,4 +1,5 @@
 name = "powershell"
+title = "PowerShell"
 extensions = ["ps1", "psm1", "psd1"]
 comment = "#"
 tab_size = 4
