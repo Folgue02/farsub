@@ -211,6 +211,10 @@ pub fn display(spec: &str) -> String {
 }
 
 fn matches(s: &Spec, k: &Key) -> bool {
+    // On macOS a binding written "Ctrl" means the Control key, never Command.
+    if cfg!(target_os = "macos") && s.literal_ctrl && k.sup {
+        return false;
+    }
     same_key(
         s,
         &Spec {

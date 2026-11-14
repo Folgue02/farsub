@@ -39,6 +39,11 @@ pub struct EditorConfig {
     pub highlight_current_line: bool,
     /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
     pub terminal_shell: Option<String>,
+    /// File icons in the sidebar, tabs and Goto Anything.
+    pub file_icons: bool,
+    /// Use only this icon package (a folder in Packages/ with an icons.toml); empty or
+    /// unset: built-in icons plus every installed icon package.
+    pub icon_theme: Option<String>,
     /// How the caret animates: "smooth" (fades in and out), "blink", or "solid".
     pub caret_style: CaretStyle,
     /// Pixels added to the 1px caret width (Sublime's `caret_extra_width`).
@@ -68,6 +73,8 @@ impl Default for EditorConfig {
             indent_guides: true,
             highlight_current_line: false,
             terminal_shell: None,
+            file_icons: true,
+            icon_theme: None,
             caret_style: CaretStyle::Smooth,
             caret_extra_width: 1.5,
             caret_extra_top: 1.0,
@@ -88,6 +95,76 @@ pub enum CaretStyle {
     Blink,
     /// Always visible.
     Solid,
+}
+
+/// One file-icon rule from icons.toml.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct IconDef {
+    #[serde(default)]
+    pub names: Vec<String>,
+    #[serde(default)]
+    pub extensions: Vec<String>,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub color: String,
+    /// A PNG instead of the label badge (icon packages); resolved to an absolute path.
+    #[serde(default)]
+    pub image: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct IconsFile {
+    #[serde(default)]
+    icons: Vec<IconDef>,
+    #[serde(default)]
+    default: Option<IconDef>,
+    #[serde(default)]
+    folder_color: Option<String>,
+    #[serde(default)]
+    folder_image: Option<String>,
+    #[serde(default)]
+    folder_open_image: Option<String>,
+}
+
+/// "#RRGGBB" → (r, g, b).
+pub fn parse_hex_color(s: &str) -> Option<(u8, u8, u8)> {
+    let h = s.trim().strip_prefix('#')?;
+    if h.len() != 6 {
+        return None;
+    }
+    let v = u32::from_str_radix(h, 16).ok()?;
+    Some(((v >> 16) as u8, (v >> 8) as u8, v as u8))
+}
+
+impl Config {
+    /// The icon rule for a file name: exact names first, then the longest matching
+    /// extension (so `a.d.ts` can differ from `.ts`); later rules win ties.
+    pub fn icon_for(&self, file_name: &str) -> Option<&IconDef> {
+        if let Some(d) = self
+            .icons
+            .iter()
+            .rev()
+            .find(|d| d.names.iter().any(|n| n == file_name))
+        {
+            return Some(d);
+        }
+        let lower = file_name.to_lowercase();
+        let mut best: Option<(&IconDef, usize)> = None;
+        for d in self.icons.iter().rev() {
+            for e in &d.extensions {
+                let e = e.to_lowercase();
+                if lower.len() > e.len()
+                    && lower.ends_with(&e)
+                    && lower.as_bytes()[lower.len() - e.len() - 1] == b'.'
+                    && best.is_none_or(|(_, l)| e.len() > l)
+                {
+                    best = Some((d, e.len()));
+                }
+            }
+        }
+        best.map(|(d, _)| d).or(self.icon_default.as_ref())
+    }
 }
 
 /// How to install a server (like a mason.nvim package). One source is used.
@@ -311,6 +388,14 @@ pub struct Config {
     pub menus: Vec<MenuDef>,
     /// Right-click menus (context name → items), like Sublime's Context.sublime-menu.
     pub context_menus: HashMap<String, Vec<String>>,
+    /// File icons (icons.toml): later entries win.
+    pub icons: Vec<IconDef>,
+    pub icon_default: Option<IconDef>,
+    pub folder_color: Option<String>,
+    /// Folder images from an icon package: (closed, open).
+    pub folder_images: (Option<PathBuf>, Option<PathBuf>),
+    /// Icon packages whose icons.toml was loaded.
+    pub icon_packages: Vec<String>,
     /// The main config.toml.
     pub path: Option<PathBuf>,
     /// Where installed servers go.
@@ -411,6 +496,8 @@ impl Config {
             {
                 errs.push(format!("{}: {e}", p.display()));
             }
+            // After config.toml, so `icon_theme` is known.
+            c.load_icon_packages(&mut errs);
         }
         if !errs.is_empty() {
             c.error = Some(errs.join("; "));
@@ -442,6 +529,8 @@ impl Config {
                     a.section == b.section && a.keys == b.keys
                 });
             }
+        } else if name == "icons.toml" {
+            self.merge_icons(text, None)?;
         } else if name == "menus.toml" {
             let m: MenusFile = toml::from_str(text).map_err(err)?;
             // A file with only [context.*] sections keeps the menu bar as it is.
@@ -453,6 +542,69 @@ impl Config {
             }
         }
         Ok(())
+    }
+
+    /// Merge an icons.toml. `base` is the folder image paths are relative to (packages).
+    pub fn merge_icons(&mut self, text: &str, base: Option<&Path>) -> Result<(), String> {
+        let f: IconsFile = toml::from_str(text).map_err(|e| e.message().to_string())?;
+        let abs = |p: Option<String>| -> Option<PathBuf> {
+            let p = PathBuf::from(p?);
+            Some(match base {
+                Some(b) if p.is_relative() => b.join(p),
+                _ => p,
+            })
+        };
+        let fix = |mut d: IconDef| {
+            d.image = abs(d.image.take()).map(|p| p.to_string_lossy().into_owned());
+            d
+        };
+        self.icons.extend(f.icons.into_iter().map(fix));
+        if let Some(d) = f.default {
+            self.icon_default = Some(fix(d));
+        }
+        if f.folder_color.is_some() {
+            self.folder_color = f.folder_color;
+        }
+        if f.folder_image.is_some() || f.folder_open_image.is_some() {
+            let closed = abs(f.folder_image);
+            let open = abs(f.folder_open_image).or_else(|| closed.clone());
+            self.folder_images = (closed, open);
+        }
+        Ok(())
+    }
+
+    /// Icon packages: every `Packages/<name>/icons.toml` (or only `icon_theme`'s), in
+    /// name order, then the user's own icons.toml on top.
+    fn load_icon_packages(&mut self, errs: &mut Vec<String>) {
+        let Some(dir) = self.packages_dir() else {
+            return;
+        };
+        let theme = self.editor.icon_theme.clone().filter(|t| !t.is_empty());
+        for name in crate::packages::list(&dir) {
+            if theme.as_ref().is_some_and(|t| *t != name) {
+                continue;
+            }
+            let pkg = dir.join(&name);
+            let f = pkg.join("icons.toml");
+            let Ok(text) = std::fs::read_to_string(&f) else {
+                continue;
+            };
+            match self.merge_icons(&text, Some(&pkg)) {
+                Ok(()) => self.icon_packages.push(name),
+                Err(e) => errs.push(format!("{}: {e}", f.display())),
+            }
+        }
+        if let Some(t) = theme
+            && !self.icon_packages.contains(&t)
+        {
+            errs.push(format!("icon_theme: no package \"{t}\" with an icons.toml"));
+        }
+        if let Some(f) = self.config_dir().map(|d| d.join("icons.toml"))
+            && let Ok(text) = std::fs::read_to_string(&f)
+            && let Err(e) = self.merge_icons(&text, f.parent())
+        {
+            errs.push(format!("{}: {e}", f.display()));
+        }
     }
 
     /// Merge a config.toml document.
@@ -528,13 +680,27 @@ impl Config {
     }
 }
 
-pub const TEMPLATE: &str = r##"# farsub settings. Save this file to apply changes.
+/// The file a new user settings file starts as (Sublime-style: nearly empty; the defaults
+/// are shown beside it by Preferences: Settings).
+pub const TEMPLATE: &str = r##"# farsub settings. Anything here overrides the defaults shown in the other pane
+# (Preferences: Settings). Copy a line over, change it, save to apply.
+
+[editor]
+"##;
+
+/// Every editor setting with its default and an explanation, shown read-only beside the
+/// user's file. A test keeps it in sync with `EditorConfig::default()`.
+pub const DEFAULT_SETTINGS: &str = r##"# farsub default settings (read-only reference).
 #
-# Everything else is data too, in this folder (each overrides the built-ins in runtime/):
+# Every setting with its default value. Don't edit this file: copy the lines you want to
+# change into your settings file (the other pane) and save it there. Your file only needs
+# the settings you change.
+#
+# Everything else is data too, in your config folder (each overrides the built-ins):
 #   languages/<name>.toml   add or replace a language
 #   servers/<name>.toml     add or replace a language server (with optional [install])
 #   keymap.toml             add/override key bindings: [[keys]] keys = "Cmd+K", command = "hover"
-#   menus.toml              replace the menu layout
+#   menus.toml              replace the menu layout and context menus
 #   Packages/               Sublime packages (.sublime-syntax, .tmTheme); see "Packages:" commands
 # Manage servers with Tools → Language Servers (Cmd+Shift+P "LSP: Manage Language Servers").
 
@@ -552,6 +718,10 @@ indent_guides = true
 highlight_current_line = false
 # Shell for the terminal panel (default: $SHELL).
 # terminal_shell = "/bin/zsh"
+# File icons in the sidebar, tabs and Goto Anything; mapping in icons.toml.
+file_icons = true
+# Use only one icon package from Packages/ (one with an icons.toml):
+# icon_theme = "My Icons"
 # Caret: "smooth" (fade in/out), "blink" or "solid"; size in pixels like Sublime's
 # caret_extra_width / caret_extra_top / caret_extra_bottom (width = 1 + extra).
 caret_style = "smooth"
@@ -585,6 +755,35 @@ theme = "Monokai Extended"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_settings_reference_matches_the_code() {
+        // The read-only reference shown by Preferences: Settings must parse to exactly the
+        // built-in defaults and mention every setting.
+        let mut c = Config::builtin();
+        c.merge_str(DEFAULT_SETTINGS).unwrap();
+        // Platform-dependent / unset by default: documented as comments.
+        let want = EditorConfig {
+            show_menu_bar: c.editor.show_menu_bar,
+            ..EditorConfig::default()
+        };
+        assert_eq!(c.editor, want);
+        let table = toml::Value::try_from(EditorConfig {
+            terminal_shell: Some(String::new()),
+            ..EditorConfig::default()
+        })
+        .unwrap();
+        for key in table.as_table().unwrap().keys() {
+            assert!(
+                DEFAULT_SETTINGS.contains(&format!("{key} =")),
+                "Default Settings doesn't document `{key}`"
+            );
+        }
+        // A brand-new user file is the short Sublime-style one and is valid.
+        let mut u = Config::builtin();
+        u.merge_str(TEMPLATE).unwrap();
+        assert_eq!(u.editor, EditorConfig::default());
+    }
 
     #[test]
     fn builtins_load_and_user_overrides() {

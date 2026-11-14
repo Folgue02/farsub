@@ -1371,6 +1371,7 @@ dependencies = [
  "fuzzy-matcher",
  "globset",
  "ignore",
+ "image",
  "lsp-types",
  "lzma-rs",
  "muda",

@@ -547,3 +547,62 @@ description = "Move between menus and items"
 section = "Menu bar"
 keys = "Enter / Esc"
 description = "Run the item / close"
+
+# Editor groups (Sublime: View › Layout, Focus Group, Move File to Group).
+# Tab N of the focused group: Cmd+N on macOS, Alt+N on Windows/Linux.
+[[keys]]
+keys = "Cmd+Alt+1"
+command = "layout_single"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+Shift+1"
+command = "layout_single"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+1"
+command = "focus_group1"
+[[keys]]
+keys = "Ctrl+Shift+1"
+command = "move_to_group1"
+[[keys]]
+keys = "Cmd+Alt+2"
+command = "layout_columns2"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+Shift+2"
+command = "layout_columns2"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+2"
+command = "focus_group2"
+[[keys]]
+keys = "Ctrl+Shift+2"
+command = "move_to_group2"
+[[keys]]
+keys = "Cmd+Alt+3"
+command = "layout_columns3"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+Shift+3"
+command = "layout_columns3"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+3"
+command = "focus_group3"
+[[keys]]
+keys = "Ctrl+Shift+3"
+command = "move_to_group3"
+[[keys]]
+keys = "Cmd+Alt+4"
+command = "layout_columns4"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+Shift+4"
+command = "layout_columns4"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+4"
+command = "focus_group4"
+[[keys]]
+keys = "Ctrl+Shift+4"
+command = "move_to_group4"

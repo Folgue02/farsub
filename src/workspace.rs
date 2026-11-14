@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct BufferState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    /// Editor group (layout column) the tab is in.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub group: usize,
     /// (line, col)
     #[serde(default)]
     pub cursor: (usize, usize),
@@ -50,6 +53,19 @@ pub struct Workspace {
     pub console_visible: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_height: Option<f32>,
+    /// Number of editor groups (layout columns).
+    #[serde(default = "one")]
+    pub layout: usize,
+    #[serde(default)]
+    pub focused_group: usize,
+}
+
+fn one() -> usize {
+    1
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 fn yes() -> bool {
@@ -100,6 +116,7 @@ mod tests {
                     unsaved: None,
                     syntax: Some("Rust".into()),
                     indent: Some((false, 2)),
+                    group: 1,
                 },
                 BufferState {
                     path: None,
@@ -111,6 +128,8 @@ mod tests {
             sidebar_visible: false,
             expanded: vec!["/x/src".into()],
             search: Some("needle".into()),
+            layout: 2,
+            focused_group: 1,
             ..Default::default()
         };
         let f = d.join("t.farsub-workspace");

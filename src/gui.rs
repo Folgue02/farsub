@@ -1,7 +1,8 @@
 //! The Sublime-style GUI: everything is custom-painted with egui's painter so the editor,
 //! sidebar, tabs and overlays look and behave like a code editor rather than a form.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -24,6 +25,7 @@ thread_local! {
 }
 const UI_SIZE: f32 = 13.0;
 const TAB_H: f32 = 32.0;
+const SCROLLBAR_W: f32 = 12.0;
 const STATUS_H: f32 = 24.0;
 const PANEL_H: f32 = 36.0;
 const SIDEBAR_W: f32 = 250.0;
@@ -92,6 +94,14 @@ pub struct Gui {
     /// Caret position/version and when it last changed: the blink phase restarts there so
     /// the caret is solid while typing or moving.
     caret_mark: (Option<(usize, Pos, i32)>, Instant),
+    /// Where on the scrollbar thumb the drag started (pointer offset from the thumb's
+    /// start), for the editor's vertical / horizontal scrollbars.
+    vscroll_grab: Option<f32>,
+    hscroll_grab: Option<f32>,
+    /// Decoded icon-package images (None: failed to load, don't retry every frame).
+    icon_tex: IconTextures,
+    /// The focused group's editor rect (tests, popups).
+    editor_rect: Rect,
     /// (char width, text left edge, first line top, line height) of the last frame.
     text_geom: (f32, f32, f32, f32),
     last_tree_sel: Option<usize>,
@@ -160,6 +170,10 @@ impl Gui {
             term_scroll_acc: 0.0,
             last_cursor: None,
             caret_mark: (None, Instant::now()),
+            vscroll_grab: None,
+            hscroll_grab: None,
+            icon_tex: HashMap::new(),
+            editor_rect: Rect::NOTHING,
             text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
             last_title: String::new(),
@@ -175,6 +189,7 @@ impl Gui {
         }
     }
 
+    #[cfg(test)]
     /// (char width, text left edge, y of the first visible line's middle).
     #[cfg(test)]
     pub fn text_metrics_for_test(&self) -> (f32, f32, f32) {
@@ -182,7 +197,23 @@ impl Gui {
         (cw, left, top + lh / 2.0)
     }
 
+    #[cfg(test)]
     /// Screen point of a buffer position's character cell middle (tests drive the mouse).
+    #[cfg(test)]
+    /// Icon images loaded so far: (path, decoded ok).
+    pub fn icon_textures_for_test(&self) -> Vec<(PathBuf, bool)> {
+        self.icon_tex
+            .iter()
+            .map(|(p, t)| (p.clone(), t.is_some()))
+            .collect()
+    }
+
+    #[cfg(test)]
+    /// The focused group's editor area last frame.
+    pub fn editor_rect_for_test(&self) -> Rect {
+        self.editor_rect
+    }
+
     #[cfg(test)]
     pub fn screen_pos_for_test(&self, line: usize, col: usize) -> Pos2 {
         let (cw, left, top, lh) = self.text_geom;
@@ -212,11 +243,18 @@ impl Gui {
             match ev {
                 egui::Event::Key {
                     key,
+                    physical_key,
                     pressed: true,
                     modifiers,
                     ..
                 } => {
                     self.suppress_text = false;
+                    // Shift+digit arrives as its symbol ("!" for 1); shortcuts like
+                    // Ctrl+Shift+1 mean the digit key, so use its physical position.
+                    let key = match physical_key {
+                        Some(pk) if modifiers.shift && is_digit_key(pk) => pk,
+                        _ => key,
+                    };
                     if let Some(k) = Key::from_egui(key, modifiers) {
                         let handled = self.app.on_key(k);
                         if handled && k.alt {
@@ -361,10 +399,66 @@ impl Gui {
             rest.max.y = r.top();
             r
         });
-        let tabs = Rect::from_min_max(rest.min, Pos2::new(rest.right(), rest.top() + TAB_H));
-        let editor = Rect::from_min_max(Pos2::new(rest.left(), tabs.bottom()), rest.max);
-        self.draw_tabs(ui, &painter, tabs, &c);
-        let cursor_px = self.draw_editor(ui, &painter, editor, &c);
+        // Editor groups side by side (Sublime's Layout → Columns), each with its own tabs.
+        let n = self.app.layout.max(1);
+        if self.app.group_split.len() != n {
+            self.app.group_split = vec![1.0 / n as f32; n];
+        }
+        self.app.hl_pending = false;
+        let mut editor = rest;
+        let mut cursor_px = None;
+        let mut x = rest.left();
+        for g in 0..n {
+            let w = if g + 1 == n {
+                rest.right() - x
+            } else {
+                (rest.width() * self.app.group_split[g]).round()
+            };
+            let col = Rect::from_min_max(Pos2::new(x, rest.top()), Pos2::new(x + w, rest.bottom()));
+            x += w;
+            let tabs = Rect::from_min_max(col.min, Pos2::new(col.right(), col.top() + TAB_H));
+            let ed = Rect::from_min_max(Pos2::new(col.left(), tabs.bottom()), col.max);
+            self.draw_tabs(ui, &painter, tabs, &c, g);
+            let px = self.draw_editor(ui, &painter, ed, &c, g);
+            if g == self.app.group {
+                editor = ed;
+                cursor_px = px;
+                self.editor_rect = ed;
+            }
+            if g + 1 < n {
+                // Divider between groups; drag it to resize the columns.
+                painter.line_segment(
+                    [
+                        Pos2::new(col.right(), col.top()),
+                        Pos2::new(col.right(), col.bottom()),
+                    ],
+                    Stroke::new(1.0, c.border),
+                );
+                let handle = Rect::from_min_max(
+                    Pos2::new(col.right() - 3.0, col.top()),
+                    Pos2::new(col.right() + 3.0, col.bottom()),
+                );
+                let h = ui.interact(
+                    handle,
+                    Id::unique(("group-divider", g)),
+                    Sense::click_and_drag(),
+                );
+                if h.hovered() || h.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if h.dragged() && rest.width() > 0.0 {
+                    let d = h.drag_delta().x / rest.width();
+                    let min = 120.0 / rest.width();
+                    let (a, b) = (self.app.group_split[g], self.app.group_split[g + 1]);
+                    let na = (a + d).clamp(min, a + b - min);
+                    self.app.group_split[g] = na;
+                    self.app.group_split[g + 1] = a + b - na;
+                }
+                if h.double_clicked() {
+                    self.app.group_split = vec![1.0 / n as f32; n];
+                }
+            }
+        }
         self.draw_status(ui, &painter, status, &c);
         if let Some(r) = panel {
             self.draw_prompt(&painter, r, &c);
@@ -568,6 +662,17 @@ impl Gui {
                     fade(if hovered { c.fg } else { c.dim }),
                 );
             }
+            draw_icon(
+                &row_clip,
+                &self.app.config,
+                &mut self.icon_tex,
+                Pos2::new(x + 21.0, full.center().y),
+                &n.name,
+                n.is_dir,
+                n.is_dir && t.arrow(&n.path) > 0.5,
+                alpha,
+                c.side,
+            );
             let is_cur = current.as_deref() == Some(n.path.as_path());
             let is_cut = cut.iter().any(|p| n.path.starts_with(p));
             let mut col = if is_cur {
@@ -580,8 +685,12 @@ impl Gui {
             if is_cut {
                 col = mix(col, c.side, 0.55);
             }
+            if n.ignored {
+                // Matched by .gitignore: listed, but dimmed (like Sublime / VS Code).
+                col = mix(col, c.side, 0.5);
+            }
             row_clip.text(
-                Pos2::new(x + 14.0, full.center().y),
+                Pos2::new(x + 33.0, full.center().y),
                 Align2::LEFT_CENTER,
                 &n.name,
                 ui_font.clone(),
@@ -626,41 +735,55 @@ impl Gui {
 
     // ================================================================= tabs
 
-    fn draw_tabs(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
+    /// The buffer a group shows this frame.
+    fn shown_in(&self, g: usize) -> Option<usize> {
+        if g == self.app.group {
+            self.app.buf().map(|_| self.app.cur)
+        } else {
+            self.app.group_shown(g)
+        }
+    }
+
+    fn draw_tabs(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette, g: usize) {
         p.rect_filled(r, 0.0, c.chrome);
         let font = FontId::proportional(UI_SIZE);
         let mut x = r.left();
         let mut click: Option<(usize, bool)> = None;
         let mut tab_menu: Option<(usize, Pos2)> = None;
+        let tabs = self.app.group_tabs(g);
+        let shown = self.shown_in(g);
+        let focused_group = g == self.app.group;
+        let shown_pos = tabs.iter().position(|&t| Some(t) == shown).unwrap_or(0);
         // Scroll the strip so the active tab is visible.
-        let widths: Vec<f32> = self
-            .app
-            .buffers
+        let widths: Vec<f32> = tabs
             .iter()
+            .map(|&i| &self.app.buffers[i])
             .map(|b| {
                 let w = ui
                     .ctx()
                     .fonts_mut(|f| f.layout_no_wrap(b.name(), font.clone(), c.fg).size().x);
-                (w + 48.0).clamp(90.0, 260.0)
+                (w + 66.0).clamp(100.0, 280.0)
             })
             .collect();
-        let before: f32 = widths.iter().take(self.app.cur).sum();
-        let cur_w = widths.get(self.app.cur).copied().unwrap_or(0.0);
+        let before: f32 = widths.iter().take(shown_pos).sum();
+        let cur_w = widths.get(shown_pos).copied().unwrap_or(0.0);
         if before + cur_w > r.width() {
             x -= before + cur_w - r.width();
         }
         let clip = p.with_clip_rect(r);
-        for (i, b) in self.app.buffers.iter().enumerate() {
-            let w = widths[i];
+        for (k, &i) in tabs.iter().enumerate() {
+            let b = &self.app.buffers[i];
+            let w = widths[k];
             let tr = Rect::from_min_size(Pos2::new(x, r.top()), Vec2::new(w, r.height()));
             x += w;
-            let active = i == self.app.cur;
+            let active = Some(i) == shown;
             if active {
                 clip.rect_filled(tr, 0.0, c.bg);
+                // The accent bar marks the focused group's tab (Sublime dims the others).
                 clip.rect_filled(
                     Rect::from_min_size(tr.min, Vec2::new(w, 2.0)),
                     0.0,
-                    c.accent,
+                    if focused_group { c.accent } else { c.border },
                 );
             }
             clip.line_segment(
@@ -668,8 +791,19 @@ impl Gui {
                 Stroke::new(1.0, c.border),
             );
             let name = b.name();
+            draw_icon(
+                &clip,
+                &self.app.config,
+                &mut self.icon_tex,
+                Pos2::new(tr.left() + 19.0, tr.center().y),
+                &name,
+                false,
+                false,
+                if active { 1.0 } else { 0.75 },
+                if active { c.bg } else { c.chrome },
+            );
             clip.text(
-                Pos2::new(tr.left() + 14.0, tr.center().y),
+                Pos2::new(tr.left() + 32.0, tr.center().y),
                 Align2::LEFT_CENTER,
                 name,
                 font.clone(),
@@ -702,13 +836,13 @@ impl Gui {
             }
         }
         if let Some((i, pos)) = tab_menu {
-            self.app.cur = i;
+            self.app.set_cur(i);
             self.app.focus = Focus::Editor;
             self.app
                 .open_context_menu(crate::menu::ContextKind::Tab, (pos.x, pos.y));
         }
         if let Some((i, close)) = click {
-            self.app.cur = i;
+            self.app.set_cur(i);
             self.app.focus = Focus::Editor;
             if close {
                 self.app.run(crate::commands::Command::CloseBuffer);
@@ -725,18 +859,28 @@ impl Gui {
         p: &Painter,
         r: Rect,
         c: &Palette,
+        g: usize,
     ) -> Option<Pos2> {
-        if self.app.buffers.is_empty() {
-            self.draw_welcome(p, r, c);
+        let active_group = g == self.app.group;
+        let Some(cur) = self.shown_in(g) else {
+            if self.app.buffers.is_empty() && g == 0 {
+                self.draw_welcome(p, r, c);
+            }
+            // An empty group still takes focus when clicked.
+            let resp = ui.interact(r, Id::unique(("editor-pane", g)), Sense::click());
+            if resp.clicked() || resp.secondary_clicked() {
+                self.app.focus_group(g);
+            }
             return None;
-        }
+        };
         let (cw, lh, rh) = self.metrics(ui);
         let font = self.mono();
         let visible = ((r.height() / lh).ceil() as usize).max(1);
-        self.app.page = ((r.height() / lh).floor() as usize).max(1);
-        let focused = self.app.focus == Focus::Editor && self.app.modal.is_none();
-        let search = self.app.search.clone().filter(|s| !s.is_empty() && matches!(&self.app.modal, Some(Modal::Prompt(p)) if matches!(p.kind, PromptKind::Find { .. })));
-        let cur = self.app.cur;
+        if active_group {
+            self.app.page = ((r.height() / lh).floor() as usize).max(1);
+        }
+        let focused = active_group && self.app.focus == Focus::Editor && self.app.modal.is_none();
+        let search = self.app.search.clone().filter(|s| !s.is_empty() && active_group && matches!(&self.app.modal, Some(Modal::Prompt(p)) if matches!(p.kind, PromptKind::Find { .. })));
         let path = self.app.buffers[cur].path.clone();
         let empty = Vec::new();
         let diags = path
@@ -753,11 +897,14 @@ impl Gui {
         let digits = b.lines.len().to_string().len().max(3) as f32;
         let gutter_w = (digits + 3.0) * cw;
         let text_left = r.left() + gutter_w;
-        self.text_geom = (cw, text_left, r.top(), lh);
-        let text_cols = (((r.width() - gutter_w) / cw).floor() as usize).max(1);
+        if active_group {
+            self.text_geom = (cw, text_left, r.top(), lh);
+        }
+        // Leave room for the vertical scrollbar on the right.
+        let text_cols = (((r.width() - gutter_w - SCROLLBAR_W) / cw).floor() as usize).max(1);
 
         // Mouse: click, drag, wheel.
-        let resp = ui.interact(r, Id::unique("editor"), Sense::click_and_drag());
+        let resp = ui.interact(r, Id::unique(("editor-pane", g)), Sense::click_and_drag());
         let to_pos = |b: &Buffer, pt: Pos2| -> Pos {
             let line = (b.scroll_y as f32 + ((pt.y - r.top()) / lh).floor().max(0.0)) as usize;
             let line = line.min(b.lines.len() - 1);
@@ -813,7 +960,7 @@ impl Gui {
             }
             None
         };
-        let hover_at = if resp.dragged() || resp.is_pointer_button_down_on() {
+        let hover_at = if !active_group || resp.dragged() || resp.is_pointer_button_down_on() {
             None
         } else {
             resp.hover_pos().and_then(|hp| char_under(b, hp))
@@ -848,7 +995,7 @@ impl Gui {
                 drag = Some(to_pos(b, pt));
             }
         }
-        if resp.hovered() {
+        if resp.contains_pointer() {
             let d = ui.ctx().input(|i| i.smooth_scroll_delta);
             if d.y != 0.0 {
                 self.scroll_acc -= d.y / lh;
@@ -865,7 +1012,7 @@ impl Gui {
         // Keep the cursor visible when it moved (not when the user scrolled).
         let key = (b.id, b.cursor, b.version);
         let cur_dcol = display_col(&b.lines[b.cursor.line], b.cursor.col);
-        if self.last_cursor != Some(key) {
+        if active_group && self.last_cursor != Some(key) {
             let margin = 2.min(self.app.page / 3);
             if b.cursor.line < b.scroll_y + margin {
                 b.scroll_y = b.cursor.line.saturating_sub(margin);
@@ -1122,7 +1269,123 @@ impl Gui {
                 );
             }
         }
-        self.app.hl_pending = !hl_done;
+        // Scrollbars (Sublime-style: thin, wider on hover). Vertical: drag the thumb or click
+        // the track to jump there; diagnostics are marked along it.
+        let max_scroll = b.lines.len().saturating_sub(1);
+        let page = visible.saturating_sub(1).max(1);
+        if max_scroll > 0 {
+            let track = Rect::from_min_max(Pos2::new(r.right() - SCROLLBAR_W, r.top()), r.max);
+            let sresp = ui.interact(track, Id::unique(("vscroll", g)), Sense::click_and_drag());
+            let wide = sresp.hovered() || sresp.dragged();
+            let total = (max_scroll + page) as f32;
+            let thumb_h = (track.height() * page as f32 / total).clamp(24.0, track.height());
+            let span = (track.height() - thumb_h).max(1.0);
+            let thumb_y = |sy: usize| track.top() + span * sy as f32 / max_scroll as f32;
+            for d in diags.iter() {
+                let y = track.top() + track.height() * d.start.line as f32 / b.lines.len() as f32;
+                let col = match d.severity {
+                    1 => c.err,
+                    2 => c.warn,
+                    _ => c.info,
+                };
+                clip.rect_filled(
+                    Rect::from_min_size(Pos2::new(track.right() - 4.0, y), Vec2::new(3.0, 2.0)),
+                    0.0,
+                    col,
+                );
+            }
+            if let Some(pt) = sresp.interact_pointer_pos() {
+                let at = thumb_y(b.scroll_y);
+                if sresp.drag_started()
+                    || (sresp.is_pointer_button_down_on() && self.vscroll_grab.is_none())
+                {
+                    // Grabbing the thumb keeps the grip point; the track jumps there first.
+                    let on_thumb = pt.y >= at && pt.y <= at + thumb_h;
+                    self.vscroll_grab = Some(if on_thumb { pt.y - at } else { thumb_h / 2.0 });
+                }
+                let grab = self.vscroll_grab.unwrap_or(thumb_h / 2.0);
+                let f = ((pt.y - grab - track.top()) / span).clamp(0.0, 1.0);
+                b.scroll_y = (f * max_scroll as f32).round() as usize;
+            }
+            if !sresp.is_pointer_button_down_on() {
+                self.vscroll_grab = None;
+            }
+            if wide {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+            }
+            let tw = if wide { 8.0 } else { 5.0 };
+            let ty = thumb_y(b.scroll_y);
+            clip.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(track.right() - tw - 2.0, ty),
+                    Vec2::new(tw, thumb_h),
+                ),
+                tw / 2.0,
+                mix(c.bg, c.fg, if wide { 0.35 } else { 0.2 }),
+            );
+        }
+        // Horizontal: only when lines are wider than the pane.
+        let widest = b
+            .lines
+            .iter()
+            .map(|l| display_col(l, usize::MAX))
+            .max()
+            .unwrap_or(0);
+        if widest + 2 > text_cols || b.scroll_x > 0 {
+            let track = Rect::from_min_max(
+                Pos2::new(text_left, r.bottom() - SCROLLBAR_W),
+                Pos2::new(r.right() - SCROLLBAR_W, r.bottom()),
+            );
+            let hresp = ui.interact(track, Id::unique(("hscroll", g)), Sense::click_and_drag());
+            let wide = hresp.hovered() || hresp.dragged();
+            let max_x = (widest + 4)
+                .saturating_sub(text_cols)
+                .max(b.scroll_x)
+                .max(1);
+            let total = (max_x + text_cols) as f32;
+            let thumb_w = (track.width() * text_cols as f32 / total).clamp(24.0, track.width());
+            let span = (track.width() - thumb_w).max(1.0);
+            let thumb_x = |sx: usize| track.left() + span * sx as f32 / max_x as f32;
+            if let Some(pt) = hresp.interact_pointer_pos() {
+                let at = thumb_x(b.scroll_x);
+                if hresp.drag_started()
+                    || (hresp.is_pointer_button_down_on() && self.hscroll_grab.is_none())
+                {
+                    let on_thumb = pt.x >= at && pt.x <= at + thumb_w;
+                    self.hscroll_grab = Some(if on_thumb { pt.x - at } else { thumb_w / 2.0 });
+                }
+                let grab = self.hscroll_grab.unwrap_or(thumb_w / 2.0);
+                let f = ((pt.x - grab - track.left()) / span).clamp(0.0, 1.0);
+                b.scroll_x = (f * max_x as f32).round() as usize;
+            }
+            if !hresp.is_pointer_button_down_on() {
+                self.hscroll_grab = None;
+            }
+            if wide {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
+            }
+            let th = if wide { 8.0 } else { 5.0 };
+            clip.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(thumb_x(b.scroll_x), track.bottom() - th - 2.0),
+                    Vec2::new(thumb_w, th),
+                ),
+                th / 2.0,
+                mix(c.bg, c.fg, if wide { 0.35 } else { 0.2 }),
+            );
+        }
+        self.app.hl_pending |= !hl_done;
+        if !active_group {
+            // A click in another group focuses it first, then acts there.
+            if click.is_some() || right_click.is_some() {
+                self.app.set_cur(cur);
+                self.app.focus = Focus::Editor;
+                self.app.completion = None;
+                self.app.hover = None;
+            } else {
+                return None;
+            }
+        }
         // Where a mouse-hover popup points.
         self.hover_anchor_px = self
             .app
@@ -1386,11 +1649,14 @@ impl Gui {
             return;
         };
         let w = (full.width() * 0.6).clamp(360.0, 720.0);
-        let max_rows = 12usize;
+        // Files get Sublime's two-line rows: icon, bold name, path underneath.
+        let file_rows = matches!(pal.mode, Mode::Files | Mode::Buffers);
+        let row_h = if file_rows { 44.0 } else { 30.0 };
+        let max_rows = if file_rows { 9usize } else { 12 };
         let n = pal.shown.len().min(max_rows);
         let line_mode = pal.mode == Mode::Line;
         let rows = if line_mode { 1 } else { n.max(1) };
-        let h = 52.0 + rows as f32 * 30.0;
+        let h = 52.0 + rows as f32 * row_h;
         let r = Rect::from_min_size(
             Pos2::new(full.center().x - w / 2.0, full.top() + 40.0),
             Vec2::new(w, h),
@@ -1470,11 +1736,66 @@ impl Gui {
         {
             let it = &pal.items[*idx];
             let rr = Rect::from_min_size(
-                Pos2::new(r.left() + 6.0, top + row as f32 * 30.0),
-                Vec2::new(w - 12.0, 30.0),
+                Pos2::new(r.left() + 6.0, top + row as f32 * row_h),
+                Vec2::new(w - 12.0, row_h),
             );
             if i == pal.sel {
                 p.rect_filled(rr, 4.0, c.pop_sel);
+            }
+            if file_rows {
+                // Files: the label is the relative path (Goto Anything) or the name
+                // (open files, whose path is in `detail`).
+                let (name, path, name_off, path_hits) = if pal.mode == Mode::Files {
+                    let name = it.label.rsplit('/').next().unwrap_or(&it.label).to_string();
+                    let off = it.label.chars().count() - name.chars().count();
+                    (name, it.label.clone(), off, true)
+                } else {
+                    (it.label.clone(), it.detail.clone(), 0, false)
+                };
+                let bg = if i == pal.sel { c.pop_sel } else { c.pop };
+                draw_icon(
+                    p,
+                    &self.app.config,
+                    &mut self.icon_tex,
+                    Pos2::new(rr.left() + 20.0, rr.center().y),
+                    &name,
+                    false,
+                    false,
+                    1.0,
+                    bg,
+                );
+                let tx = rr.left() + 38.0;
+                let clip = p.with_clip_rect(rr.shrink2(Vec2::new(4.0, 0.0)));
+                let line = |text: &str, offset: usize, use_hits: bool, size: f32, base: Color32| {
+                    let mut job = LayoutJob::default();
+                    for (ci, ch) in text.chars().enumerate() {
+                        let hit = use_hits && hits.contains(&(ci + offset));
+                        job.append(
+                            &ch.to_string(),
+                            0.0,
+                            egui::TextFormat {
+                                font_id: FontId::proportional(size),
+                                color: if hit { c.accent } else { base },
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    p.layout_job(job)
+                };
+                let ng = line(&name, name_off, true, 15.0, c.fg);
+                let ny = rr.top() + 5.0;
+                // Faux bold: the name drawn twice a hair apart.
+                clip.galley(Pos2::new(tx + 0.45, ny), ng.clone(), c.fg);
+                clip.galley(Pos2::new(tx, ny), ng, c.fg);
+                let pg = line(&path, 0, path_hits, 11.5, c.dim);
+                clip.galley(Pos2::new(tx, rr.bottom() - 6.0 - pg.size().y), pg, c.dim);
+                if ui
+                    .interact(rr, Id::unique(("pal", row)), Sense::click())
+                    .clicked()
+                {
+                    clicked = Some(i);
+                }
+                continue;
             }
             let mut job = LayoutJob::default();
             for (ci, ch) in it.label.chars().enumerate() {
@@ -3342,4 +3663,160 @@ pub fn caret_alpha(style: CaretStyle, elapsed: Duration) -> (f32, Option<Duratio
             (alpha, Some(Duration::from_millis(16)))
         }
     }
+}
+
+fn is_digit_key(k: egui::Key) -> bool {
+    use egui::Key::*;
+    matches!(
+        k,
+        Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9
+    )
+}
+
+/// Draw a file or folder icon centred at `at` (sidebar, tabs, Goto Anything). Folders are a
+/// drawn folder shape (open or closed); files a coloured badge with a short label, both
+/// from icons.toml.
+type IconTextures = HashMap<PathBuf, Option<egui::TextureHandle>>;
+
+/// Draw a package icon image if it loads; returns false to fall back to the drawn icon.
+fn draw_icon_image(
+    p: &Painter,
+    tex: &mut IconTextures,
+    path: &Path,
+    at: Pos2,
+    tint: Color32,
+) -> bool {
+    let t = tex.entry(path.to_path_buf()).or_insert_with(|| {
+        let img = image::open(path).ok()?.to_rgba8();
+        let (w, h) = img.dimensions();
+        let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], img.as_raw());
+        Some(p.ctx().load_texture(
+            format!("icon:{}", path.display()),
+            ci,
+            egui::TextureOptions::LINEAR,
+        ))
+    });
+    let Some(t) = t else { return false };
+    let r = Rect::from_center_size(at, Vec2::splat(16.0));
+    p.image(
+        t.id(),
+        r,
+        Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        tint,
+    );
+    true
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_icon(
+    p: &Painter,
+    cfg: &crate::config::Config,
+    tex: &mut IconTextures,
+    at: Pos2,
+    name: &str,
+    is_dir: bool,
+    open: bool,
+    alpha: f32,
+    bg: Color32,
+) {
+    if !cfg.editor.file_icons {
+        return;
+    }
+    let fade = |c: Color32| mix(bg, c, alpha);
+    let tint = Color32::from_white_alpha((alpha * 255.0) as u8);
+    if is_dir {
+        let img = if open {
+            &cfg.folder_images.1
+        } else {
+            &cfg.folder_images.0
+        };
+        if let Some(path) = img
+            && draw_icon_image(p, tex, path, at, tint)
+        {
+            return;
+        }
+    } else if let Some(path) = cfg.icon_for(name).and_then(|d| d.image.as_ref())
+        && draw_icon_image(p, tex, Path::new(path), at, tint)
+    {
+        return;
+    }
+    let hex = |s: Option<&str>, d: Color32| {
+        s.and_then(crate::config::parse_hex_color)
+            .map(|(r, g, b)| Color32::from_rgb(r, g, b))
+            .unwrap_or(d)
+    };
+    if is_dir {
+        let col = fade(hex(
+            cfg.folder_color.as_deref(),
+            Color32::from_rgb(0x8F, 0xA1, 0xB3),
+        ));
+        let body = Rect::from_center_size(at + Vec2::new(0.0, 1.0), Vec2::new(14.0, 10.0));
+        // Tab on the top-left edge.
+        p.rect_filled(
+            Rect::from_min_size(body.min - Vec2::new(0.0, 2.0), Vec2::new(6.0, 3.0)),
+            1.0,
+            col,
+        );
+        if open {
+            p.rect_filled(body, 1.5, mix(bg, col, 0.55));
+            // The open flap, slanted forward.
+            let top = body.top() + 3.5;
+            p.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(body.left() + 2.5, top),
+                    Pos2::new(body.right() + 1.0, top),
+                    Pos2::new(body.right() - 1.5, body.bottom()),
+                    Pos2::new(body.left(), body.bottom()),
+                ],
+                col,
+                Stroke::NONE,
+            ));
+        } else {
+            p.rect_filled(body, 1.5, col);
+        }
+        return;
+    }
+    let def = cfg.icon_for(name);
+    let label = def.map(|d| d.label.as_str()).unwrap_or("");
+    let base = hex(
+        def.map(|d| d.color.as_str()),
+        Color32::from_rgb(0x7D, 0x85, 0x90),
+    );
+    let col = fade(base);
+    if label.is_empty() {
+        // Plain document with a folded corner.
+        let r = Rect::from_center_size(at, Vec2::new(10.0, 13.0));
+        let k = 3.5;
+        p.add(egui::Shape::convex_polygon(
+            vec![
+                r.left_top(),
+                Pos2::new(r.right() - k, r.top()),
+                Pos2::new(r.right(), r.top() + k),
+                r.right_bottom(),
+                r.left_bottom(),
+            ],
+            col,
+            Stroke::NONE,
+        ));
+        return;
+    }
+    let font = FontId::proportional(if label.chars().count() >= 3 { 7.5 } else { 8.5 });
+    let galley = p.layout_no_wrap(label.to_string(), font, Color32::WHITE);
+    let w = (galley.size().x + 5.0).max(14.0);
+    let r = Rect::from_center_size(at, Vec2::new(w, 13.0));
+    p.rect_filled(r, 3.0, col);
+    // Dark text on light badges, light text on dark ones.
+    let lum = 0.299 * base.r() as f32 + 0.587 * base.g() as f32 + 0.114 * base.b() as f32;
+    let ink = if lum > 140.0 {
+        Color32::from_rgb(0x1E, 0x1E, 0x1E)
+    } else {
+        Color32::WHITE
+    };
+    let pos = r.center() - galley.size() / 2.0;
+    // Short labels are drawn twice, a hair apart, for a semi-bold look; three letters
+    // would smudge together, so they stay regular.
+    if label.chars().count() < 3 {
+        p.galley(pos + Vec2::new(0.35, 0.0), galley.clone(), fade(ink));
+    }
+    p.galley(pos, galley, fade(ink));
 }

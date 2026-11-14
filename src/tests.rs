@@ -324,23 +324,51 @@ fn settings_add_language_and_theme() {
         h.state().app.buf().unwrap().name(),
         ".farsub-test-config.toml"
     );
+    // Like Sublime: defaults (read-only, every setting) on the left, the user file on the
+    // right, focused.
+    {
+        let app = &h.state().app;
+        assert_eq!(app.layout, 2);
+        assert_eq!(app.group, 1);
+        let left = &app.buffers[app.group_shown(0).unwrap()];
+        assert_eq!(left.name(), "Default Settings.toml");
+        assert!(left.read_only);
+        assert!(left.lines.iter().any(|l| l.starts_with("theme = ")));
+        assert!(
+            !app.buf()
+                .unwrap()
+                .lines
+                .iter()
+                .any(|l| l.starts_with("theme = "))
+        );
+    }
+    shot(&mut h, "settings_side_by_side");
     // Add a language and switch theme by editing the file in the editor, then save.
     let extra =
         "\n[[languages]]\nname = \"lua\"\nextensions = [\"lua\"]\ncomment = \"--\"\ntab_size = 2\n";
     {
         let b = h.state_mut().app.buf_mut().unwrap();
+        let editor = b.lines.iter().position(|l| l == "[editor]").unwrap();
+        b.lines.insert(editor + 1, "theme = \"Nord\"".into());
         b.move_doc(true, false);
         b.insert_text(extra);
-        let theme = b
-            .lines
-            .iter()
-            .position(|l| l.starts_with("theme = "))
-            .unwrap();
-        b.lines[theme] = "theme = \"Nord\"".into();
     }
     press(&mut h, CMD, Key::S);
     assert_eq!(h.state().app.config.editor.theme, "Nord");
     assert!(h.state().app.config.language("lua").is_some());
+    // Closing the settings closes both panes and restores the single layout.
+    press(&mut h, CMD, Key::W);
+    assert!(
+        h.state().app.buffers.is_empty(),
+        "{:?}",
+        h.state()
+            .app
+            .buffers
+            .iter()
+            .map(|b| b.name())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(h.state().app.layout, 1);
     // A .lua file now gets the configured comment token and indentation.
     h.state_mut().app.open_file(&d.join("init.lua"), true);
     steps(&mut h, 2);
@@ -1766,4 +1794,334 @@ fn goto_symbol_shows_names_not_signatures() {
         _ => panic!("symbol palette expected"),
     };
     assert_eq!(labels, ["Title", "Sub section"]);
+}
+
+#[test]
+fn editor_groups_side_by_side() {
+    let d = project(
+        "groups",
+        &[
+            ("a.txt", "alpha\n"),
+            ("b.txt", "bravo\n"),
+            ("c.txt", "charlie\n"),
+        ],
+    );
+    let mut h = harness(&d);
+    for f in ["a.txt", "b.txt", "c.txt"] {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    steps(&mut h, 2);
+    // Two columns: everything stays in group 1, group 2 is empty.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::LayoutColumns2);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.layout, 2);
+    assert_eq!(h.state().app.group_tabs(0).len(), 3);
+    assert!(h.state().app.group_tabs(1).is_empty());
+    // Ctrl+Shift+2 moves the current file (c.txt) to group 2; focus follows it.
+    press(&mut h, Modifiers::CTRL | Modifiers::SHIFT, Key::Num2);
+    let app = &h.state().app;
+    assert_eq!(app.group, 1);
+    assert_eq!(app.buf().unwrap().name(), "c.txt");
+    assert_eq!(app.group_tabs(0).len(), 2);
+    // Group 1 now shows its neighbour.
+    assert_eq!(app.buffers[app.group_shown(0).unwrap()].name(), "b.txt");
+    // Typing goes to the focused group's file only.
+    typ(&mut h, "Z");
+    assert_eq!(h.state().app.buf().unwrap().lines[0], "Zcharlie");
+    // Ctrl+1 focuses group 1; typing goes there now.
+    press(&mut h, Modifiers::CTRL, Key::Num1);
+    assert_eq!(h.state().app.group, 0);
+    typ(&mut h, "Y");
+    assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
+    assert_eq!(h.state().app.buf().unwrap().lines[0], "Ybravo");
+    // Next/previous file cycles within the group.
+    h.state_mut().app.run(crate::commands::Command::NextBuffer);
+    assert_eq!(h.state().app.buf().unwrap().name(), "a.txt");
+    h.state_mut().app.run(crate::commands::Command::NextBuffer);
+    assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
+    shot(&mut h, "groups_two_columns");
+    // Clicking in the other pane focuses it.
+    let geom = h.state().text_metrics_for_test();
+    let _ = geom;
+    let right = egui::Pos2::new(1100.0, 200.0);
+    h.event(egui::Event::PointerMoved(right));
+    h.event(egui::Event::PointerButton {
+        pos: right,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.event(egui::Event::PointerButton {
+        pos: right,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.group, 1);
+    assert_eq!(h.state().app.buf().unwrap().name(), "c.txt");
+    // Closing the last tab of a group leaves it focused and empty: editing does nothing,
+    // and nothing leaks into the other group's file.
+    h.state_mut()
+        .app
+        .buffers
+        .iter_mut()
+        .for_each(|b| b.modified = false);
+    h.state_mut().app.run(crate::commands::Command::CloseBuffer);
+    assert_eq!(h.state().app.group, 1);
+    assert!(h.state().app.buf().is_none());
+    typ(&mut h, "Q");
+    assert!(
+        h.state()
+            .app
+            .buffers
+            .iter()
+            .all(|b| !b.lines[0].starts_with('Q'))
+    );
+    // The layout survives a restart (workspace).
+    h.state_mut().app.focus_group(0);
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::MoveToGroup2);
+    let ws = h.state().app.capture_workspace();
+    assert_eq!(ws.layout, 2);
+    assert_eq!(ws.buffers.iter().filter(|b| b.group == 1).count(), 1);
+    // Back to a single column: every tab joins group 1.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::LayoutSingle);
+    assert_eq!(h.state().app.layout, 1);
+    assert_eq!(h.state().app.group_tabs(0).len(), 2);
+    assert!(h.state().app.buf().is_some());
+}
+
+#[test]
+fn editor_groups_restore_from_workspace() {
+    let d = project("groupsws", &[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    {
+        let mut h = harness(&d);
+        h.state_mut().app.open_file(&d.join("a.txt"), true);
+        h.state_mut().app.open_file(&d.join("b.txt"), true);
+        h.state_mut()
+            .app
+            .run(crate::commands::Command::MoveToGroup2);
+        assert_eq!(h.state().app.layout, 2, "moving to group 2 adds the column");
+        h.state_mut().app.save_workspace();
+    }
+    let mut h = harness(&d);
+    h.state_mut().app.restore_workspace();
+    steps(&mut h, 2);
+    let app = &h.state().app;
+    assert_eq!(app.layout, 2);
+    assert_eq!(app.buffers[app.group_shown(0).unwrap()].name(), "a.txt");
+    assert_eq!(app.buffers[app.group_shown(1).unwrap()].name(), "b.txt");
+    assert_eq!(app.group, 1);
+    assert_eq!(app.buf().unwrap().name(), "b.txt");
+}
+
+#[test]
+fn file_icons_and_icon_packages() {
+    // Built-in mapping: exact names beat extensions; unknown files get the default.
+    let c = Config::builtin();
+    assert_eq!(c.icon_for("main.rs").unwrap().label, "rs");
+    assert_eq!(c.icon_for("Cargo.toml").unwrap().label, "crg");
+    assert_eq!(c.icon_for("other.toml").unwrap().label, "tml");
+    assert_eq!(c.icon_for("App.TSX").unwrap().label, "tsx");
+    assert_eq!(c.icon_for(".gitignore").unwrap().label, "git");
+    assert_eq!(c.icon_for("no_extension").unwrap().label, "");
+    // An icon package (Packages/<name>/icons.toml + PNGs) and a user icons.toml.
+    let d = project(
+        "iconpkg",
+        &[
+            ("cfg/config.toml", "[editor]\n"),
+            (
+                "cfg/Packages/Pixel Icons/icons.toml",
+                "folder_image = \"img/folder.png\"\n[[icons]]\nextensions = [\"rs\"]\nimage = \"img/rust.png\"\n",
+            ),
+            (
+                "cfg/Packages/Other Icons/icons.toml",
+                "[[icons]]\nextensions = [\"py\"]\nlabel = \"PY\"\ncolor = \"#00FF00\"\n",
+            ),
+            (
+                "cfg/icons.toml",
+                "[[icons]]\nextensions = [\"md\"]\nlabel = \"MD\"\ncolor = \"#FF0000\"\n",
+            ),
+            ("src/main.rs", "fn main() {}\n"),
+            ("notes.md", "# hi\n"),
+        ],
+    );
+    let img = d.join("cfg/Packages/Pixel Icons/img");
+    std::fs::create_dir_all(&img).unwrap();
+    for f in ["rust.png", "folder.png"] {
+        image::RgbaImage::from_pixel(16, 16, image::Rgba([200, 80, 40, 255]))
+            .save(img.join(f))
+            .unwrap();
+    }
+    let c = Config::load_from(Some(d.join("cfg/config.toml")));
+    assert!(c.error.is_none(), "{:?}", c.error);
+    assert_eq!(c.icon_packages, ["Other Icons", "Pixel Icons"]);
+    let rs = c.icon_for("main.rs").unwrap();
+    assert_eq!(
+        rs.image.as_deref(),
+        Some(img.join("rust.png").to_str().unwrap())
+    );
+    assert_eq!(c.icon_for("a.py").unwrap().label, "PY");
+    assert_eq!(
+        c.icon_for("notes.md").unwrap().label,
+        "MD",
+        "user icons.toml wins"
+    );
+    assert_eq!(
+        c.folder_images.0.as_deref(),
+        Some(img.join("folder.png").as_path())
+    );
+    // icon_theme picks one package only.
+    std::fs::write(
+        d.join("cfg/config.toml"),
+        "[editor]\nicon_theme = \"Other Icons\"\n",
+    )
+    .unwrap();
+    let c2 = Config::load_from(Some(d.join("cfg/config.toml")));
+    assert_eq!(c2.icon_packages, ["Other Icons"]);
+    assert!(c2.icon_for("main.rs").unwrap().image.is_none());
+    // In the GUI the package images are drawn (decoded once, cached).
+    let mut cfg = test_config(&d);
+    cfg.icons = c.icons.clone();
+    cfg.folder_images = c.folder_images.clone();
+    let gui = Gui::headless(d.clone(), cfg);
+    let mut h = Harness::builder()
+        .with_size(egui::Vec2::new(1200.0, 720.0))
+        .with_accessibility_check(false)
+        .wgpu()
+        .build_ui_state(|ui, g: &mut Gui| g.frame(ui), gui);
+    h.state_mut().app.open_file(&d.join("src/main.rs"), true);
+    h.state_mut().app.open_file(&d.join("notes.md"), true);
+    steps(&mut h, 3);
+    assert!(
+        h.state()
+            .icon_textures_for_test()
+            .iter()
+            .any(|(p, ok)| p.ends_with("rust.png") && *ok)
+    );
+    shot(&mut h, "icons_package");
+    // file_icons = false draws none.
+    h.state_mut().app.config.editor.file_icons = false;
+    steps(&mut h, 2);
+}
+
+#[test]
+fn gitignore_dims_sidebar_and_filters_goto_anything() {
+    // Not a git repository: .gitignore still applies.
+    let d = project(
+        "gitignore",
+        &[
+            (".gitignore", "build/\n*.log\n"),
+            ("build/out.bin", "x"),
+            ("app.log", "x"),
+            ("main.rs", "fn main() {}\n"),
+            ("README.md", "# readme\n"),
+        ],
+    );
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    let nodes: Vec<(String, bool)> = h
+        .state()
+        .app
+        .tree
+        .nodes
+        .iter()
+        .map(|n| (n.name.clone(), n.ignored))
+        .collect();
+    assert!(nodes.contains(&("build".into(), true)), "{nodes:?}");
+    assert!(nodes.contains(&("app.log".into(), true)), "{nodes:?}");
+    assert!(nodes.contains(&("main.rs".into(), false)), "{nodes:?}");
+    // Inside an ignored folder everything counts as ignored.
+    let build = d.join("build");
+    h.state_mut().app.tree.expanded.insert(build);
+    h.state_mut().app.tree.rebuild();
+    assert!(
+        h.state()
+            .app
+            .tree
+            .nodes
+            .iter()
+            .any(|n| n.name == "out.bin" && n.ignored)
+    );
+    // Goto Anything lists only files that aren't ignored, two lines per row.
+    press(&mut h, CMD, Key::P);
+    assert!(wait(
+        &mut h,
+        5,
+        |g| matches!(&g.app.modal, Some(crate::app::Modal::Palette(p)) if !p.loading && !p.items.is_empty())
+    ));
+    let labels: Vec<String> = match &h.state().app.modal {
+        Some(crate::app::Modal::Palette(p)) => p.items.iter().map(|i| i.label.clone()).collect(),
+        _ => unreachable!(),
+    };
+    assert!(
+        labels.contains(&"main.rs".to_string()) && labels.contains(&"README.md".to_string()),
+        "{labels:?}"
+    );
+    assert!(
+        !labels
+            .iter()
+            .any(|l| l.contains("build") || l.ends_with(".log")),
+        "{labels:?}"
+    );
+    shot(&mut h, "goto_anything_two_line");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    shot(&mut h, "sidebar_icons_gitignore");
+}
+
+#[test]
+fn editor_scrollbars() {
+    let long: String =
+        (0..300).map(|i| format!("line {i}\n")).collect::<String>() + &"x".repeat(400) + "\n";
+    let d = project("scrollbar", &[("a.txt", long.as_str())]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    assert_eq!(h.state().app.buf().unwrap().scroll_y, 0);
+    let ed = h.state().editor_rect_for_test();
+    let x = ed.right() - 5.0;
+    let drag = |h: &mut Harness<'static, Gui>, from: egui::Pos2, to: egui::Pos2| {
+        h.event(egui::Event::PointerMoved(from));
+        h.event(egui::Event::PointerButton {
+            pos: from,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        steps(h, 1);
+        h.event(egui::Event::PointerMoved(to));
+        steps(h, 1);
+        h.event(egui::Event::PointerButton {
+            pos: to,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        steps(h, 2);
+    };
+    // Click near the bottom of the track: jumps towards the end.
+    let bottom = egui::Pos2::new(x, ed.bottom() - 20.0);
+    drag(&mut h, bottom, bottom);
+    let sy = h.state().app.buf().unwrap().scroll_y;
+    assert!(sy > 200, "track click jumped to {sy}");
+    shot(&mut h, "scrollbar");
+    // Drag the thumb back to the top.
+    let thumb = egui::Pos2::new(x, ed.bottom() - 20.0);
+    drag(&mut h, thumb, egui::Pos2::new(x, ed.top() - 400.0));
+    assert_eq!(h.state().app.buf().unwrap().scroll_y, 0);
+    // Lines wider than the pane get a horizontal scrollbar.
+    let hb = egui::Pos2::new(ed.right() - 40.0, ed.bottom() - 5.0);
+    drag(&mut h, hb, hb);
+    assert!(h.state().app.buf().unwrap().scroll_x > 0);
+    // The cursor didn't move: scrollbars only scroll.
+    assert_eq!(
+        h.state().app.buf().unwrap().cursor,
+        crate::editor::Pos::new(0, 0)
+    );
 }

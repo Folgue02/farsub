@@ -15,6 +15,8 @@ pub struct Node {
     pub depth: usize,
     /// A project folder (top-level node).
     pub is_root: bool,
+    /// Matched by a .gitignore (or inside an ignored folder): shown dimmed.
+    pub ignored: bool,
 }
 
 pub struct Tree {
@@ -25,7 +27,7 @@ pub struct Tree {
     pub expanded: HashSet<PathBuf>,
     /// Multi-selection for file operations.
     pub marked: HashSet<PathBuf>,
-    cache: HashMap<PathBuf, Vec<(String, bool)>>,
+    cache: HashMap<PathBuf, Vec<(String, bool, bool)>>,
     show_hidden: bool,
     /// Folder open/close animations: folder → (start, opening).
     pub anims: HashMap<PathBuf, (Instant, bool)>,
@@ -90,11 +92,12 @@ impl Tree {
             .max_by_key(|r| r.path.components().count())
     }
 
-    fn children(&mut self, dir: &Path) -> &[(String, bool)] {
+    fn children(&mut self, dir: &Path) -> &[(String, bool, bool)] {
         let show_hidden = self.show_hidden;
         let folder = self.root_of(dir).cloned();
         self.cache.entry(dir.to_path_buf()).or_insert_with(|| {
-            let mut v: Vec<(String, bool)> = std::fs::read_dir(dir)
+            let kept = not_ignored(dir);
+            let mut v: Vec<(String, bool, bool)> = std::fs::read_dir(dir)
                 .map(|rd| {
                     rd.filter_map(|e| e.ok())
                         .filter_map(|e| {
@@ -110,7 +113,8 @@ impl Tree {
                             if folder.as_ref().is_some_and(|f| f.excluded(&name, is_dir)) {
                                 return None;
                             }
-                            Some((name, is_dir))
+                            let ignored = !kept.contains(&name);
+                            Some((name, is_dir, ignored))
                         })
                         .collect()
                 })
@@ -133,6 +137,7 @@ impl Tree {
                 is_dir: true,
                 depth: 0,
                 is_root: true,
+                ignored: false,
             });
             if self.expanded.contains(&r.path) {
                 self.walk(&r.path, 1, &mut out);
@@ -148,8 +153,13 @@ impl Tree {
     }
 
     fn walk(&mut self, dir: &Path, depth: usize, out: &mut Vec<Node>) {
+        let parent_ignored = out
+            .iter()
+            .rev()
+            .find(|n| n.path == dir)
+            .is_some_and(|n| n.ignored);
         let kids = self.children(dir).to_vec();
-        for (name, is_dir) in kids {
+        for (name, is_dir, ignored) in kids {
             let path = dir.join(&name);
             let open = is_dir && self.expanded.contains(&path);
             out.push(Node {
@@ -158,6 +168,7 @@ impl Tree {
                 is_dir,
                 depth,
                 is_root: false,
+                ignored: ignored || parent_ignored,
             });
             if open {
                 self.walk(&path, depth + 1, out);
@@ -532,4 +543,22 @@ mod tests {
         assert_eq!(t.nodes.len(), 2, "removed once closed");
         assert_eq!(t.arrow(&d.join("src")), 0.0);
     }
+}
+
+/// Names in `dir` that no .gitignore (in it or its parents, git repository or not)
+/// excludes. Hidden files are judged by .gitignore only, not by being hidden.
+fn not_ignored(dir: &Path) -> HashSet<String> {
+    ignore::WalkBuilder::new(dir)
+        .max_depth(Some(1))
+        .hidden(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(false)
+        .ignore(false)
+        .require_git(false)
+        .build()
+        .flatten()
+        .filter(|e| e.depth() == 1)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect()
 }

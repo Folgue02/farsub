@@ -1,0 +1,213 @@
+# File icons for the sidebar, tabs and Goto Anything (like a Sublime icon theme).
+# A user icons.toml in the config folder adds to / overrides these.
+#
+# Each [[icons]] entry: `label` (1–3 characters shown on a colored badge), `color` ("#RRGGBB"),
+# and what it matches: exact file `names` (checked first) and/or `extensions`.
+# Later entries win, so user entries override the built-ins.
+
+folder_color = "#8FA1B3"
+
+[default]
+label = ""
+color = "#7D8590"
+
+[[icons]]
+extensions = ["txt", "text", "log"]
+label = "txt"
+color = "#8B949E"
+
+[[icons]]
+extensions = ["rs"]
+label = "rs"
+color = "#DEA584"
+
+[[icons]]
+extensions = ["toml"]
+label = "tml"
+color = "#C9824A"
+
+[[icons]]
+names = ["Cargo.toml", "Cargo.lock"]
+label = "crg"
+color = "#DEA584"
+
+[[icons]]
+extensions = ["py", "pyi", "pyw"]
+label = "py"
+color = "#4B8BBE"
+
+[[icons]]
+extensions = ["js", "mjs", "cjs"]
+label = "js"
+color = "#F1E05A"
+
+[[icons]]
+extensions = ["jsx"]
+label = "jsx"
+color = "#61DAFB"
+
+[[icons]]
+extensions = ["ts", "mts", "cts"]
+label = "ts"
+color = "#3178C6"
+
+[[icons]]
+extensions = ["tsx"]
+label = "tsx"
+color = "#4FA3E0"
+
+[[icons]]
+extensions = ["json", "jsonc", "json5"]
+label = "{}"
+color = "#CBCB41"
+
+[[icons]]
+names = ["package.json", "package-lock.json"]
+label = "npm"
+color = "#CB3837"
+
+[[icons]]
+extensions = ["md", "markdown", "mdx"]
+label = "md"
+color = "#519ABA"
+
+[[icons]]
+extensions = ["sh", "bash", "zsh", "fish"]
+label = "sh"
+color = "#89E051"
+
+[[icons]]
+extensions = ["go"]
+label = "go"
+color = "#00ADD8"
+
+[[icons]]
+names = ["go.mod", "go.sum"]
+label = "go"
+color = "#00ADD8"
+
+[[icons]]
+extensions = ["c"]
+label = "c"
+color = "#A8B9CC"
+
+[[icons]]
+extensions = ["h"]
+label = "h"
+color = "#A074C4"
+
+[[icons]]
+extensions = ["cpp", "cc", "cxx", "hpp", "hh", "hxx"]
+label = "c++"
+color = "#F34B7D"
+
+[[icons]]
+extensions = ["java"]
+label = "jv"
+color = "#B07219"
+
+[[icons]]
+extensions = ["kt", "kts"]
+label = "kt"
+color = "#A97BFF"
+
+[[icons]]
+extensions = ["rb"]
+label = "rb"
+color = "#CC342D"
+
+[[icons]]
+extensions = ["lua"]
+label = "lua"
+color = "#51A0CF"
+
+[[icons]]
+extensions = ["php"]
+label = "php"
+color = "#8892BF"
+
+[[icons]]
+extensions = ["swift"]
+label = "sw"
+color = "#F05138"
+
+[[icons]]
+extensions = ["cs"]
+label = "c#"
+color = "#68217A"
+
+[[icons]]
+extensions = ["html", "htm"]
+label = "<>"
+color = "#E34C26"
+
+[[icons]]
+extensions = ["css"]
+label = "css"
+color = "#42A5F5"
+
+[[icons]]
+extensions = ["scss", "sass", "less"]
+label = "css"
+color = "#CD6799"
+
+[[icons]]
+extensions = ["yaml", "yml"]
+label = "yml"
+color = "#A074C4"
+
+[[icons]]
+extensions = ["xml", "svg"]
+label = "xml"
+color = "#E37933"
+
+[[icons]]
+extensions = ["png", "jpg", "jpeg", "gif", "webp", "ico", "bmp"]
+label = "img"
+color = "#A074C4"
+
+[[icons]]
+extensions = ["lock"]
+label = "lck"
+color = "#8B949E"
+
+[[icons]]
+extensions = ["sql"]
+label = "sql"
+color = "#DAD8D8"
+
+[[icons]]
+extensions = ["zip", "gz", "tar", "tgz", "xz", "7z"]
+label = "zip"
+color = "#AFB42B"
+
+[[icons]]
+names = [".gitignore", ".gitattributes", ".gitmodules", ".gitkeep"]
+label = "git"
+color = "#F14E32"
+
+[[icons]]
+names = ["Dockerfile", "docker-compose.yml", "docker-compose.yaml", ".dockerignore"]
+label = "dkr"
+color = "#2496ED"
+
+[[icons]]
+names = ["Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"]
+label = "mk"
+color = "#6D8086"
+
+[[icons]]
+names = ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING"]
+label = "lic"
+color = "#D4AF37"
+
+[[icons]]
+extensions = ["env"]
+names = [".env", ".env.local", ".env.example"]
+label = "env"
+color = "#ECD53F"
+
+[[icons]]
+extensions = ["farsub-project", "farsub-workspace", "sublime-project"]
+label = "prj"
+color = "#FF9800"

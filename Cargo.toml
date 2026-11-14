@@ -13,6 +13,7 @@ flate2 = "1.1.11"
 fuzzy-matcher = "0.3.7"
 globset = "0.4.21"
 ignore = "0.4.34"
+image = { version = "0.25", default-features = false, features = ["png"] }
 lsp-types = "0.97"
 lzma-rs = "0.3.0"
 portable-pty = "0.9.0"

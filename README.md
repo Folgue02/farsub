@@ -297,6 +297,54 @@ the pointer show on top), F12 definition, Shift+F12
 references, F2 rename, Alt+Shift+F format, F8 / Shift+F8 diagnostics. Edits sync
 incrementally when the server supports it. `FARSUB_LSP_LOG=/tmp/lsp.log` traces traffic.
 
+## File icons and icon packages
+
+The sidebar, tabs and Goto Anything show file-type icons. They're mapped in
+`runtime/icons.toml`, and an `icons.toml` in your config folder adds or overrides rules:
+
+```toml
+[[icons]]
+extensions = ["vue"]
+label = "vue"          # 1-3 letters on a coloured badge
+color = "#41B883"
+```
+
+An **icon package** is a folder in `Packages/` with its own `icons.toml` and PNG images:
+
+```toml
+folder_image = "img/folder.png"
+folder_open_image = "img/folder-open.png"
+[[icons]]
+extensions = ["rs"]
+image = "img/rust.png"   # relative to the package
+```
+
+All icon packages are used (in name order), or only one with `icon_theme = "Package
+Name"`. `file_icons = false` hides icons. Sublime icon packages such as A File Icon use a
+different format and don't work as they are.
+
+Files matched by `.gitignore` are dimmed in the sidebar and left out of Goto Anything,
+even in folders that aren't git repositories.
+
+## Split panes (editor groups)
+
+Like Sublime's View › Layout: up to 4 columns, each with its own tabs.
+
+| Action | macOS | Windows / Linux |
+| --- | --- | --- |
+| Layout: Single / 2 / 3 / 4 columns | Cmd+Alt+1–4 | Alt+Shift+1–4 |
+| Focus group N | Ctrl+1–4 | Ctrl+1–4 |
+| Move file to group N | Ctrl+Shift+1–4 | Ctrl+Shift+1–4 |
+| Select tab N in the group | Cmd+1–9 | Alt+1–9 |
+
+Click a pane to focus it, and drag the divider to resize. Each pane has scrollbars
+(vertical always, horizontal for long lines). The layout is saved with the
+workspace.
+
+**Preferences: Settings** (Cmd+,) opens the full, read-only `Default Settings.toml` on the
+left and your settings file on the right, as in Sublime. Copy over what you want to change
+and save. Closing either pane closes both and restores your layout.
+
 ## Terminal
 
 **Ctrl+`** toggles the integrated terminal (like VS Code), **Ctrl+Shift+`** opens another

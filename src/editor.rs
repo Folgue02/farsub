@@ -159,6 +159,8 @@ pub struct Buffer {
     pub indent_override: bool,
     /// The syntax was picked by hand (kept in the workspace).
     pub syntax_override: bool,
+    /// Editor group (pane column) the buffer's tab lives in.
+    pub group: usize,
     undo: Vec<Group>,
     redo: Vec<Group>,
     pending: Vec<Edit>,
@@ -213,6 +215,7 @@ impl Buffer {
             tab_size,
             indent_override: false,
             syntax_override: false,
+            group: 0,
             undo: vec![],
             redo: vec![],
             pending: vec![],

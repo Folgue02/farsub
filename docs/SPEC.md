@@ -50,6 +50,22 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   Zoom In/Out (Cmd+= / Cmd+-), which size only the editor text, as in Sublime. Changing it
   in the settings file applies immediately. The macOS menu bar is drawn by the OS and isn't
   scaled.
+- **Editor groups** (Sublime's View › Layout): 1–4 columns side by side, each with its own
+  tab strip; every file is in exactly one group. Layout: Single / 2 / 3 / 4 Columns
+  (macOS Cmd+Alt+1–4; Windows/Linux Alt+Shift+1–4). Focus Group N: Ctrl+1–4. Move File
+  to Group N: Ctrl+Shift+1–4 (adds columns if needed, and focus follows the file). Focus
+  Next Group has no default key (command palette).
+- Clicking in a group focuses it. The focused group's active tab has the accent bar; the
+  others are dimmed and show no caret. Dragging a divider resizes the columns
+  (double-click evens them out).
+- Opening a file puts it in the focused group; a file already open elsewhere is focused
+  in its own group. Next/Previous File, Close Other Tabs / Tabs to the Right, and tab
+  numbers (Cmd+1–9 on macOS; Alt+1–9 on Windows/Linux, as in Sublime) work within the
+  focused group.
+- A group whose last tab closes stays focused and empty; editing commands do nothing
+  there. Removing columns moves their tabs into the last remaining group.
+- The layout, each file's group and the focused group are saved in the workspace.
+- Rows and grid layouts aren't supported yet (columns only).
 - The sidebar is resizable by dragging its right edge (double-click resets); its width is
   saved in the workspace. Cmd+B toggles it, Cmd+0 focuses it.
 - The bottom panel is resizable by dragging its top edge; its height and visibility are
@@ -58,6 +74,15 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   menu; syntax name → syntax picker.
 
 ## 4. Editor
+
+- **Settings** (Preferences: Settings, Cmd+,): as in Sublime, opens two panes. On the
+  left, `Default Settings.toml`: read-only, every setting with its default and an
+  explanation, regenerated from the running version. On the right, your settings file,
+  focused. A new user file starts nearly empty (Sublime-style); you copy over only what you
+  change. Saving applies it. Closing either pane closes both (the other only if it has no
+  unsaved changes) and restores the previous layout. **Difference from Sublime:** Sublime
+  opens these in a new window; farsub is single-window, so they open as a two-column
+  layout in the current window.
 
 - Mouse pointer: I-beam over text, normal arrow over selected text (Sublime), arrow over
   the gutter.
@@ -103,6 +128,33 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   Markdown, OCaml, Svelte, Vue) have no comment token yet, so Toggle Comment does nothing
   there. Block-comment support is still to do.
 
+## 4a. Scrollbars
+
+- Every editor pane has a vertical scrollbar on the right: thin, wider on hover (Sublime
+  style). Drag the thumb, or click the track to jump there. Errors/warnings are marked
+  along it in their colors. The text area leaves room for it.
+- A horizontal scrollbar appears under the text when a line is wider than the pane.
+- Scrollbars only scroll; the cursor doesn't move. The mouse wheel scrolls anywhere over
+  the pane, including over the scrollbars.
+
+## 4b. File icons
+
+- File-type icons in the sidebar (folders get an open/closed folder), editor tabs, Goto
+  Anything and Switch Open File. `file_icons = false` turns them off.
+- Built-in icons are drawn (no font or image files): a coloured badge with a 1–3 letter
+  label per file type, and a plain page for unknown types. The mapping is data:
+  `runtime/icons.toml` (`[[icons]]` with `names` / `extensions`, `label`, `color`;
+  `[default]`, `folder_color`). Exact names win over extensions, the longest extension
+  wins (`.d.ts` beats `.ts`), and later rules win ties.
+- **Icon packages:** any folder in `Packages/` with an `icons.toml` (e.g. installed with
+  "Packages: Install Package (git URL)") is an icon package. Its rules may use `image =
+  "path.png"` (relative to the package) instead of a label, plus `folder_image` /
+  `folder_open_image`. All packages load in name order after the built-ins, then the
+  user's own `icons.toml` on top. `icon_theme = "<package>"` uses only that package. PNG
+  only (no SVG). Packages: Reload applies changes.
+- Sublime icon packages (e.g. A File Icon) are **not** compatible: they map icons through
+  Sublime syntax/theme preference files, a different format.
+
 ## 5. Completion (LSP)
 
 - Opens automatically after 3 identifier characters or a server trigger character, or with
@@ -117,6 +169,14 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
 - Each item shows a kind icon: a small colored badge with a glyph per kind (function,
   method, variable, field/property, class/struct, interface, module, keyword, snippet,
   constant, enum, file…), plus the label and detail.
+
+## 5a. Goto Anything (Cmd+P)
+
+- Lists the project's files, **excluding** gitignored files (in or outside a git
+  repository), hidden files and the project's exclude patterns.
+- Each file is a two-line row, as in Sublime: its icon, the file name larger and bold,
+  and the path below it in a smaller dim font. Fuzzy-match characters are highlighted in
+  both lines. Switch Open File uses the same rows.
 
 ## 6. Bottom panel
 
@@ -175,6 +235,10 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
   never moves focus to (and Enter never "clicks") a menu-bar button.
 
 ## 8. Sidebar
+
+- Files and folders matched by `.gitignore` (and `.git/info/exclude`) are listed but
+  **dimmed**, as in Sublime 4 / VS Code; everything inside an ignored folder counts as
+  ignored. This works whether or not the folder is a git repository.
 
 - Every project folder is a top-level node. Keyboard: arrows/hjkl move and fold, Enter
   opens, Space marks, `a` new file, `A` new folder, `r` rename/move, `c`/`x`/`p`

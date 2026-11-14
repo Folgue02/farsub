@@ -347,6 +347,17 @@ struct HoverTrack {
     requested: bool,
 }
 
+/// Most editor groups (layout columns).
+pub const MAX_GROUPS: usize = 4;
+
+/// Defaults-beside-user-settings view (Preferences: Settings).
+pub struct SettingsView {
+    pub defaults_id: usize,
+    pub user_id: usize,
+    /// Layout to return to when the view closes.
+    pub prev_layout: usize,
+}
+
 pub struct App {
     /// The open project (or anonymous folder set) shown in the sidebar.
     pub project: Project,
@@ -400,6 +411,16 @@ pub struct App {
     next_term_id: usize,
     /// Sidebar width in points (drag its edge to resize).
     pub sidebar_width: f32,
+    /// Editor groups (Sublime's layout columns), 1–4.
+    pub layout: usize,
+    /// Focused group.
+    pub group: usize,
+    /// Last active buffer id per group.
+    pub group_active: [Option<usize>; MAX_GROUPS],
+    /// Width of each group as a fraction of the editor area (sums to 1).
+    pub group_split: Vec<f32>,
+    /// Open while "Preferences: Settings" shows defaults beside the user file.
+    pub settings_view: Option<SettingsView>,
     pub keymap: Keymap,
     pub menus: Vec<Menu>,
     /// Server name → install log (present while installing or after a failure).
@@ -555,6 +576,11 @@ impl App {
             terminals: vec![],
             next_term_id: 1,
             sidebar_width: 250.0,
+            layout: 1,
+            group: 0,
+            group_active: [None; MAX_GROUPS],
+            group_split: vec![1.0],
+            settings_view: None,
             keymap: Keymap::default(),
             menus: vec![],
             install_log: HashMap::new(),
@@ -600,12 +626,155 @@ impl App {
         false
     }
 
+    /// The active buffer of the focused group (None when that group has no tabs).
     pub fn buf(&self) -> Option<&Buffer> {
-        self.buffers.get(self.cur)
+        self.buffers.get(self.cur).filter(|b| b.group == self.group)
     }
 
     pub fn buf_mut(&mut self) -> Option<&mut Buffer> {
-        self.buffers.get_mut(self.cur)
+        let g = self.group;
+        self.buffers.get_mut(self.cur).filter(|b| b.group == g)
+    }
+
+    // ===================================================================== groups
+
+    /// Make buffer `i` current; focus follows it to its group.
+    pub fn set_cur(&mut self, i: usize) {
+        self.cur = i;
+        if let Some(b) = self.buffers.get(i) {
+            self.group = b.group;
+            self.group_active[b.group] = Some(b.id);
+        }
+    }
+
+    /// Add a buffer to the focused group; returns its index.
+    fn push_buffer(&mut self, mut b: Buffer) -> usize {
+        b.group = self.group;
+        self.buffers.push(b);
+        self.buffers.len() - 1
+    }
+
+    /// Buffer indices in a group, in tab order.
+    pub fn group_tabs(&self, g: usize) -> Vec<usize> {
+        (0..self.buffers.len())
+            .filter(|&i| self.buffers[i].group == g)
+            .collect()
+    }
+
+    /// The buffer a group shows: its last active one, else its first tab.
+    pub fn group_shown(&self, g: usize) -> Option<usize> {
+        self.group_active[g]
+            .and_then(|id| self.buf_index(id))
+            .filter(|&i| self.buffers[i].group == g)
+            .or_else(|| self.group_tabs(g).first().copied())
+    }
+
+    pub fn focus_group(&mut self, g: usize) {
+        if g >= self.layout {
+            return;
+        }
+        self.group = g;
+        if let Some(i) = self.group_shown(g) {
+            self.set_cur(i);
+        }
+        self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
+    }
+
+    /// Switch to 1–4 columns. Tabs of removed groups move into the last remaining one.
+    pub fn set_layout(&mut self, n: usize) {
+        let n = n.clamp(1, MAX_GROUPS);
+        if n < self.layout {
+            let last = n - 1;
+            for b in &mut self.buffers {
+                if b.group > last {
+                    b.group = last;
+                }
+            }
+            for g in n..MAX_GROUPS {
+                self.group_active[g] = None;
+            }
+        }
+        self.layout = n;
+        self.group_split = vec![1.0 / n as f32; n];
+        let g = self.group.min(n - 1);
+        let keep = self.buf().map(|b| b.id);
+        self.group = g;
+        match keep.and_then(|id| self.buf_index(id)) {
+            Some(i) => self.set_cur(i),
+            None => {
+                if let Some(i) = self.group_shown(g) {
+                    self.set_cur(i);
+                }
+            }
+        }
+    }
+
+    /// Move the current file to group `g` (adding columns if needed); focus follows it.
+    pub fn move_to_group(&mut self, g: usize) {
+        if g >= MAX_GROUPS {
+            return;
+        }
+        let Some(id) = self.buf().map(|b| b.id) else {
+            return;
+        };
+        if g >= self.layout {
+            self.set_layout(g + 1);
+        }
+        let i = self.buf_index(id).unwrap();
+        let from = self.buffers[i].group;
+        if from == g {
+            return;
+        }
+        // The group it leaves shows its neighbour (the tab to the left, else the first).
+        let rest: Vec<usize> = self
+            .group_tabs(from)
+            .into_iter()
+            .filter(|&t| t != i)
+            .collect();
+        let neighbour = rest
+            .iter()
+            .rev()
+            .find(|&&t| t < i)
+            .or(rest.first())
+            .copied();
+        self.group_active[from] = neighbour.map(|t| self.buffers[t].id);
+        self.buffers[i].group = g;
+        self.set_cur(i);
+        self.focus = Focus::Editor;
+    }
+
+    /// After a buffer in group `g` closed at index `i`, show a neighbouring tab of the
+    /// same group (the one to its left, like Sublime), keeping focus in that group.
+    fn reselect_after_close(&mut self, g: usize, i: usize) {
+        let tabs = self.group_tabs(g);
+        let pick = tabs
+            .iter()
+            .rev()
+            .find(|&&t| t < i)
+            .or_else(|| tabs.first())
+            .copied();
+        match pick {
+            Some(t) => self.set_cur(t),
+            None => {
+                self.group_active[g] = None;
+                self.group = g;
+                // Keep `cur` valid; buf() is None for an empty focused group.
+                self.cur = self.cur.min(self.buffers.len().saturating_sub(1));
+            }
+        }
+    }
+
+    /// Cycle tabs within the focused group.
+    fn cycle_tab(&mut self, d: isize) {
+        let tabs = self.group_tabs(self.group);
+        if tabs.is_empty() {
+            return;
+        }
+        let at = tabs.iter().position(|&t| t == self.cur).unwrap_or(0) as isize;
+        let n = tabs.len() as isize;
+        self.set_cur(tabs[(at + d).rem_euclid(n) as usize]);
     }
 
     fn buf_index(&self, id: usize) -> Option<usize> {
@@ -752,10 +921,17 @@ impl App {
             self.run(cmd);
             return true;
         }
-        if let (KeyCode::Char(c @ '1'..='9'), true, false) = (k.code, k.ctrl, k.shift) {
-            let i = c as usize - '1' as usize;
-            if i < self.buffers.len() {
-                self.cur = i;
+        // Select tab N of the focused group: Cmd+N on macOS, Alt+N elsewhere (Sublime;
+        // Ctrl+N focuses group N there).
+        let tab_mod = if cfg!(target_os = "macos") {
+            k.sup && !k.alt
+        } else {
+            k.alt && !k.ctrl
+        };
+        if let (KeyCode::Char(c @ '1'..='9'), true, false) = (k.code, tab_mod, k.shift) {
+            let n = c as usize - '1' as usize;
+            if let Some(&i) = self.group_tabs(self.group).get(n) {
+                self.set_cur(i);
                 self.focus = Focus::Editor;
             }
             return true;
@@ -1371,6 +1547,7 @@ impl App {
         self.lsp.restart();
         self.buffers.clear();
         self.cur = 0;
+        self.group_active = [None; MAX_GROUPS];
         self.diagnostics.clear();
         self.completion = None;
         self.hover = None;
@@ -1437,6 +1614,7 @@ impl App {
             .iter()
             .filter(|b| b.path.is_some() || (hot && b.modified))
             .map(|b| BufferState {
+                group: b.group,
                 path: b.path.clone(),
                 cursor: (b.cursor.line, b.cursor.col),
                 anchor: b.anchor.map(|a| (a.line, a.col)),
@@ -1472,6 +1650,8 @@ impl App {
             sidebar_width: Some(self.sidebar_width),
             console_visible: self.console_shown(),
             console_height: Some(self.panel.height),
+            layout: self.layout,
+            focused_group: self.group,
         };
         // Remember collapsed project folders as "!path" entries.
         ws.expanded
@@ -1503,7 +1683,9 @@ impl App {
         let Some(ws) = Workspace::load(&f) else {
             return;
         };
+        self.set_layout(ws.layout.max(1));
         for bs in &ws.buffers {
+            self.group = bs.group.min(self.layout - 1);
             let i = match (&bs.path, &bs.unsaved) {
                 (Some(p), None) if p.is_file() => self.open_file(p, false),
                 (_, None) => None,
@@ -1516,8 +1698,7 @@ impl App {
                         text,
                         HlCache::new("Plain Text".into()),
                     );
-                    self.buffers.push(b);
-                    let i = self.buffers.len() - 1;
+                    let i = self.push_buffer(b);
                     if let Some(p) = path.clone() {
                         self.set_buffer_path(i, p);
                     }
@@ -1528,6 +1709,7 @@ impl App {
             };
             if let Some(i) = i {
                 let b = &mut self.buffers[i];
+                b.group = bs.group.min(self.layout - 1);
                 b.cursor = b.clamp(Pos::new(bs.cursor.0, bs.cursor.1));
                 b.anchor = bs.anchor.map(|a| b.clamp(Pos::new(a.0, a.1)));
                 b.want_col = b.cursor.col;
@@ -1547,7 +1729,15 @@ impl App {
                 }
             }
         }
-        self.cur = ws.active.min(self.buffers.len().saturating_sub(1));
+        // Each group shows its first tab, then the active file (and its group) is focused.
+        for g in 0..self.layout {
+            self.group_active[g] = self.group_tabs(g).first().map(|&i| self.buffers[i].id);
+        }
+        self.group = ws.focused_group.min(self.layout - 1);
+        let active = ws.active.min(self.buffers.len().saturating_sub(1));
+        if active < self.buffers.len() {
+            self.set_cur(active);
+        }
         self.sidebar_visible = ws.sidebar_visible;
         self.show_hidden = ws.show_hidden;
         for e in &ws.expanded {
@@ -1876,6 +2066,17 @@ impl App {
 
     // ===================================================================== settings
 
+    /// Where the read-only default settings reference is written.
+    pub fn defaults_settings_path(&self) -> PathBuf {
+        self.config
+            .data_dir
+            .clone()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Default Settings.toml")
+    }
+
+    /// Preferences: Settings — like Sublime: the full default settings (read-only) on the
+    /// left, the user's file on the right, in a two-column layout.
     fn open_settings(&mut self) {
         let Some(path) = self.config.path.clone().or_else(config::config_path) else {
             return self.msg("No config location (set $HOME or $FARSUB_CONFIG)");
@@ -1888,7 +2089,44 @@ impl App {
                 return self.msg(format!("Could not create {}: {e}", path.display()));
             }
         }
-        self.open_file(&path, true);
+        let defaults = self.defaults_settings_path();
+        if let Some(parent) = defaults.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        // Always rewritten, so it matches this version of farsub.
+        if let Err(e) = std::fs::write(&defaults, config::DEFAULT_SETTINGS) {
+            return self.msg(format!("Could not write {}: {e}", defaults.display()));
+        }
+        let prev_layout = self
+            .settings_view
+            .take()
+            .map(|v| v.prev_layout)
+            .unwrap_or(self.layout);
+        if self.layout < 2 {
+            self.set_layout(2);
+        }
+        let place = |app: &mut App, p: &Path, g: usize| -> Option<usize> {
+            app.group = g;
+            let i = app.open_file(p, true)?;
+            app.buffers[i].group = g;
+            app.set_cur(i);
+            Some(app.buffers[i].id)
+        };
+        let Some(defaults_id) = place(self, &defaults, 0) else {
+            return;
+        };
+        if let Some(i) = self.buf_index(defaults_id) {
+            self.buffers[i].read_only = true;
+        }
+        let Some(user_id) = place(self, &path, 1) else {
+            return;
+        };
+        self.focus = Focus::Editor;
+        self.settings_view = Some(SettingsView {
+            defaults_id,
+            user_id,
+            prev_layout,
+        });
     }
 
     fn reload_config(&mut self) {
@@ -2010,6 +2248,8 @@ impl App {
             let walker = ignore::WalkBuilder::new(&root)
                 .hidden(true)
                 .git_ignore(true)
+                // .gitignore applies even when the folder isn't a git repository.
+                .require_git(false)
                 .filter_entry(move |e| {
                     let name = e.file_name().to_string_lossy();
                     let is_dir = e.file_type().is_some_and(|t| t.is_dir());
@@ -2375,7 +2615,7 @@ impl App {
                 self.focus = Focus::Editor;
                 self.push_jump();
                 if let Some((bi, _, _)) = p.origin {
-                    self.cur = bi;
+                    self.set_cur(bi);
                 }
                 let pg = self.page;
                 if let Some(b) = self.buf_mut() {
@@ -2385,7 +2625,7 @@ impl App {
             }
             Action::Buffer(i) => {
                 if i < self.buffers.len() {
-                    self.cur = i;
+                    self.set_cur(i);
                     self.focus = Focus::Editor;
                 }
             }
@@ -2463,7 +2703,7 @@ impl App {
             .position(|b| b.path.as_deref() == Some(&path))
         {
             if focus {
-                self.cur = i;
+                self.set_cur(i);
                 self.focus = Focus::Editor;
             }
             return Some(i);
@@ -2485,16 +2725,18 @@ impl App {
         let id = self.next_buf_id;
         self.next_buf_id += 1;
         let b = Buffer::from_text(id, Some(path.clone()), &text, HlCache::new(syntax));
-        self.buffers.push(b);
-        let i = self.buffers.len() - 1;
+        let i = self.push_buffer(b);
         self.set_buffer_path(i, path);
         if std::fs::metadata(&self.buffers[i].path.clone().unwrap())
             .is_ok_and(|m| m.permissions().readonly())
         {
             self.buffers[i].read_only = true;
         }
+        if self.buffers[i].path.as_deref() == Some(self.defaults_settings_path().as_path()) {
+            self.buffers[i].read_only = true;
+        }
         if focus {
-            self.cur = i;
+            self.set_cur(i);
             self.focus = Focus::Editor;
         }
         self.lsp_open(i);
@@ -2506,8 +2748,8 @@ impl App {
         let id = self.next_buf_id;
         self.next_buf_id += 1;
         let b = Buffer::from_text(id, Some(path.clone()), "", HlCache::new(syntax));
-        self.buffers.push(b);
-        self.cur = self.buffers.len() - 1;
+        let i = self.push_buffer(b);
+        self.set_cur(i);
         self.set_buffer_path(self.cur, path);
         self.focus = Focus::Editor;
     }
@@ -2544,8 +2786,8 @@ impl App {
         let syntax = self.syn.detect(None, first);
         let mut b = Buffer::from_text(id, None, text, HlCache::new(syntax));
         b.modified = !text.is_empty();
-        self.buffers.push(b);
-        self.cur = self.buffers.len() - 1;
+        let i = self.push_buffer(b);
+        self.set_cur(i);
         self.focus = Focus::Editor;
     }
 
@@ -2616,6 +2858,7 @@ impl App {
     }
 
     fn close_buffer_at(&mut self, i: usize) {
+        let was_cur = self.buffers.get(self.cur).map(|b| b.id);
         let b = self.buffers.remove(i);
         if let Some(p) = &b.path {
             self.closed.push(p.clone());
@@ -2632,15 +2875,42 @@ impl App {
         self.hover = None;
         if self.buffers.is_empty() {
             self.cur = 0;
-        } else if self.cur >= self.buffers.len() || self.cur > i {
-            self.cur = self.cur.saturating_sub(1).min(self.buffers.len() - 1);
+            self.group_active = [None; MAX_GROUPS];
+        } else if was_cur == Some(b.id) {
+            self.reselect_after_close(b.group, i);
+        } else if let Some(i) = was_cur.and_then(|id| self.buf_index(id)) {
+            self.cur = i;
+        }
+        if self.group_active[b.group] == Some(b.id) {
+            self.group_active[b.group] = None;
+        }
+        // Closing either side of the settings view closes the view (like closing
+        // Sublime's settings window): the other side goes too unless it has unsaved
+        // changes, and the previous layout comes back.
+        if let Some(v) = self
+            .settings_view
+            .take_if(|v| v.defaults_id == b.id || v.user_id == b.id)
+        {
+            let other = if v.defaults_id == b.id {
+                v.user_id
+            } else {
+                v.defaults_id
+            };
+            if let Some(oi) = self.buf_index(other)
+                && !self.buffers[oi].modified
+            {
+                self.close_buffer_at(oi);
+            }
+            if self.layout != v.prev_layout {
+                self.set_layout(v.prev_layout);
+            }
         }
     }
 
     // ===================================================================== editor
 
     fn editor_key_inner(&mut self, k: Key) {
-        if self.buffers.is_empty() {
+        if self.buf().is_none() {
             return;
         }
         // Completion list: Enter/Tab accept only an explicitly selected item (Ctrl+N/P);
@@ -3923,31 +4193,38 @@ impl App {
     /// Whether a command can do anything right now (menus grey out the rest).
     pub fn enabled(&self, cmd: Command) -> bool {
         use Command::*;
-        let has_buf = !self.buffers.is_empty();
+        let has_buf = self.buf().is_some();
         let lsp = self.buf().is_some_and(|b| b.lsp_client.is_some());
         let in_panel = matches!(self.focus, Focus::Terminal | Focus::Console);
         match cmd {
             Copy | Paste | SelectAll if in_panel => true,
-            CloseOtherTabs => self.buffers.len() > 1,
-            CloseTabsToRight => self.cur + 1 < self.buffers.len(),
+            CloseOtherTabs => has_buf && self.group_tabs(self.group).len() > 1,
+            CloseTabsToRight => {
+                has_buf
+                    && self
+                        .group_tabs(self.group)
+                        .last()
+                        .is_some_and(|&l| l > self.cur)
+            }
+            FocusGroup2 if self.layout < 2 => false,
+            FocusGroup3 if self.layout < 3 => false,
+            FocusGroup4 if self.layout < 4 => false,
+            MoveToGroup1 | MoveToGroup2 | MoveToGroup3 | MoveToGroup4 => has_buf,
+            FocusNextGroup => self.layout > 1,
             CopyFilePath | RevealInFileManager => {
                 (self.focus == Focus::Sidebar && self.tree.selected_path().is_some())
                     || self.buf().is_some_and(|b| b.path.is_some())
             }
             ClearTerminal => self.terminal_shown().is_some(),
-            Save | SaveAs | CloseBuffer | Undo | Redo | Copy | Cut | Paste | SelectAll
-            | SelectLine | SelectWord | DeleteLine | DuplicateLine | MoveLineUp | MoveLineDown
-            | ToggleComment | Indent | Outdent | InsertLineAfter | InsertLineBefore | JoinLines
-            | UpperCase | LowerCase | SortLines | Find | FindNext | FindPrev | Replace
-            | GotoSymbol | GotoLine | NextBuffer | PrevBuffer | SwitchBuffer | NextDiagnostic
-            | PrevDiagnostic | RevealInSidebar => has_buf,
+            Copy | Paste | SelectAll => has_buf,
+            SwitchBuffer => !self.buffers.is_empty(),
+            c if needs_buffer(c) => has_buf,
             Completion | Hover | GotoDefinition | FindReferences | Rename | Format => lsp,
             SaveAll => self.any_modified(),
             ReopenClosed => !self.closed.is_empty(),
             JumpBack => !self.jumps.is_empty(),
             SidebarPaste => self.file_clip.is_some(),
             RemovePackage => !self.packages.is_empty(),
-            SetSyntax | Indentation => has_buf,
             _ => true,
         }
     }
@@ -4092,7 +4369,24 @@ impl App {
     pub fn run(&mut self, cmd: Command) {
         use Command::*;
         let page = self.page;
+        // Editing commands need a file in the focused group (it may be an empty column).
+        if needs_buffer(cmd) && self.buf().is_none() {
+            return;
+        }
         match cmd {
+            LayoutSingle => self.set_layout(1),
+            LayoutColumns2 => self.set_layout(2),
+            LayoutColumns3 => self.set_layout(3),
+            LayoutColumns4 => self.set_layout(4),
+            FocusGroup1 => self.focus_group(0),
+            FocusGroup2 => self.focus_group(1),
+            FocusGroup3 => self.focus_group(2),
+            FocusGroup4 => self.focus_group(3),
+            MoveToGroup1 => self.move_to_group(0),
+            MoveToGroup2 => self.move_to_group(1),
+            MoveToGroup3 => self.move_to_group(2),
+            MoveToGroup4 => self.move_to_group(3),
+            FocusNextGroup => self.focus_group((self.group + 1) % self.layout),
             GotoFile => self.open_palette(Mode::Files),
             ShowCommands => self.open_palette(Mode::Commands),
             GotoSymbol => {
@@ -4136,8 +4430,8 @@ impl App {
                 let id = self.next_buf_id;
                 self.next_buf_id += 1;
                 let b = Buffer::from_text(id, None, "", HlCache::new("Plain Text".into()));
-                self.buffers.push(b);
-                self.cur = self.buffers.len() - 1;
+                let i = self.push_buffer(b);
+                self.set_cur(i);
                 self.focus = Focus::Editor;
             }
             OpenFolder => {
@@ -4174,13 +4468,8 @@ impl App {
                 }
             }
             NextBuffer | PrevBuffer => {
-                let n = self.buffers.len();
-                if n > 0 {
-                    self.cur = if cmd == NextBuffer {
-                        (self.cur + 1) % n
-                    } else {
-                        (self.cur + n - 1) % n
-                    };
+                if self.buf().is_some() {
+                    self.cycle_tab(if cmd == NextBuffer { 1 } else { -1 });
                     self.focus = Focus::Editor;
                     self.completion = None;
                     self.hover = None;
@@ -4376,19 +4665,21 @@ impl App {
                 self.new_terminal_in(&dir);
             }
             CloseOtherTabs | CloseTabsToRight => {
+                let Some(keep_id) = self.buf().map(|b| b.id) else {
+                    return;
+                };
                 let keep = self.cur;
                 let ids: Vec<usize> = self
-                    .buffers
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| {
+                    .group_tabs(self.group)
+                    .into_iter()
+                    .filter(|&i| {
                         if cmd == CloseOtherTabs {
-                            *i != keep
+                            i != keep
                         } else {
-                            *i > keep
+                            i > keep
                         }
                     })
-                    .map(|(_, b)| b.id)
+                    .map(|i| self.buffers[i].id)
                     .collect();
                 let mut skipped = 0;
                 for id in ids {
@@ -4406,14 +4697,8 @@ impl App {
                     }
                     self.close_buffer_at(i);
                 }
-                if let Some(i) = self.buffers.iter().position(|b| {
-                    Some(b.id)
-                        == self
-                            .buffers
-                            .get(keep.min(self.buffers.len().saturating_sub(1)))
-                            .map(|b| b.id)
-                }) {
-                    self.cur = i;
+                if let Some(i) = self.buf_index(keep_id) {
+                    self.set_cur(i);
                 }
                 if skipped > 0 {
                     self.msg(format!("Kept {skipped} tab(s) with unsaved changes"));
@@ -4497,6 +4782,8 @@ impl App {
                 }
             }
             ReloadPackages => {
+                // Icon packages live in the config (icons.toml files).
+                self.reload_config();
                 let dir = self.config.packages_dir();
                 self.packages = dir.as_deref().map(packages::list).unwrap_or_default();
                 packages::load_async(dir, self.tx.clone());
@@ -4548,14 +4835,15 @@ impl App {
                 self.msg("Language servers restarted");
             }
             SaveAll => {
-                let cur = self.cur;
+                let (cur, group) = (self.cur, self.group);
                 for i in 0..self.buffers.len() {
                     if self.buffers[i].modified && self.buffers[i].path.is_some() {
-                        self.cur = i;
+                        self.set_cur(i);
                         self.save_current();
                     }
                 }
                 self.cur = cur;
+                self.group = group;
             }
             _ => self.run_editor(cmd),
         }
@@ -5789,7 +6077,7 @@ impl App {
             None => {}
         }
         let (mut n, files) = (0, per_file.len());
-        let (cur, focus) = (self.cur, self.focus);
+        let (cur, focus, group) = (self.cur, self.focus, self.group);
         for (path, edits) in per_file {
             let Some(i) = self.open_file(&path, false) else {
                 continue;
@@ -5809,6 +6097,7 @@ impl App {
             b.apply_edits(es);
         }
         self.cur = cur.min(self.buffers.len().saturating_sub(1));
+        self.group = group;
         self.focus = focus;
         (n, files)
     }
@@ -5961,6 +6250,49 @@ fn symbol_title(keyword: &str, rest: &str) -> Option<String> {
         .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
         .collect();
     (!name.is_empty()).then_some(name)
+}
+
+/// Commands that act on the focused group's current file.
+fn needs_buffer(cmd: Command) -> bool {
+    use Command::*;
+    matches!(
+        cmd,
+        Save | SaveAs
+            | CloseBuffer
+            | Undo
+            | Redo
+            | Cut
+            | SelectLine
+            | SelectWord
+            | DeleteLine
+            | DuplicateLine
+            | MoveLineUp
+            | MoveLineDown
+            | ToggleComment
+            | Indent
+            | Outdent
+            | InsertLineAfter
+            | InsertLineBefore
+            | JoinLines
+            | UpperCase
+            | LowerCase
+            | SortLines
+            | Find
+            | FindNext
+            | FindPrev
+            | Replace
+            | GotoSymbol
+            | GotoLine
+            | NextBuffer
+            | PrevBuffer
+            | NextDiagnostic
+            | PrevDiagnostic
+            | RevealInSidebar
+            | SetSyntax
+            | Indentation
+            | CloseOtherTabs
+            | CloseTabsToRight
+    )
 }
 
 fn first_enabled(app: &App, menu: usize) -> usize {
