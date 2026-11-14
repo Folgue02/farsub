@@ -1,0 +1,8 @@
+name = "yamlls"
+command = "yaml-language-server"
+args = ["--stdio"]
+root_markers = []
+description = "YAML language server (Red Hat)"
+
+[install]
+npm = ["yaml-language-server"]

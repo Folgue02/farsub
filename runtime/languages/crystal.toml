@@ -1,0 +1,5 @@
+name = "crystal"
+extensions = ["cr"]
+first_line = '^#!.*\bcrystal'
+comment = "#"
+tab_size = 2

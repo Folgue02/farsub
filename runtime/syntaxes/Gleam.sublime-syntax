@@ -1,0 +1,46 @@
+%YAML 1.2
+---
+# Bundled with farsub.
+name: Gleam
+file_extensions: [gleam]
+scope: source.gleam
+
+contexts:
+  main:
+    - match: '///?.*$'
+      scope: comment.line.double-slash.gleam
+    - match: '"'
+      scope: punctuation.definition.string.begin.gleam
+      push: string
+    - match: '@[a-z_][a-z0-9_]*'
+      scope: entity.other.attribute-name.gleam
+    - match: '\b(fn)\s+([a-z_][a-z0-9_]*)'
+      captures:
+        1: storage.type.function.gleam
+        2: entity.name.function.gleam
+    - match: '\b(type)\s+([A-Z][A-Za-z0-9]*)'
+      captures:
+        1: storage.type.gleam
+        2: entity.name.type.gleam
+    - match: '\b(pub|opaque|const|let|use|import|as|external)\b'
+      scope: storage.modifier.gleam
+    - match: '\b(case|if|assert|panic|todo|echo|fn|type)\b'
+      scope: keyword.control.gleam
+    - match: '\b(True|False|Nil)\b'
+      scope: constant.language.gleam
+    - match: '\b[A-Z][A-Za-z0-9]*\b'
+      scope: storage.type.gleam
+    - match: '\b([a-z_][a-z0-9_]*)(?=\()'
+      scope: variable.function.gleam
+    - match: '\b0[xX][0-9a-fA-F_]+\b|\b0[bB][01_]+\b|\b0[oO][0-7_]+\b|\b[0-9][0-9_]*(\.[0-9_]*)?([eE][+-]?[0-9]+)?\b'
+      scope: constant.numeric.gleam
+    - match: '\|>|->|<-|\.\.|==|!=|<>|&&|\|\||<=\.?|>=\.?|[-+*/%<>]\.?|='
+      scope: keyword.operator.gleam
+
+  string:
+    - meta_scope: string.quoted.double.gleam
+    - match: '\\(u\{[0-9a-fA-F]+\}|.)'
+      scope: constant.character.escape.gleam
+    - match: '"'
+      scope: punctuation.definition.string.end.gleam
+      pop: true

@@ -1,0 +1,4 @@
+name = "solidity"
+extensions = ["sol"]
+comment = "//"
+tab_size = 4

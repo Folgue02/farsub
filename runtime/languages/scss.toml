@@ -1,0 +1,5 @@
+name = "scss"
+extensions = ["scss"]
+comment = "//"
+tab_size = 2
+servers = ["cssls"]

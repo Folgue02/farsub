@@ -1,0 +1,8 @@
+name = "jsonls"
+command = "vscode-json-language-server"
+args = ["--stdio"]
+root_markers = []
+description = "JSON language server from VS Code"
+
+[install]
+npm = ["vscode-langservers-extracted"]

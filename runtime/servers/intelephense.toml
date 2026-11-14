@@ -1,0 +1,8 @@
+name = "intelephense"
+command = "intelephense"
+args = ["--stdio"]
+root_markers = ["composer.json"]
+description = "PHP language server (Intelephense)"
+
+[install]
+npm = ["intelephense"]

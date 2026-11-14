@@ -1,0 +1,6 @@
+name = "terraform"
+extensions = ["tf", "tfvars", "hcl"]
+comment = "#"
+tab_size = 2
+syntax = "Terraform"
+servers = ["terraformls"]

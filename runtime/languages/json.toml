@@ -1,0 +1,6 @@
+name = "json"
+extensions = ["json", "geojson", "webmanifest"]
+filenames = [".prettierrc", ".babelrc", ".eslintrc"]
+tab_size = 2
+syntax = "JSON"
+servers = ["jsonls"]

@@ -1,0 +1,6 @@
+name = "prisma"
+extensions = ["prisma"]
+comment = "//"
+tab_size = 2
+syntax = "Prisma"
+servers = ["prismals"]

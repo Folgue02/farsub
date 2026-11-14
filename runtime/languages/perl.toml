@@ -1,0 +1,6 @@
+name = "perl"
+extensions = ["pl", "pm", "t", "psgi"]
+first_line = '^#!.*\bperl'
+comment = "#"
+tab_size = 4
+syntax = "Perl"

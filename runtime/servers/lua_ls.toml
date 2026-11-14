@@ -1,0 +1,13 @@
+name = "lua_ls"
+command = "lua-language-server"
+root_markers = [".luarc.json", ".luarc.jsonc", ".stylua.toml"]
+description = "Lua language server (LuaLS), prebuilt from GitHub releases"
+
+[install.github]
+repo = "LuaLS/lua-language-server"
+[install.github.assets]
+macos-aarch64 = "lua-language-server-*-darwin-arm64.tar.gz"
+macos-x86_64 = "lua-language-server-*-darwin-x64.tar.gz"
+linux-x86_64 = "lua-language-server-*-linux-x64.tar.gz"
+linux-aarch64 = "lua-language-server-*-linux-arm64.tar.gz"
+windows = "lua-language-server-*-win32-x64.zip"

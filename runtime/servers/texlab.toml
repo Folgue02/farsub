@@ -1,0 +1,14 @@
+name = "texlab"
+command = "texlab"
+root_markers = [".latexmkrc", "latexmkrc", ".texlabroot"]
+description = "LaTeX/BibTeX language server, prebuilt from GitHub releases"
+
+[install.github]
+repo = "latex-lsp/texlab"
+[install.github.assets]
+macos-aarch64 = "texlab-aarch64-macos.tar.gz"
+macos-x86_64 = "texlab-x86_64-macos.tar.gz"
+linux-x86_64 = "texlab-x86_64-linux.tar.gz"
+linux-aarch64 = "texlab-aarch64-linux.tar.gz"
+windows-x86_64 = "texlab-x86_64-windows.zip"
+windows-aarch64 = "texlab-aarch64-windows.zip"

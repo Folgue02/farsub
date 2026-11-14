@@ -1,0 +1,4 @@
+name = "nil_ls"
+command = "nil"
+root_markers = ["flake.nix"]
+description = "Nix language server (nil)"

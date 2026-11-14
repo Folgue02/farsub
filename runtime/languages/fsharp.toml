@@ -1,0 +1,4 @@
+name = "fsharp"
+language_id = "fsharp"
+extensions = ["fs", "fsi", "fsx"]
+comment = "//"

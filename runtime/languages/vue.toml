@@ -1,0 +1,3 @@
+name = "vue"
+extensions = ["vue"]
+tab_size = 2

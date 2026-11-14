@@ -1,0 +1,5 @@
+name = "haskell"
+extensions = ["hs"]
+comment = "--"
+tab_size = 2
+servers = ["hls"]

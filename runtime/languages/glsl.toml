@@ -1,0 +1,5 @@
+name = "glsl"
+extensions = ["glsl", "vert", "frag", "geom", "comp", "tesc", "tese"]
+comment = "//"
+tab_size = 4
+syntax = "GLSL"

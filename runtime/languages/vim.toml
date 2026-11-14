@@ -1,0 +1,7 @@
+name = "vim"
+extensions = ["vim"]
+filenames = [".vimrc", "_vimrc", ".gvimrc", ".exrc"]
+comment = "\""
+tab_size = 2
+syntax = "VimL"
+servers = ["vimls"]

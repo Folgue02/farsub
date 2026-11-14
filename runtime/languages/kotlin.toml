@@ -1,0 +1,4 @@
+name = "kotlin"
+extensions = ["kt", "kts"]
+comment = "//"
+servers = ["kotlin_language_server"]

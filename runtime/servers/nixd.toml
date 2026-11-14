@@ -1,0 +1,4 @@
+name = "nixd"
+command = "nixd"
+root_markers = ["flake.nix"]
+description = "Nix language server (nixd)"

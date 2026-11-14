@@ -1,0 +1,5 @@
+name = "terraformls"
+command = "terraform-ls"
+args = ["serve"]
+root_markers = [".terraform"]
+description = "Terraform language server (HashiCorp)"

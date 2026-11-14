@@ -1,0 +1,8 @@
+name = "elmls"
+command = "elm-language-server"
+args = ["--stdio"]
+root_markers = ["elm.json"]
+description = "Elm language server"
+
+[install]
+npm = ["@elm-tooling/elm-language-server"]

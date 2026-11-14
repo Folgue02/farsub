@@ -1,0 +1,4 @@
+name = "ols"
+command = "ols"
+root_markers = ["ols.json"]
+description = "Odin language server"

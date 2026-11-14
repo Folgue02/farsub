@@ -1,0 +1,3 @@
+name = "sql"
+extensions = ["sql", "ddl", "dml"]
+comment = "--"

@@ -1,0 +1,5 @@
+name = "gleam"
+command = "gleam"
+args = ["lsp"]
+root_markers = ["gleam.toml"]
+description = "Gleam language server (built into the gleam binary)"

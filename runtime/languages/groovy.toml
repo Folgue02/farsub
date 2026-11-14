@@ -1,0 +1,7 @@
+name = "groovy"
+extensions = ["groovy", "gvy", "gradle"]
+filenames = ["Jenkinsfile"]
+first_line = '^#!.*\bgroovy'
+comment = "//"
+tab_size = 4
+syntax = "Groovy"

@@ -1,0 +1,5 @@
+name = "julia"
+extensions = ["jl"]
+first_line = '^#!.*\bjulia'
+comment = "#"
+tab_size = 4

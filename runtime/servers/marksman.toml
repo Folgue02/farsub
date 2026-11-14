@@ -1,0 +1,13 @@
+name = "marksman"
+command = "marksman"
+args = ["server"]
+root_markers = [".marksman.toml"]
+description = "Markdown language server (links, headings, references), prebuilt from GitHub releases"
+
+[install.github]
+repo = "artempyanykh/marksman"
+[install.github.assets]
+macos = "marksman-macos"
+linux-x86_64 = "marksman-linux-x64"
+linux-aarch64 = "marksman-linux-arm64"
+windows = "marksman.exe"

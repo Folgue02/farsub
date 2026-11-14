@@ -1,0 +1,6 @@
+name = "typst"
+extensions = ["typ"]
+comment = "//"
+tab_size = 2
+syntax = "Typst"
+servers = ["tinymist"]

@@ -1,0 +1,5 @@
+name = "dartls"
+command = "dart"
+args = ["language-server", "--protocol=lsp"]
+root_markers = ["pubspec.yaml"]
+description = "Dart analysis server (ships with the Dart/Flutter SDK)"

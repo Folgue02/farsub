@@ -1,0 +1,4 @@
+name = "graphql"
+extensions = ["graphql", "graphqls", "gql"]
+comment = "#"
+tab_size = 2

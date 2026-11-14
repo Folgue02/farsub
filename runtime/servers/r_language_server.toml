@@ -1,0 +1,5 @@
+name = "r_language_server"
+command = "R"
+args = ["--no-echo", "-e", "languageserver::run()"]
+root_markers = []
+description = "R language server (install in R: install.packages(\"languageserver\"))"

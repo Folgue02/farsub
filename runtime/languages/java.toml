@@ -1,0 +1,4 @@
+name = "java"
+extensions = ["java"]
+comment = "//"
+servers = ["jdtls"]

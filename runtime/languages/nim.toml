@@ -1,0 +1,5 @@
+name = "nim"
+extensions = ["nim", "nims", "nimble"]
+comment = "#"
+tab_size = 2
+servers = ["nimlangserver"]

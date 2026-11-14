@@ -1,0 +1,6 @@
+name = "cmake"
+extensions = ["cmake"]
+filenames = ["CMakeLists.txt"]
+comment = "#"
+syntax = "CMake"
+servers = ["cmake_ls"]

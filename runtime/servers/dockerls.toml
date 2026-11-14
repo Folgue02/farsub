@@ -1,0 +1,8 @@
+name = "dockerls"
+command = "docker-langserver"
+args = ["--stdio"]
+root_markers = []
+description = "Dockerfile language server"
+
+[install]
+npm = ["dockerfile-language-server-nodejs"]

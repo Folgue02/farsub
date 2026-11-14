@@ -1,0 +1,6 @@
+name = "protobuf"
+language_id = "proto"
+extensions = ["proto"]
+comment = "//"
+tab_size = 2
+syntax = "Protocol Buffer"

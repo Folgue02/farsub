@@ -1,0 +1,4 @@
+name = "csharp_ls"
+command = "csharp-ls"
+root_markers = ["*.sln", "*.csproj"]
+description = "C# language server (install with: dotnet tool install --global csharp-ls)"

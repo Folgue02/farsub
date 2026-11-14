@@ -1,0 +1,8 @@
+name = "taplo"
+command = "taplo"
+args = ["lsp", "stdio"]
+root_markers = [".taplo.toml", "taplo.toml"]
+description = "TOML language server (Taplo)"
+
+[install]
+npm = ["@taplo/cli"]

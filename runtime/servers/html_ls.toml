@@ -1,0 +1,8 @@
+name = "html_ls"
+command = "vscode-html-language-server"
+args = ["--stdio"]
+root_markers = []
+description = "HTML language server from VS Code"
+
+[install]
+npm = ["vscode-langservers-extracted"]

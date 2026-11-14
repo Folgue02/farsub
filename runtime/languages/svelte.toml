@@ -1,0 +1,4 @@
+name = "svelte"
+extensions = ["svelte"]
+tab_size = 2
+servers = ["svelte"]

@@ -1,0 +1,4 @@
+name = "sourcekit_lsp"
+command = "sourcekit-lsp"
+root_markers = ["Package.swift"]
+description = "Swift language server (ships with Xcode / the Swift toolchain)"

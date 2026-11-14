@@ -1,0 +1,4 @@
+name = "nimlangserver"
+command = "nimlangserver"
+root_markers = ["*.nimble"]
+description = "Nim language server (install with: nimble install nimlangserver)"

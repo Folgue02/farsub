@@ -52,7 +52,7 @@ pub fn list(dir: &Path) -> Vec<String> {
 /// Built-in syntaxes plus everything in `dir`. Slow-ish (relinks every grammar), so it runs
 /// on a background thread and is swapped in when ready.
 pub fn load(dir: Option<&Path>) -> Loaded {
-    let base = two_face::syntax::extra_newlines();
+    let base = crate::highlight::builtin_syntaxes();
     let mut errors = vec![];
     let mut themes = vec![];
     let Some(dir) = dir.filter(|d| d.is_dir()) else {

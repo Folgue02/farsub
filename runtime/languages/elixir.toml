@@ -1,0 +1,6 @@
+name = "elixir"
+extensions = ["ex", "exs"]
+first_line = '^#!.*\belixir'
+comment = "#"
+tab_size = 2
+servers = ["elixir_ls"]

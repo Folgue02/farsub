@@ -1,0 +1,5 @@
+name = "less"
+extensions = ["less"]
+comment = "//"
+tab_size = 2
+servers = ["cssls"]

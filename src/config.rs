@@ -616,7 +616,7 @@ mod tests {
             c.language_for(Path::new(".bashrc"), "").unwrap().name,
             "bash"
         );
-        assert!(c.language_for(Path::new("x.lua"), "").is_none());
+        assert!(c.language_for(Path::new("x.unknownlang"), "").is_none());
         assert_eq!(
             c.language("python").unwrap().servers,
             ["pyright", "basedpyright", "pylsp"]

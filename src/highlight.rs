@@ -28,9 +28,19 @@ pub fn rgb(c: syntect::highlighting::Color) -> Color32 {
     Color32::from_rgb(c.r, c.g, c.b)
 }
 
+/// Every grammar that ships with farsub: two-face's 220 (bat's set) plus the ones in
+/// runtime/syntaxes, precompiled by build.rs.
+pub fn builtin_syntaxes() -> SyntaxSet {
+    syntect::dumps::from_uncompressed_data(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/syntaxes.packdump"
+    )))
+    .expect("bundled syntax dump")
+}
+
 impl Syntax {
     pub fn load(theme: &str) -> Self {
-        let ss = two_face::syntax::extra_newlines();
+        let ss = builtin_syntaxes();
         let themes = two_face::theme::LazyThemeSet::from(two_face::theme::extra());
         let mut s = Syntax {
             ss,
@@ -246,5 +256,142 @@ fn to_style(s: syntect::highlighting::Style) -> Style {
         bold: s.font_style.contains(FontStyle::BOLD),
         italic: s.font_style.contains(FontStyle::ITALIC),
         underline: s.font_style.contains(FontStyle::UNDERLINE),
+    }
+}
+
+#[cfg(test)]
+mod bundled_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Scopes the parser assigns to `text`, as "scope: token" strings.
+    fn scopes(ss: &SyntaxSet, syntax: &str, text: &str) -> Vec<String> {
+        let syn = ss
+            .find_syntax_by_name(syntax)
+            .unwrap_or_else(|| panic!("{syntax}"));
+        let mut state = ParseState::new(syn);
+        let mut stack = ScopeStack::new();
+        let mut out = vec![];
+        for line in text.lines() {
+            let line = format!("{line}\n");
+            let ops = state.parse_line(&line, ss).expect("parse");
+            let mut last = 0;
+            for (i, op) in ops {
+                if i > last {
+                    let tok = line[last..i].trim();
+                    if !tok.is_empty()
+                        && let Some(top) = stack.as_slice().last()
+                    {
+                        out.push(format!("{top}: {tok}"));
+                    }
+                }
+                last = i;
+                stack.apply(&op).unwrap();
+            }
+        }
+        out
+    }
+
+    fn has(v: &[String], scope_prefix: &str, tok: &str) -> bool {
+        v.iter()
+            .any(|s| s.starts_with(scope_prefix) && s.ends_with(&format!(": {tok}")))
+    }
+
+    #[test]
+    fn bundled_grammars_load_and_highlight() {
+        let ss = builtin_syntaxes();
+        assert!(ss.syntaxes().len() >= 225, "{}", ss.syntaxes().len());
+        let g = scopes(
+            &ss,
+            "Gleam",
+            "// hi\npub fn add(a: Int) -> Int {\n  a + 1 |> io.debug\n}\nconst s = \"x\\n\"",
+        );
+        assert!(has(&g, "comment", "// hi"));
+        assert!(has(&g, "entity.name.function", "add"));
+        assert!(has(&g, "storage.type", "Int"));
+        assert!(has(&g, "keyword.operator", "|>"));
+        let j = scopes(
+            &ss,
+            "Just",
+            "# build it\nset shell := [\"bash\", \"-c\"]\nversion := `git describe`\nbuild target='x': deps\n    cargo build {{target}}",
+        );
+        assert!(has(&j, "comment", "# build it"));
+        assert!(has(&j, "keyword.control", "set"));
+        assert!(has(&j, "entity.name.function", "build"));
+        assert!(has(&j, "entity.name.function", "deps"));
+        assert!(has(&j, "variable.other", "target"));
+        let k = scopes(
+            &ss,
+            "KDL",
+            "// cfg\npackage name=\"farsub\" {\n  version 1.2\n  dev #true\n}",
+        );
+        assert!(has(&k, "entity.name.tag", "package"));
+        assert!(has(&k, "entity.other.attribute-name", "name"));
+        assert!(has(&k, "constant.numeric", "1.2"));
+        let p = scopes(
+            &ss,
+            "Prisma",
+            "model User {\n  id    Int    @id @default(autoincrement())\n  email String @unique\n}",
+        );
+        assert!(has(&p, "entity.name.type", "User"));
+        assert!(has(&p, "support.type", "Int"));
+        assert!(has(&p, "entity.other.attribute-name", "@id"));
+        let m = scopes(
+            &ss,
+            "Meson",
+            "project('farsub', 'c', version: '1.0')\nif get_option('x')\nendif",
+        );
+        assert!(has(&m, "support.function", "project"));
+        assert!(has(&m, "keyword.control", "endif"));
+        assert!(has(&m, "variable.parameter", "version"));
+    }
+
+    #[test]
+    fn every_language_resolves_to_a_grammar_and_known_servers() {
+        let cfg = crate::config::Config::builtin();
+        let syn = Syntax::load("Monokai Extended");
+        assert!(cfg.languages.len() >= 70, "{}", cfg.languages.len());
+        let mut owner: HashMap<String, String> = HashMap::new();
+        let mut no_grammar = vec![];
+        for l in &cfg.languages {
+            if let Some(s) = &l.syntax {
+                assert!(syn.find_by_name(s).is_some(), "{}: no syntax {s:?}", l.name);
+            }
+            for s in &l.servers {
+                assert!(cfg.server(s).is_some(), "{}: unknown server {s}", l.name);
+            }
+            if let Some(re) = &l.first_line {
+                regex::Regex::new(re).unwrap_or_else(|e| panic!("{}: {e}", l.name));
+            }
+            let names = l
+                .extensions
+                .iter()
+                .map(|e| format!("x.{e}"))
+                .chain(l.filenames.iter().cloned());
+            for n in names {
+                // No two built-in languages claim the same extension or file name.
+                if let Some(prev) = owner.insert(n.clone(), l.name.clone()) {
+                    panic!("{n} claimed by {prev} and {}", l.name);
+                }
+                // Every claimed file gets real highlighting, not Plain Text.
+                let p = Path::new(&n);
+                let lang = cfg.language_for(p, "").map(|l| l.name.as_str());
+                assert_eq!(lang, Some(l.name.as_str()), "{n}");
+                let grammar = l.syntax.clone().unwrap_or_else(|| syn.detect(Some(p), ""));
+                if grammar == "Plain Text" {
+                    no_grammar.push(format!("{n} ({})", l.name));
+                }
+            }
+        }
+        assert!(
+            no_grammar.is_empty(),
+            "files without a grammar: {no_grammar:?}"
+        );
+        // Every built-in server's install recipe (if any) has a source.
+        for s in &cfg.servers {
+            if let Some(i) = &s.install {
+                assert_ne!(i.source(), "none", "{}", s.name);
+            }
+        }
     }
 }

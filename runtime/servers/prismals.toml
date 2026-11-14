@@ -1,0 +1,8 @@
+name = "prismals"
+command = "prisma-language-server"
+args = ["--stdio"]
+root_markers = ["package.json"]
+description = "Prisma language server"
+
+[install]
+npm = ["@prisma/language-server"]

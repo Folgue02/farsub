@@ -1,0 +1,8 @@
+name = "cssls"
+command = "vscode-css-language-server"
+args = ["--stdio"]
+root_markers = []
+description = "CSS/SCSS/Less language server from VS Code"
+
+[install]
+npm = ["vscode-langservers-extracted"]

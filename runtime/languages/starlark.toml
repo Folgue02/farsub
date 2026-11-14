@@ -1,0 +1,6 @@
+name = "starlark"
+extensions = ["bzl", "star", "bazel"]
+filenames = ["BUILD", "BUILD.bazel", "WORKSPACE", "WORKSPACE.bazel", "MODULE.bazel", "Tiltfile"]
+comment = "#"
+tab_size = 4
+syntax = "Python"

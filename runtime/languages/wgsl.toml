@@ -1,0 +1,4 @@
+name = "wgsl"
+extensions = ["wgsl"]
+comment = "//"
+tab_size = 4

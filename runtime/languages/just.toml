@@ -1,0 +1,6 @@
+name = "just"
+extensions = ["just"]
+filenames = ["justfile", "Justfile", ".justfile"]
+comment = "#"
+tab_size = 4
+syntax = "Just"

@@ -1,0 +1,7 @@
+name = "cmake_ls"
+command = "cmake-language-server"
+root_markers = ["CMakeLists.txt"]
+description = "CMake language server"
+
+[install]
+pip = ["cmake-language-server"]

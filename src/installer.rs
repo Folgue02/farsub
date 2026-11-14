@@ -274,7 +274,7 @@ fn github_install(
     Ok(found.strip_prefix(dir).unwrap_or(&found).to_path_buf())
 }
 
-/// Unpack `.zip`, `.tar.gz`/`.tgz`, `.tar.xz`-less tarballs, a single gzipped file
+/// Unpack `.zip`, `.tar.gz`/`.tgz`, `.tar.xz`, `.tar`, a single gzipped file
 /// (written as `bin`), or a plain executable.
 fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), String> {
     let name = archive
@@ -288,6 +288,14 @@ fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), String> {
     } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
         let gz = flate2::read::GzDecoder::new(open()?);
         tar::Archive::new(gz)
+            .unpack(dir)
+            .map_err(|e| format!("untar failed: {e}"))?;
+    } else if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+        let mut input = std::io::BufReader::new(open()?);
+        let mut tar_bytes = Vec::new();
+        lzma_rs::xz_decompress(&mut input, &mut tar_bytes)
+            .map_err(|e| format!("xz decompression failed: {e}"))?;
+        tar::Archive::new(std::io::Cursor::new(tar_bytes))
             .unpack(dir)
             .map_err(|e| format!("untar failed: {e}"))?;
     } else if name.ends_with(".tar") {
@@ -432,6 +440,28 @@ mod tests {
             std::fs::read(find_file(&tdir, &bin).unwrap()).unwrap(),
             b"tar-binary"
         );
+        // tar.xz (like zls-<arch>-<os>.tar.xz)
+        let xdir = root.join("x");
+        std::fs::create_dir_all(&xdir).unwrap();
+        let xpath = xdir.join("tool.tar.xz");
+        {
+            let mut t = tar::Builder::new(Vec::new());
+            let data = b"xz-binary";
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64);
+            h.set_mode(0o755);
+            h.set_cksum();
+            t.append_data(&mut h, &bin, &data[..]).unwrap();
+            let tar_bytes = t.into_inner().unwrap();
+            let mut xz = Vec::new();
+            lzma_rs::xz_compress(&mut std::io::Cursor::new(tar_bytes), &mut xz).unwrap();
+            std::fs::write(&xpath, xz).unwrap();
+        }
+        extract(&xpath, &xdir, &bin).unwrap();
+        assert_eq!(
+            std::fs::read(find_file(&xdir, &bin).unwrap()).unwrap(),
+            b"xz-binary"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -449,7 +479,14 @@ mod tests {
         assert_eq!(g.asset_for_this_platform(), Some("exact.gz"));
         // Every built-in GitHub recipe covers the three desktop platforms.
         let cfg = crate::config::Config::builtin();
-        for name in ["rust_analyzer", "clangd"] {
+        let github: Vec<String> = cfg
+            .servers
+            .iter()
+            .filter(|s| s.install.as_ref().is_some_and(|i| i.github.is_some()))
+            .map(|s| s.name.clone())
+            .collect();
+        assert!(github.len() >= 8, "{github:?}");
+        for name in &github {
             let gh = cfg
                 .server(name)
                 .unwrap()

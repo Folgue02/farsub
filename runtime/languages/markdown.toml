@@ -1,0 +1,4 @@
+name = "markdown"
+extensions = ["md", "markdown", "mdown", "mkd"]
+syntax = "Markdown"
+servers = ["marksman"]

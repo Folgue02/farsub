@@ -1,0 +1,13 @@
+name = "clojure_lsp"
+command = "clojure-lsp"
+root_markers = ["deps.edn", "project.clj", "bb.edn", "shadow-cljs.edn"]
+description = "Clojure language server, prebuilt from GitHub releases"
+
+[install.github]
+repo = "clojure-lsp/clojure-lsp"
+[install.github.assets]
+macos-aarch64 = "clojure-lsp-native-macos-aarch64.zip"
+macos-x86_64 = "clojure-lsp-native-macos-amd64.zip"
+linux-x86_64 = "clojure-lsp-native-linux-amd64.zip"
+linux-aarch64 = "clojure-lsp-native-linux-aarch64.zip"
+windows = "clojure-lsp-native-windows-amd64.zip"

@@ -1,0 +1,4 @@
+name = "html"
+extensions = ["html", "htm", "xhtml", "shtml"]
+tab_size = 2
+servers = ["html_ls"]

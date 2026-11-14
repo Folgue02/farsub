@@ -1,0 +1,4 @@
+name = "erlang_ls"
+command = "erlang_ls"
+root_markers = ["rebar.config", "erlang.mk"]
+description = "Erlang language server"

@@ -1,0 +1,4 @@
+name = "awk"
+extensions = ["awk"]
+first_line = '^#!.*\b[gm]?awk'
+comment = "#"

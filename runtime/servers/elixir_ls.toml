@@ -1,0 +1,4 @@
+name = "elixir_ls"
+command = "elixir-ls"
+root_markers = ["mix.exs"]
+description = "ElixirLS (e.g. brew install elixir-ls)"

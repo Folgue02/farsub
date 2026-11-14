@@ -1,0 +1,4 @@
+name = "dotenv"
+filenames = [".env", ".env.local", ".env.example", ".env.development", ".env.production", ".env.test", ".envrc"]
+comment = "#"
+syntax = "DotENV"

@@ -1,0 +1,5 @@
+name = "elm"
+extensions = ["elm"]
+comment = "--"
+tab_size = 4
+servers = ["elmls"]

@@ -1,0 +1,6 @@
+name = "bibtex"
+extensions = ["bib"]
+comment = "%"
+tab_size = 2
+syntax = "BibTeX"
+servers = ["texlab"]

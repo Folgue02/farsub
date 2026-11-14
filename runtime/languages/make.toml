@@ -1,0 +1,7 @@
+name = "make"
+language_id = "makefile"
+extensions = ["mk", "mak", "make"]
+filenames = ["Makefile", "makefile", "GNUmakefile"]
+comment = "#"
+use_tabs = true
+syntax = "Makefile"

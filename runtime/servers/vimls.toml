@@ -1,0 +1,8 @@
+name = "vimls"
+command = "vim-language-server"
+args = ["--stdio"]
+root_markers = []
+description = "Vim script language server"
+
+[install]
+npm = ["vim-language-server"]

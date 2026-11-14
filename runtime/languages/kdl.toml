@@ -1,0 +1,5 @@
+name = "kdl"
+extensions = ["kdl"]
+comment = "//"
+tab_size = 4
+syntax = "KDL"

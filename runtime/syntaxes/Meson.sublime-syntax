@@ -1,0 +1,45 @@
+%YAML 1.2
+---
+# Bundled with farsub. Meson build files.
+name: Meson
+file_extensions: [meson.build, meson_options.txt, meson.options]
+scope: source.meson
+
+contexts:
+  main:
+    - match: '#.*$'
+      scope: comment.line.number-sign.meson
+    - match: "f?'''"
+      push:
+        - meta_scope: string.quoted.triple.meson
+        - match: '@[A-Za-z_][A-Za-z0-9_]*@'
+          scope: variable.other.substitution.meson
+        - match: "'''"
+          pop: true
+    - match: "f?'"
+      push:
+        - meta_scope: string.quoted.single.meson
+        - match: '\\.'
+          scope: constant.character.escape.meson
+        - match: '@[A-Za-z_][A-Za-z0-9_]*@'
+          scope: variable.other.substitution.meson
+        - match: "'"
+          pop: true
+    - match: '\b(if|elif|else|endif|foreach|endforeach|break|continue)\b'
+      scope: keyword.control.meson
+    - match: '\b(and|or|not|in)\b'
+      scope: keyword.operator.logical.meson
+    - match: '\b(true|false)\b'
+      scope: constant.language.meson
+    - match: '\b(meson|build_machine|host_machine|target_machine)\b'
+      scope: variable.language.meson
+    - match: '\b([A-Za-z_][A-Za-z0-9_]*)(?=\s*\()'
+      scope: support.function.meson
+    - match: '\b([A-Za-z_][A-Za-z0-9_]*)\s*(:)'
+      captures:
+        1: variable.parameter.meson
+        2: punctuation.separator.meson
+    - match: '\b(0x[0-9a-fA-F]+|0o[0-7]+|0b[01]+|[0-9]+)\b'
+      scope: constant.numeric.meson
+    - match: '==|!=|<=|>=|\+=|[-+*/%<>=?:]'
+      scope: keyword.operator.meson

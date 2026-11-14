@@ -1,0 +1,4 @@
+name = "ocaml"
+extensions = ["ml", "mli"]
+tab_size = 2
+servers = ["ocamllsp"]

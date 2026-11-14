@@ -1,0 +1,4 @@
+name = "metals"
+command = "metals"
+root_markers = ["build.sbt", "build.sc", "build.mill"]
+description = "Scala language server (install with Coursier: cs install metals)"

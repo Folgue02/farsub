@@ -1,0 +1,14 @@
+name = "tinymist"
+command = "tinymist"
+root_markers = []
+description = "Typst language server, prebuilt from GitHub releases"
+
+[install.github]
+repo = "Myriad-Dreamin/tinymist"
+[install.github.assets]
+macos-aarch64 = "tinymist-aarch64-apple-darwin.tar.gz"
+macos-x86_64 = "tinymist-x86_64-apple-darwin.tar.gz"
+linux-x86_64 = "tinymist-x86_64-unknown-linux-gnu.tar.gz"
+linux-aarch64 = "tinymist-aarch64-unknown-linux-gnu.tar.gz"
+windows-x86_64 = "tinymist-x86_64-pc-windows-msvc.zip"
+windows-aarch64 = "tinymist-aarch64-pc-windows-msvc.zip"

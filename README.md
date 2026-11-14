@@ -187,8 +187,41 @@ farsub, or found on PATH) runs. Built-in definitions:
 | JavaScript, TypeScript, JSX, TSX | ts_ls (typescript-language-server) | yes (npm) |
 | Bash / sh / zsh | bashls (bash-language-server) | yes (npm) |
 | Go | gopls | yes (go install) |
-| Rust | rust_analyzer | yes (prebuilt binary from GitHub releases) |
-| C / C++ | clangd | yes (prebuilt binary from GitHub releases) |
+| Rust | rust_analyzer | yes (GitHub release) |
+| C / C++ / CUDA | clangd | yes (GitHub release) |
+| Lua | lua_ls | yes (GitHub release) |
+| Zig | zls | yes (GitHub release) |
+| Markdown | marksman | yes (GitHub release) |
+| LaTeX, BibTeX | texlab | yes (GitHub release) |
+| Typst | tinymist | yes (GitHub release) |
+| Clojure | clojure_lsp | yes (GitHub release) |
+| YAML | yamlls | yes (npm) |
+| JSON, JSONC | jsonls | yes (npm) |
+| HTML / CSS, SCSS, Less | html_ls / cssls | yes (npm) |
+| TOML | taplo | yes (npm) |
+| Dockerfile | dockerls | yes (npm) |
+| PHP | intelephense | yes (npm) |
+| Svelte | svelte | yes (npm) |
+| Elm | elmls | yes (npm) |
+| Vim script | vimls | yes (npm) |
+| Prisma | prismals | yes (npm) |
+| CMake | cmake_ls | yes (pip) |
+| Ruby | ruby_lsp, solargraph | no (gem) |
+| Java, Kotlin, Scala | jdtls, kotlin_language_server, metals | no (needs a JDK) |
+| Swift | sourcekit_lsp | no (ships with Xcode / Swift) |
+| C# | csharp_ls | no (dotnet tool) |
+| Haskell, OCaml | hls, ocamllsp | no (ghcup / opam) |
+| Elixir, Erlang, Gleam | elixir_ls, erlang_ls, gleam | no |
+| Dart, Nim, Odin, Nix, Terraform, R | dartls, nimlangserver, ols, nil_ls / nixd, terraformls, r_language_server | no |
+
+Languages with highlighting, comments and indentation defaults but no server yet: SQL,
+GraphQL, Protocol Buffers, PowerShell, Batch, Perl, Julia, Fish, AWK, Groovy / Gradle /
+Jenkinsfile, Crystal, F#, Vue, XML, INI / .editorconfig, .env, nginx, Solidity, GLSL,
+WGSL, Starlark / Bazel, Make, Just, KDL and Meson.
+
+Grammars: the 220 from bat's set (via two-face) plus farsub's own Gleam, Just, KDL,
+Prisma and Meson grammars in `runtime/syntaxes/`. They're precompiled at build time.
+Grammars dropped into `Packages/` are added on top.
 
 **Tools → Language Servers** (Cmd+Alt+L) is a Mason-like manager: it lists every server
 with its status (installed, on PATH, not installed, failed), and `i` installs, `u` updates,

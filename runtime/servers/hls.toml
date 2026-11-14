@@ -1,0 +1,5 @@
+name = "hls"
+command = "haskell-language-server-wrapper"
+args = ["--lsp"]
+root_markers = ["stack.yaml", "cabal.project", "*.cabal", "hie.yaml"]
+description = "Haskell language server (install with ghcup)"

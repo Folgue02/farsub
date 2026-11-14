@@ -1,0 +1,5 @@
+name = "scala"
+extensions = ["scala", "sc", "sbt"]
+comment = "//"
+tab_size = 2
+servers = ["metals"]

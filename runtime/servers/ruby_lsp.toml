@@ -1,0 +1,4 @@
+name = "ruby_lsp"
+command = "ruby-lsp"
+root_markers = ["Gemfile"]
+description = "Ruby LSP (install with: gem install ruby-lsp)"

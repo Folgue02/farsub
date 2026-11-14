@@ -1,0 +1,5 @@
+name = "ini"
+extensions = ["ini", "cfg", "inf", "desktop", "service"]
+filenames = [".editorconfig"]
+comment = ";"
+syntax = "INI"

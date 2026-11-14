@@ -1,0 +1,5 @@
+name = "solargraph"
+command = "solargraph"
+args = ["stdio"]
+root_markers = ["Gemfile"]
+description = "Solargraph (install with: gem install solargraph)"

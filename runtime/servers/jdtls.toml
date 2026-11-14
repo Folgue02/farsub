@@ -1,0 +1,4 @@
+name = "jdtls"
+command = "jdtls"
+root_markers = ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"]
+description = "Eclipse JDT language server for Java (needs a JDK; e.g. brew install jdtls)"

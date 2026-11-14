@@ -1,0 +1,5 @@
+name = "dart"
+extensions = ["dart"]
+comment = "//"
+tab_size = 2
+servers = ["dartls"]

@@ -507,8 +507,26 @@ pub fn find_root(file: &Path, markers: &[String]) -> PathBuf {
         file.parent().unwrap_or(file)
     };
     let mut git: Option<PathBuf> = None;
+    // Markers with wildcards ("*.csproj") match any entry of the directory.
+    let globs: Vec<globset::GlobMatcher> = markers
+        .iter()
+        .filter(|m| m.contains(['*', '?', '[']))
+        .filter_map(|m| globset::Glob::new(m).ok())
+        .map(|g| g.compile_matcher())
+        .collect();
+    let has_glob_match = |dir: &Path| {
+        !globs.is_empty()
+            && std::fs::read_dir(dir).is_ok_and(|rd| {
+                rd.flatten()
+                    .any(|e| globs.iter().any(|g| g.is_match(e.file_name())))
+            })
+    };
     for dir in start.ancestors() {
-        if markers.iter().any(|m| dir.join(m).exists()) {
+        if markers
+            .iter()
+            .any(|m| !m.contains(['*', '?', '[']) && dir.join(m).exists())
+            || has_glob_match(dir)
+        {
             return dir.to_path_buf();
         }
         if git.is_none() && dir.join(".git").exists() {
@@ -603,5 +621,23 @@ impl Manager {
         for c in self.clients.values_mut() {
             c.shutdown();
         }
+    }
+}
+
+#[cfg(test)]
+mod root_tests {
+    use super::*;
+
+    #[test]
+    fn root_markers_support_globs() {
+        let d = std::env::temp_dir().join(format!("farsub-roots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("app/src")).unwrap();
+        std::fs::write(d.join("app/App.csproj"), "").unwrap();
+        std::fs::write(d.join("app/src/Main.cs"), "").unwrap();
+        let file = d.join("app/src/Main.cs");
+        assert_eq!(find_root(&file, &["*.csproj".into()]), d.join("app"));
+        assert_eq!(find_root(&file, &["App.csproj".into()]), d.join("app"));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

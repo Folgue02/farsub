@@ -1,0 +1,5 @@
+name = "nix"
+extensions = ["nix"]
+comment = "#"
+tab_size = 2
+servers = ["nil_ls", "nixd"]

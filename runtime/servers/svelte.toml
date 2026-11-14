@@ -1,0 +1,8 @@
+name = "svelte"
+command = "svelteserver"
+args = ["--stdio"]
+root_markers = ["package.json", "svelte.config.js"]
+description = "Svelte language server"
+
+[install]
+npm = ["svelte-language-server"]

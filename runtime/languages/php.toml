@@ -1,0 +1,5 @@
+name = "php"
+extensions = ["php", "phtml", "php3", "php4", "php5", "phpt"]
+first_line = '^#!.*\bphp'
+comment = "//"
+servers = ["intelephense"]

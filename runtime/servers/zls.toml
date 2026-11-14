@@ -1,0 +1,14 @@
+name = "zls"
+command = "zls"
+root_markers = ["build.zig", "zls.json"]
+description = "Zig language server, prebuilt from GitHub releases"
+
+[install.github]
+repo = "zigtools/zls"
+[install.github.assets]
+macos-aarch64 = "zls-aarch64-macos.tar.xz"
+macos-x86_64 = "zls-x86_64-macos.tar.xz"
+linux-x86_64 = "zls-x86_64-linux.tar.xz"
+linux-aarch64 = "zls-aarch64-linux.tar.xz"
+windows-x86_64 = "zls-x86_64-windows.zip"
+windows-aarch64 = "zls-aarch64-windows.zip"

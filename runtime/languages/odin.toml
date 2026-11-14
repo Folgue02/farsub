@@ -1,0 +1,5 @@
+name = "odin"
+extensions = ["odin"]
+comment = "//"
+use_tabs = true
+servers = ["ols"]

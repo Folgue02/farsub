@@ -90,6 +90,18 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
 - Syntax: detected from extension/first line/packages; the status-bar syntax picker
   overrides it per file, and the file's language (comment token, indentation defaults, LSP
   server) follows the chosen syntax.
+- Bundled grammars: two-face's 220 (bat's set: Lua, Ruby, Java, Kotlin, Swift, Zig, Nix,
+  Terraform, Svelte, Vue, TOML, YAML, Dockerfile, …) plus farsub's own in
+  `runtime/syntaxes/` (Gleam, Just, KDL, Prisma, Meson). build.rs precompiles them into
+  one dump, so startup cost doesn't grow with the number of grammars. `Packages/` grammars
+  are added on top at runtime.
+- Built-in languages (`runtime/languages/`, ~75): each gives file extensions / file names
+  / shebang detection, line-comment token, indentation defaults, grammar, and servers.
+  Invariants (enforced by tests): no two built-in languages claim the same extension or
+  file name, every claimed file gets a real grammar (never Plain Text), and every listed
+  server exists. Languages whose only comments are block comments (HTML, CSS, XML,
+  Markdown, OCaml, Svelte, Vue) have no comment token yet, so Toggle Comment does nothing
+  there. Block-comment support is still to do.
 
 ## 5. Completion (LSP)
 
@@ -186,16 +198,26 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
 - Mason-like manager (Tools → Language Servers): install via npm / pip venv / cargo / go /
   GitHub release / script into the data folder; status, logs, update, uninstall. Placeholders
   `${install_dir}`, `${root}`, `${home}` in server args/env/settings/initialization options.
-- Built-in servers: pyright, basedpyright, pylsp (Python); ts_ls (JS/TS, installs
-  `typescript@5` because TypeScript 7 has no `tsserver`); bashls; gopls (needs Go);
-  rust_analyzer and clangd (official prebuilt binaries from their GitHub releases, on
-  macOS, Linux and Windows). npm and pip servers need Node.js / Python.
+- Built-in servers (~45). Installable from the manager on macOS, Linux and Windows:
+  - npm (needs Node.js): pyright, basedpyright, ts_ls (`typescript@5`, since TypeScript
+    7 has no `tsserver`), bashls, yamlls, jsonls / cssls / html_ls
+    (vscode-langservers-extracted), taplo, dockerls, intelephense, svelte, elmls, vimls,
+    prismals.
+  - pip (needs Python): pylsp, cmake_ls. go (needs Go): gopls.
+  - GitHub release binaries: rust_analyzer, clangd, lua_ls, marksman, zls, texlab,
+    tinymist, clojure_lsp.
+  - On PATH only (installed with the language's own toolchain; the description says how):
+    ruby_lsp, solargraph, jdtls, kotlin_language_server, sourcekit_lsp, csharp_ls, ols,
+    nimlangserver, hls, ocamllsp, elixir_ls, erlang_ls, metals, dartls, gleam, nil_ls,
+    nixd, terraformls, r_language_server.
+- Root markers may be globs (`*.csproj`, `*.cabal`): a directory matches when any of its
+  entries matches.
 - Any server with a source that works on this OS/CPU can be installed from the manager. A
   recipe with nothing for this platform shows as "not installed" (no install action), and
   installing it explains why.
 - GitHub release source (`[install.github]`, like Mason's): `repo`, optional `tag` (latest
   by default), and `assets` globs keyed `"<os>-<arch>"` or `"<os>"` (os: macos, linux,
-  windows; arch: x86_64, aarch64). The download, `.zip` / `.tar.gz` / `.gz` extraction and
+  windows; arch: x86_64, aarch64). The download, `.zip` / `.tar.gz` / `.tar.xz` / `.gz` extraction and
   executable lookup all happen inside farsub, so they don't depend on `curl`, `tar` or `sh`
   and work the same on Windows. `GITHUB_TOKEN` is used if set (API rate limit).
 - LSP Info (Cmd+Alt+I / status bar): this file's language/syntax, configured servers and

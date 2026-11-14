@@ -1,0 +1,5 @@
+name = "batch"
+language_id = "bat"
+extensions = ["bat", "cmd"]
+comment = "::"
+syntax = "Batch File"

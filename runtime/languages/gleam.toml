@@ -1,0 +1,6 @@
+name = "gleam"
+extensions = ["gleam"]
+comment = "//"
+tab_size = 2
+syntax = "Gleam"
+servers = ["gleam"]

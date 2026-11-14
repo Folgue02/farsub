@@ -1,0 +1,5 @@
+name = "csharp"
+language_id = "csharp"
+extensions = ["cs", "csx"]
+comment = "//"
+servers = ["csharp_ls"]

@@ -1,0 +1,4 @@
+name = "zig"
+extensions = ["zig", "zon"]
+comment = "//"
+servers = ["zls"]

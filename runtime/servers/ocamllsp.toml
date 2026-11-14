@@ -1,0 +1,4 @@
+name = "ocamllsp"
+command = "ocamllsp"
+root_markers = ["dune-project", "dune-workspace", "*.opam"]
+description = "OCaml language server (install with: opam install ocaml-lsp-server)"

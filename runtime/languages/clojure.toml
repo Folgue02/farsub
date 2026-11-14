@@ -1,0 +1,7 @@
+name = "clojure"
+extensions = ["clj", "cljs", "cljc", "edn", "bb"]
+first_line = '^#!.*\bbb\b'
+comment = ";;"
+tab_size = 2
+syntax = "Clojure"
+servers = ["clojure_lsp"]
