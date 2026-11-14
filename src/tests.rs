@@ -2125,3 +2125,65 @@ fn editor_scrollbars() {
         crate::editor::Pos::new(0, 0)
     );
 }
+
+#[test]
+#[ignore]
+/// Frame-time benchmark (run: cargo test --release -- --ignored bench_frame_cost --nocapture).
+fn bench_frame_cost() {
+    let big: String = (0..200_000)
+        .map(|i| format!("    let value_{i} = compute({i}, \"some string\");\n"))
+        .collect();
+    let d = project("perfprobe", &[("big.rs", big.as_str())]);
+    std::fs::copy("src/app.rs", d.join("app.rs")).unwrap();
+    let mut h = harness(&d);
+    for (name, f) in [
+        ("app.rs (6.4k lines)", "app.rs"),
+        ("big.rs (200k lines)", "big.rs"),
+    ] {
+        h.state_mut().app.open_file(&d.join(f), true);
+        // let highlighting of the visible part settle
+        for _ in 0..30 {
+            h.step();
+        }
+        let t = Instant::now();
+        let n = 100;
+        for _ in 0..n {
+            h.step();
+        }
+        eprintln!(
+            "{name}: idle frame {:.2} ms",
+            t.elapsed().as_secs_f64() * 1000.0 / n as f64
+        );
+        let t = Instant::now();
+        for _ in 0..n {
+            h.event(egui::Event::Text("x".into()));
+            h.step();
+        }
+        eprintln!(
+            "{name}: typing frame {:.2} ms",
+            t.elapsed().as_secs_f64() * 1000.0 / n as f64
+        );
+        let t = Instant::now();
+        for _ in 0..n {
+            h.key_press(Key::PageDown);
+            h.step();
+        }
+        eprintln!(
+            "{name}: page-down frame {:.2} ms",
+            t.elapsed().as_secs_f64() * 1000.0 / n as f64
+        );
+    }
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::ManageServers);
+    h.step();
+    let t = Instant::now();
+    for _ in 0..20 {
+        h.step();
+    }
+    eprintln!(
+        "server manager ({} servers): frame {:.2} ms",
+        h.state().app.config.servers.len(),
+        t.elapsed().as_secs_f64() * 1000.0 / 20.0
+    );
+}

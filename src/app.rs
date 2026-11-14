@@ -1190,6 +1190,7 @@ impl App {
                 let Some(data) = self.config.data_dir.clone() else {
                     return;
                 };
+                crate::lsp::clear_find_cache();
                 match installer::uninstall(&data, &name) {
                     Ok(()) => {
                         self.install_log.remove(&name);
@@ -3155,6 +3156,7 @@ impl App {
                 }
             }
             InstallEvent::Done(res) => {
+                crate::lsp::clear_find_cache();
                 self.installing.remove(&name);
                 match res {
                     Ok(_) => {

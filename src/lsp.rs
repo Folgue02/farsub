@@ -478,7 +478,37 @@ fn which(cmd: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file())
 }
 
+/// Recent lookups: screens like the server manager ask about every server each frame, and
+/// a miss on macOS costs an `xcrun` process (~5 ms each).
+static FIND_CACHE: std::sync::Mutex<
+    Option<HashMap<String, (Option<PathBuf>, std::time::Instant)>>,
+> = std::sync::Mutex::new(None);
+const FIND_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Forget cached lookups (after installing or uninstalling something).
+pub fn clear_find_cache() {
+    if let Ok(mut c) = FIND_CACHE.lock() {
+        *c = None;
+    }
+}
+
+/// An executable on PATH (or in the Xcode toolchain on macOS), cached for a few seconds.
 pub fn find_server(cmd: &str) -> Option<PathBuf> {
+    if let Ok(c) = FIND_CACHE.lock()
+        && let Some((hit, at)) = c.as_ref().and_then(|m| m.get(cmd))
+        && at.elapsed() < FIND_TTL
+    {
+        return hit.clone();
+    }
+    let found = find_server_uncached(cmd);
+    if let Ok(mut c) = FIND_CACHE.lock() {
+        c.get_or_insert_with(HashMap::new)
+            .insert(cmd.to_string(), (found.clone(), std::time::Instant::now()));
+    }
+    found
+}
+
+fn find_server_uncached(cmd: &str) -> Option<PathBuf> {
     if let Some(p) = which(cmd) {
         return Some(p);
     }

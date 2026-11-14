@@ -100,6 +100,9 @@ pub struct Gui {
     hscroll_grab: Option<f32>,
     /// Decoded icon-package images (None: failed to load, don't retry every frame).
     icon_tex: IconTextures,
+    /// Buffer id → (version, widest line in columns, last full scan), for the horizontal
+    /// scrollbar.
+    widest_cache: HashMap<usize, (i32, usize, Instant)>,
     /// The focused group's editor rect (tests, popups).
     editor_rect: Rect,
     /// (char width, text left edge, first line top, line height) of the last frame.
@@ -173,6 +176,7 @@ impl Gui {
             vscroll_grab: None,
             hscroll_grab: None,
             icon_tex: HashMap::new(),
+            widest_cache: HashMap::new(),
             editor_rect: Rect::NOTHING,
             text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
@@ -1325,12 +1329,32 @@ impl Gui {
             );
         }
         // Horizontal: only when lines are wider than the pane.
-        let widest = b
-            .lines
-            .iter()
-            .map(|l| display_col(l, usize::MAX))
-            .max()
-            .unwrap_or(0);
+        // Widest line, cached: scanning a big file every frame (or keystroke) is slow. After
+        // an edit only the visible lines can have grown, so they update the cached width;
+        // a full rescan (which also notices shrinking) runs at most once a second.
+        let widest = {
+            let cols = |ls: &[String]| {
+                ls.iter()
+                    .map(|l| display_col(l, usize::MAX))
+                    .max()
+                    .unwrap_or(0)
+            };
+            match self.widest_cache.get(&b.id).copied() {
+                Some((v, w, _)) if v == b.version => w,
+                Some((_, w, full)) if full.elapsed() < Duration::from_secs(1) => {
+                    let end = (b.scroll_y + visible).min(b.lines.len());
+                    let w = w.max(cols(&b.lines[b.scroll_y.min(end)..end]));
+                    self.widest_cache.insert(b.id, (b.version, w, full));
+                    w
+                }
+                _ => {
+                    let w = cols(&b.lines);
+                    self.widest_cache
+                        .insert(b.id, (b.version, w, Instant::now()));
+                    w
+                }
+            }
+        };
         if widest + 2 > text_cols || b.scroll_x > 0 {
             let track = Rect::from_min_max(
                 Pos2::new(text_left, r.bottom() - SCROLLBAR_W),
