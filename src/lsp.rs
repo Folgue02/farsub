@@ -18,7 +18,7 @@ use crate::editor::{Pos, char_len};
 pub enum Pending {
     Initialize,
     Completion { buf: usize, pos: Pos },
-    Hover { buf: usize, pos: Pos },
+    Hover { buf: usize, pos: Pos, mouse: bool },
     Definition,
     References,
     DocSymbols { buf: usize },
@@ -47,6 +47,13 @@ pub struct Client {
     /// textDocumentSync kind: 1 = full, 2 = incremental.
     pub sync_kind: u8,
     pub triggers: Vec<String>,
+    /// Full path of the executable, process id, start time, recent stderr lines.
+    pub path: PathBuf,
+    pub pid: u32,
+    pub started: std::time::Instant,
+    pub stderr: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+    /// Why the server failed to initialize, if it did.
+    pub init_error: Option<String>,
     /// Answers for `workspace/configuration`, keyed by section.
     pub settings: Value,
 }
@@ -58,24 +65,70 @@ impl Client {
         server: &ServerConfig,
         cmd: &Path,
         root: &Path,
+        install_dir: Option<&Path>,
         tx: EventTx,
     ) -> io::Result<Client> {
         let server = server.clone();
+        let mut vars: Vec<(&str, String)> = vec![("root", root.display().to_string())];
+        if let Some(h) = std::env::var_os("HOME") {
+            vars.push(("home", PathBuf::from(h).display().to_string()));
+        }
+        if let Some(d) = install_dir {
+            vars.push(("install_dir", d.display().to_string()));
+        }
         let to_json = |v: &Option<toml::Value>| {
             v.as_ref()
                 .and_then(|v| serde_json::to_value(v).ok())
+                .and_then(|v| substitute(v, &vars))
                 .unwrap_or(Value::Null)
         };
         let init_opts = to_json(&server.initialization_options);
         let settings = to_json(&server.settings);
+        let args: Vec<String> = server
+            .args
+            .iter()
+            .filter_map(|a| subst_str(a, &vars))
+            .collect();
+        let env: Vec<(String, String)> = server
+            .env
+            .iter()
+            .filter_map(|(k, v)| subst_str(v, &vars).map(|v| (k.clone(), v)))
+            .collect();
+        crate::log::info(
+            &format!("lsp:{}", server.name),
+            format!(
+                "starting {} {} in {}",
+                cmd.display(),
+                args.join(" "),
+                root.display()
+            ),
+        );
         let mut child = Command::new(cmd)
-            .args(&server.args)
-            .envs(&server.env)
+            .args(&args)
+            .envs(env)
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
+        // Keep the last stderr lines for LSP Info (servers often explain failures there).
+        let stderr_buf =
+            std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+        if let Some(err) = child.stderr.take() {
+            let buf = stderr_buf.clone();
+            let source = format!("lsp:{}", server.name);
+            thread::spawn(move || {
+                for line in BufReader::new(err).lines().map_while(Result::ok) {
+                    crate::log::debug(&source, &line);
+                    let mut b = buf.lock().unwrap();
+                    b.push_back(line);
+                    if b.len() > 200 {
+                        b.pop_front();
+                    }
+                }
+            });
+        }
+        let pid = child.id();
         let mut stdin = child.stdin.take().expect("stdin");
         let stdout = child.stdout.take().expect("stdout");
         let (wtx, wrx) = mpsc::channel::<String>();
@@ -140,6 +193,11 @@ impl Client {
             sync_kind: 1,
             triggers: vec![],
             settings,
+            path: cmd.to_path_buf(),
+            pid,
+            started: std::time::Instant::now(),
+            stderr: stderr_buf,
+            init_error: None,
         };
         let mut params = initialize_params(root);
         if !init_opts.is_null() {
@@ -235,6 +293,11 @@ impl Client {
             .unwrap_or_default()
     }
 
+    /// The process's exit code, if it has exited.
+    pub fn exit_code(&mut self) -> Option<i32> {
+        self.child.try_wait().ok().flatten().and_then(|s| s.code())
+    }
+
     pub fn shutdown(&mut self) {
         if self.alive {
             self.request("shutdown", Value::Null, Pending::Other);
@@ -307,6 +370,52 @@ fn initialize_params(root: &Path) -> Value {
 }
 
 // ---------- helpers ----------
+
+/// Replace `${name}` placeholders; `None` if one can't be resolved (the value is dropped).
+fn subst_str(s: &str, vars: &[(&str, String)]) -> Option<String> {
+    let mut out = s.to_string();
+    for (k, v) in vars {
+        out = out.replace(&format!("${{{k}}}"), v);
+    }
+    (!out.contains("${")).then_some(out)
+}
+
+/// `subst_str` over a JSON tree; unresolvable strings drop their key / array item.
+fn substitute(v: Value, vars: &[(&str, String)]) -> Option<Value> {
+    Some(match v {
+        Value::String(s) => Value::String(subst_str(&s, vars)?),
+        Value::Array(a) => {
+            Value::Array(a.into_iter().filter_map(|x| substitute(x, vars)).collect())
+        }
+        Value::Object(o) => Value::Object(
+            o.into_iter()
+                .filter_map(|(k, x)| substitute(x, vars).map(|x| (k, x)))
+                .filter(|(_, x)| !matches!(x, Value::Object(m) if m.is_empty()))
+                .collect(),
+        ),
+        other => other,
+    })
+}
+
+#[cfg(test)]
+mod subst_tests {
+    use super::*;
+
+    #[test]
+    fn placeholders() {
+        let vars = [("install_dir", "/opt/x".to_string())];
+        let v = serde_json::json!({"hostInfo": "farsub", "tsserver": {"fallbackPath": "${install_dir}/lib"}, "list": ["a", "${nope}"]});
+        assert_eq!(
+            substitute(v.clone(), &vars).unwrap(),
+            serde_json::json!({"hostInfo": "farsub", "tsserver": {"fallbackPath": "/opt/x/lib"}, "list": ["a"]})
+        );
+        // Without an install folder the setting disappears instead of sending "${install_dir}".
+        assert_eq!(
+            substitute(v, &[]).unwrap(),
+            serde_json::json!({"hostInfo": "farsub", "list": ["a"]})
+        );
+    }
+}
 
 pub fn path_to_uri(p: &Path) -> String {
     url::Url::from_file_path(p)
@@ -434,6 +543,7 @@ impl Manager {
         lang: &LanguageConfig,
         server: &ServerConfig,
         cmd: &Path,
+        install_dir: Option<&Path>,
         file: &Path,
     ) -> Result<usize, String> {
         let mut markers = server.root_markers.clone();
@@ -452,7 +562,7 @@ impl Manager {
         }
         let id = self.next;
         self.next += 1;
-        match Client::spawn(id, lang, server, cmd, &root, self.tx.clone()) {
+        match Client::spawn(id, lang, server, cmd, &root, install_dir, self.tx.clone()) {
             Ok(c) => {
                 self.clients.insert(id, c);
                 self.keys.insert(key, id);

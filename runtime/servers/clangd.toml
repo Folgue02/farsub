@@ -1,4 +1,12 @@
 name = "clangd"
 command = "clangd"
 root_markers = ["compile_commands.json", "compile_flags.txt", ".clangd", "CMakeLists.txt", "Makefile"]
-description = "C/C++ language server from LLVM (ships with Xcode on macOS)"
+description = "C/C++ language server from LLVM (also ships with Xcode on macOS)"
+
+# Official builds from github.com/clangd/clangd (the zip holds clangd_<ver>/bin/clangd).
+[install.github]
+repo = "clangd/clangd"
+[install.github.assets]
+macos = "clangd-mac-*.zip"
+linux-x86_64 = "clangd-linux-*.zip"
+windows = "clangd-windows-*.zip"

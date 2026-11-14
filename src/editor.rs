@@ -82,6 +82,51 @@ pub fn comment_token(path: Option<&Path>) -> Option<&'static str> {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Indent {
+    Tabs,
+    Spaces(usize),
+}
+
+/// Guess a file's indentation like Sublime: tabs vs spaces by majority of indented lines,
+/// and the space width from the most common indentation *change* between lines.
+pub fn guess_indent(lines: &[String]) -> Option<Indent> {
+    let mut tabs = 0;
+    let mut spaces = 0;
+    let mut deltas = [0usize; 9];
+    let mut prev = 0usize;
+    for l in lines.iter().take(5000) {
+        if l.trim().is_empty() {
+            continue;
+        }
+        let lead: String = l.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+        if lead.starts_with('\t') {
+            tabs += 1;
+            continue;
+        }
+        let n = lead.len();
+        if n > 0 && !l.trim_start().starts_with('*') {
+            spaces += 1;
+        }
+        // Block-comment continuation lines (" * foo") don't count.
+        if !l.trim_start().starts_with('*') {
+            let d = n.abs_diff(prev);
+            if (2..=8).contains(&d) {
+                deltas[d] += 1;
+            }
+            prev = n;
+        }
+    }
+    if tabs == 0 && spaces == 0 {
+        return None;
+    }
+    if tabs > spaces {
+        return Some(Indent::Tabs);
+    }
+    let best = (2..=8).max_by_key(|&d| (deltas[d], d == 4, d == 2))?;
+    Some(Indent::Spaces(if deltas[best] == 0 { 4 } else { best }))
+}
+
 pub struct Buffer {
     pub id: usize,
     pub path: Option<PathBuf>,
@@ -108,6 +153,12 @@ pub struct Buffer {
     pub comment: Option<String>,
     /// The file's own indentation was detected (otherwise config defaults apply).
     pub indent_detected: bool,
+    /// Display width of a tab character.
+    pub tab_size: usize,
+    /// Indentation was set by hand (kept in the workspace).
+    pub indent_override: bool,
+    /// The syntax was picked by hand (kept in the workspace).
+    pub syntax_override: bool,
     undo: Vec<Group>,
     redo: Vec<Group>,
     pending: Vec<Edit>,
@@ -123,19 +174,17 @@ impl Buffer {
             text.to_string()
         };
         let lines: Vec<String> = norm.split('\n').map(String::from).collect();
-        let tabs = lines.iter().filter(|l| l.starts_with('\t')).count();
-        let spaces = lines.iter().filter(|l| l.starts_with("  ")).count();
-        let two = lines
-            .iter()
-            .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
-            .count();
-        let indent_detected = tabs + spaces > 0;
-        let indent_unit = if tabs > spaces {
-            "\t".to_string()
-        } else if spaces > 0 && two * 2 > spaces {
-            "  ".to_string()
-        } else {
-            "    ".to_string()
+        let guess = guess_indent(&lines);
+        let indent_detected = guess.is_some();
+        let indent_unit = match guess {
+            Some(Indent::Tabs) => "\t".to_string(),
+            Some(Indent::Spaces(n)) => " ".repeat(n),
+            None => "    ".to_string(),
+        };
+        // A file indented with N spaces uses N as its tab width too (like Sublime).
+        let tab_size = match guess {
+            Some(Indent::Spaces(n)) => n,
+            _ => 4,
         };
         let comment = comment_token(path.as_deref()).map(String::from);
         let lang = None;
@@ -161,6 +210,9 @@ impl Buffer {
             indent_unit,
             comment,
             indent_detected,
+            tab_size,
+            indent_override: false,
+            syntax_override: false,
             undo: vec![],
             redo: vec![],
             pending: vec![],
@@ -212,14 +264,123 @@ impl Buffer {
         if let Some(c) = lang.and_then(|l| l.comment.clone()) {
             self.comment = Some(c);
         }
-        if !self.indent_detected {
+        let size = lang
+            .and_then(|l| l.tab_size)
+            .unwrap_or(editor.tab_size)
+            .max(1);
+        let detected_spaces = self.indent_detected && self.indent_unit != "\t";
+        if !self.indent_override && !detected_spaces {
+            self.tab_size = size;
+        }
+        if !self.indent_detected && !self.indent_override {
             let tabs = lang.and_then(|l| l.use_tabs).unwrap_or(editor.use_tabs);
-            let size = lang
-                .and_then(|l| l.tab_size)
-                .unwrap_or(editor.tab_size)
-                .max(1);
             self.indent_unit = if tabs { "\t".into() } else { " ".repeat(size) };
         }
+    }
+
+    // ---------- indentation ----------
+
+    pub fn indent_kind(&self) -> Indent {
+        if self.indent_unit == "\t" {
+            Indent::Tabs
+        } else {
+            Indent::Spaces(self.indent_unit.len())
+        }
+    }
+
+    /// Indent using spaces/tabs and/or change the width (Sublime's Indentation menu).
+    pub fn set_indent(&mut self, kind: Indent) {
+        self.indent_override = true;
+        match kind {
+            Indent::Tabs => self.indent_unit = "\t".into(),
+            Indent::Spaces(n) => {
+                self.indent_unit = " ".repeat(n.clamp(1, 16));
+                self.tab_size = n.clamp(1, 16);
+            }
+        }
+    }
+
+    pub fn set_tab_width(&mut self, n: usize) {
+        let n = n.clamp(1, 16);
+        self.tab_size = n;
+        if self.indent_unit != "\t" {
+            self.indent_unit = " ".repeat(n);
+        }
+        self.indent_override = true;
+    }
+
+    /// Re-detect indentation from the buffer's contents. Returns what was found.
+    pub fn guess_indentation(&mut self) -> Option<Indent> {
+        let g = guess_indent(&self.lines);
+        if let Some(k) = g {
+            self.set_indent(k);
+            self.indent_override = false;
+        }
+        g
+    }
+
+    /// Rewrite leading whitespace as tabs or spaces (one undo step). Returns lines changed.
+    pub fn convert_indentation(&mut self, to_tabs: bool) -> usize {
+        if self.read_only {
+            return 0;
+        }
+        let ts = self.tab_size.max(1);
+        let mut edits = vec![];
+        for (i, l) in self.lines.iter().enumerate() {
+            let lead: String = l.chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+            if lead.is_empty() {
+                continue;
+            }
+            let width = lead
+                .chars()
+                .fold(0, |w, c| if c == '\t' { w + ts - w % ts } else { w + 1 });
+            let new = if to_tabs {
+                "\t".repeat(width / ts) + &" ".repeat(width % ts)
+            } else {
+                " ".repeat(width)
+            };
+            if new != lead {
+                edits.push((Pos::new(i, 0), Pos::new(i, char_len(&lead)), new));
+            }
+        }
+        let n = edits.len();
+        self.apply_edits(edits);
+        if to_tabs {
+            self.indent_unit = "\t".into();
+        } else {
+            self.indent_unit = " ".repeat(ts);
+        }
+        self.indent_override = true;
+        n
+    }
+
+    /// Indentation width (display columns) of a line; blank lines take the next non-blank's,
+    /// like Sublime's indent guides.
+    pub fn indent_width(&self, l: usize) -> usize {
+        let ts = self.tab_size.max(1);
+        let width = |s: &str| {
+            s.chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .fold(0, |w, c| if c == '\t' { w + ts - w % ts } else { w + 1 })
+        };
+        let line = &self.lines[l];
+        if !line.trim().is_empty() {
+            return width(line);
+        }
+        let next = self.lines[l + 1..]
+            .iter()
+            .take(200)
+            .find(|x| !x.trim().is_empty())
+            .map(|x| width(x))
+            .unwrap_or(0);
+        let prev = self.lines[..l]
+            .iter()
+            .rev()
+            .take(200)
+            .find(|x| !x.trim().is_empty())
+            .map(|x| width(x))
+            .unwrap_or(0);
+        next.min(prev.max(next))
     }
 
     // ---------- geometry ----------
@@ -1433,5 +1594,36 @@ mod tests {
         assert_eq!(b.text(), "let x = 1;\nlet y = 2;");
         b.undo();
         assert_eq!(b.text(), "let a = 1;\nlet b = 2;");
+    }
+
+    #[test]
+    fn indentation_guess_and_convert() {
+        let two: Vec<String> = "a\n  b\n    c\n  d\n".lines().map(String::from).collect();
+        assert_eq!(guess_indent(&two), Some(Indent::Spaces(2)));
+        let four: Vec<String> = "a\n    b\n        c\n    /*\n     * x\n     */\n"
+            .lines()
+            .map(String::from)
+            .collect();
+        assert_eq!(guess_indent(&four), Some(Indent::Spaces(4)));
+        let tabs: Vec<String> = "a\n\tb\n\t\tc\n".lines().map(String::from).collect();
+        assert_eq!(guess_indent(&tabs), Some(Indent::Tabs));
+        assert_eq!(guess_indent(&["x".to_string()]), None);
+
+        let mut b = buf("fn a() {\n    x;\n        y;\n}");
+        assert_eq!(b.indent_kind(), Indent::Spaces(4));
+        assert_eq!(b.convert_indentation(true), 2);
+        assert_eq!(b.text(), "fn a() {\n\tx;\n\t\ty;\n}");
+        assert_eq!(b.indent_kind(), Indent::Tabs);
+        b.undo();
+        assert_eq!(b.text(), "fn a() {\n    x;\n        y;\n}");
+        // Undo restores the text; the setting stays (as in Sublime). Switch back to spaces.
+        b.set_indent(Indent::Spaces(4));
+        b.set_tab_width(2);
+        assert_eq!(b.indent_unit, "  ");
+        b.convert_indentation(true);
+        assert_eq!(b.lines[2], "\t\t\t\ty;");
+        // Blank lines take the surrounding indentation (for guides).
+        let b = buf("a\n    b\n\n    c\n");
+        assert_eq!(b.indent_width(2), 4);
     }
 }

@@ -12,13 +12,16 @@ use eframe::egui::{
 use unicode_width::UnicodeWidthChar;
 
 use crate::app::{App, AppEvent, EventTx, Focus, Modal, PromptKind};
-use crate::config::Config;
+use crate::config::{CaretStyle, Config};
 use crate::editor::{Buffer, Pos};
 use crate::highlight::Span;
 use crate::keys::Key;
 use crate::palette::Mode;
 
-const TAB: usize = 4;
+thread_local! {
+    /// Tab display width of the buffer being drawn (set per frame from the buffer).
+    static TAB: std::cell::Cell<usize> = const { std::cell::Cell::new(4) };
+}
 const UI_SIZE: f32 = 13.0;
 const TAB_H: f32 = 32.0;
 const STATUS_H: f32 = 24.0;
@@ -84,21 +87,53 @@ pub struct Gui {
     rx: Receiver<AppEvent>,
     suppress_text: bool,
     scroll_acc: f32,
+    term_scroll_acc: f32,
     last_cursor: Option<(usize, Pos, i32)>,
+    /// Caret position/version and when it last changed: the blink phase restarts there so
+    /// the caret is solid while typing or moving.
+    caret_mark: (Option<(usize, Pos, i32)>, Instant),
+    /// (char width, text left edge, first line top, line height) of the last frame.
+    text_geom: (f32, f32, f32, f32),
     last_tree_sel: Option<usize>,
     last_title: String,
     find_count: Option<(String, i32, usize)>,
     pub menu_titles: Vec<Rect>,
+    /// Clickable status-bar items of the last frame.
+    pub status_hits: Vec<(crate::commands::Command, Rect)>,
+    /// Screen rect of the hover popup last frame (the pointer may move onto it).
+    hover_rect: Option<Rect>,
+    /// Screen position of a mouse-hover popup's anchor (None = at the cursor).
+    hover_anchor_px: Option<Pos2>,
+    /// Where the keyboard-opened context menu should appear (cursor / selected row).
+    pub keyboard_spot: Option<Pos2>,
+    sidebar_sel_px: Option<Pos2>,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
 }
 
 impl Gui {
-    pub fn new(cc: &eframe::CreationContext<'_>, root: PathBuf, config: Config) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        project: crate::project::Project,
+        config: Config,
+    ) -> Self {
         let ctx = cc.egui_ctx.clone();
-        let mut g = Self::headless(root, config);
+        let mut g = Self::with_project(project, config);
         let tx = g.app_tx();
+        let ctx2 = ctx.clone();
         tx.set_waker(move || ctx.request_repaint());
+        crate::log::set_waker(move || ctx2.request_repaint());
+        if let Some(d) = &g.app.config.data_dir {
+            crate::log::set_file(&d.join("logs").join("farsub.log"));
+        }
+        crate::log::info(
+            "app",
+            format!(
+                "farsub {} — {}",
+                env!("CARGO_PKG_VERSION"),
+                g.app.project.name()
+            ),
+        );
         #[cfg(target_os = "macos")]
         {
             g.native_menu = crate::native_menu::NativeMenu::install(&g.app, tx.clone());
@@ -109,22 +144,51 @@ impl Gui {
     }
 
     /// Construct without a window (tests drive it through egui_kittest).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn headless(root: PathBuf, config: Config) -> Self {
+        Self::with_project(crate::project::Project::from_folders(vec![root]), config)
+    }
+
+    pub fn with_project(project: crate::project::Project, config: Config) -> Self {
         let (tx, rx) = mpsc::channel();
-        let app = App::new(root, config, EventTx::new(tx));
+        let app = App::new(project, config, EventTx::new(tx));
         Gui {
             app,
             rx,
             suppress_text: false,
             scroll_acc: 0.0,
+            term_scroll_acc: 0.0,
             last_cursor: None,
+            caret_mark: (None, Instant::now()),
+            text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
             last_title: String::new(),
             find_count: None,
             menu_titles: vec![],
+            status_hits: vec![],
+            hover_rect: None,
+            hover_anchor_px: None,
+            keyboard_spot: None,
+            sidebar_sel_px: None,
             #[cfg(target_os = "macos")]
             native_menu: None,
         }
+    }
+
+    /// (char width, text left edge, y of the first visible line's middle).
+    #[cfg(test)]
+    pub fn text_metrics_for_test(&self) -> (f32, f32, f32) {
+        let (cw, left, top, lh) = self.text_geom;
+        (cw, left, top + lh / 2.0)
+    }
+
+    /// Screen point of a buffer position's character cell middle (tests drive the mouse).
+    #[cfg(test)]
+    pub fn screen_pos_for_test(&self, line: usize, col: usize) -> Pos2 {
+        let (cw, left, top, lh) = self.text_geom;
+        let b = self.app.buf().unwrap();
+        let x = left + (display_col(&b.lines[line], col) as f32 - b.scroll_x as f32 + 0.5) * cw;
+        Pos2::new(x, top + (line as f32 - b.scroll_y as f32 + 0.5) * lh)
     }
 
     fn app_tx(&mut self) -> EventTx {
@@ -182,17 +246,39 @@ impl Gui {
     /// One full frame: input, background events, drawing.
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Every widget is custom-drawn and keys are routed by the app, so egui's own widget
+        // focus must never hold: otherwise Tab/Ctrl+Shift+Tab walk it onto a menu-bar button
+        // and the next Enter "clicks" it.
+        ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
+        // Whole-UI zoom from the config (egui scales every font and widget together).
+        let scale = self.app.config.editor.ui_scale;
+        let scale = if scale.is_finite() {
+            scale.clamp(0.5, 3.0)
+        } else {
+            1.0
+        };
+        if (ctx.zoom_factor() - scale).abs() > f32::EPSILON {
+            ctx.set_zoom_factor(scale);
+        }
         self.pump();
         self.handle_input(&ctx);
         self.pump();
+        self.app.reap_terminals();
 
-        if ctx.input(|i| i.viewport().close_requested())
-            && !self.app.quit
-            && self.app.any_modified()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.app.run(crate::commands::Command::Quit);
+        if ctx.input(|i| i.viewport().close_requested()) && !self.app.quit {
+            if self.app.config.editor.hot_exit {
+                // Unsaved work goes into the workspace; it comes back next launch.
+                self.app.save_workspace();
+            } else if self.app.any_modified() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.app.run(crate::commands::Command::Quit);
+            }
         }
+        self.app.autosave_tick();
         if self.app.quit {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
@@ -231,30 +317,79 @@ impl Gui {
             r
         });
         if self.app.sidebar_visible {
-            let side =
-                Rect::from_min_max(rest.min, Pos2::new(rest.left() + SIDEBAR_W, rest.bottom()));
+            let max_w = (full.width() * 0.7).max(160.0);
+            self.app.sidebar_width = self.app.sidebar_width.clamp(120.0, max_w);
+            let side = Rect::from_min_max(
+                rest.min,
+                Pos2::new(rest.left() + self.app.sidebar_width, rest.bottom()),
+            );
             rest.min.x = side.right();
             self.draw_sidebar(ui, &painter, side, &c);
+            // Drag the sidebar's edge to resize it (double-click resets).
+            let handle = Rect::from_min_max(
+                Pos2::new(side.right() - 3.0, side.top()),
+                Pos2::new(side.right() + 3.0, side.bottom()),
+            );
+            let h = ui.interact(
+                handle,
+                Id::unique("sidebar-resize"),
+                Sense::click_and_drag(),
+            );
+            if h.hovered() || h.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                painter.line_segment(
+                    [side.right_top(), side.right_bottom()],
+                    Stroke::new(2.0, c.accent),
+                );
+            }
+            if h.dragged() {
+                self.app.sidebar_width =
+                    (self.app.sidebar_width + h.drag_delta().x).clamp(120.0, max_w);
+            }
+            if h.double_clicked() {
+                self.app.sidebar_width = SIDEBAR_W;
+            }
         }
+        // The bottom panel (terminals, console) sits under the editor column.
+        let bottom = self.app.panel.visible.then(|| {
+            let h = self
+                .app
+                .panel
+                .height
+                .clamp(80.0, (rest.height() - TAB_H - 60.0).max(80.0));
+            let r = Rect::from_min_max(Pos2::new(rest.left(), rest.bottom() - h), rest.max);
+            rest.max.y = r.top();
+            r
+        });
         let tabs = Rect::from_min_max(rest.min, Pos2::new(rest.right(), rest.top() + TAB_H));
         let editor = Rect::from_min_max(Pos2::new(rest.left(), tabs.bottom()), rest.max);
         self.draw_tabs(ui, &painter, tabs, &c);
         let cursor_px = self.draw_editor(ui, &painter, editor, &c);
-        self.draw_status(&painter, status, &c);
+        self.draw_status(ui, &painter, status, &c);
         if let Some(r) = panel {
             self.draw_prompt(&painter, r, &c);
+        }
+        if let Some(r) = bottom {
+            self.draw_bottom_panel(ui, &painter, r, &c);
         }
 
         let over = ctx.layer_painter(LayerId::new(Order::Foreground, Id::unique("overlay")));
         if let Some(p) = cursor_px {
             self.draw_completion(ui, &over, editor, p, &c);
+        }
+        self.hover_rect = None;
+        if let Some(p) = self.hover_anchor_px.or(cursor_px) {
             self.draw_hover(&over, editor, p, &c);
+        }
+        if self.app.context_menu.is_some() {
+            self.draw_context_menu(ui, &over, full, &c);
         }
         match &self.app.modal {
             Some(Modal::Palette(_)) => self.draw_palette(ui, &over, full, &c),
             Some(Modal::Confirm(_)) => self.draw_confirm(&over, full, &c),
             Some(Modal::Keymap(_)) => self.draw_keymap(ui, &over, full, &c),
             Some(Modal::Servers(_)) => self.draw_servers(ui, &over, full, &c),
+            Some(Modal::LspInfo(_)) => self.draw_lsp_info(ui, &over, full, &c),
             _ => {}
         }
         if let Some(r) = bar {
@@ -328,13 +463,7 @@ impl Gui {
             FontId::proportional(11.0),
             if focused { c.accent } else { c.dim },
         );
-        let rootname = self
-            .app
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
+        let rootname = self.app.project.name();
         p.with_clip_rect(
             head.shrink2(Vec2::new(70.0, 0.0))
                 .translate(Vec2::new(30.0, 0.0)),
@@ -458,6 +587,9 @@ impl Gui {
                 ui_font.clone(),
                 fade(col),
             );
+            if i == t.sel {
+                self.sidebar_sel_px = Some(Pos2::new(rr.left() + 24.0, rr.bottom()));
+            }
             hits.push((i, rr));
             y += h;
             i += 1;
@@ -479,6 +611,17 @@ impl Gui {
                 resp.double_clicked() || self.app.tree.nodes.get(i).is_some_and(|n| n.is_dir);
             self.app.tree_click(i, open);
         }
+        // Right-click selects the row (if any) and opens the sidebar menu.
+        if resp.secondary_clicked()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            if let Some(&(i, _)) = hits.iter().find(|(_, r)| r.contains(pos)) {
+                self.app.tree_click(i, false);
+            }
+            self.app.focus = Focus::Sidebar;
+            self.app
+                .open_context_menu(crate::menu::ContextKind::Sidebar, (pos.x, pos.y));
+        }
     }
 
     // ================================================================= tabs
@@ -488,6 +631,7 @@ impl Gui {
         let font = FontId::proportional(UI_SIZE);
         let mut x = r.left();
         let mut click: Option<(usize, bool)> = None;
+        let mut tab_menu: Option<(usize, Pos2)> = None;
         // Scroll the strip so the active tab is visible.
         let widths: Vec<f32> = self
             .app
@@ -551,6 +695,17 @@ impl Gui {
             } else if resp.middle_clicked() {
                 click = Some((i, true));
             }
+            if resp.secondary_clicked()
+                && let Some(pos) = resp.interact_pointer_pos()
+            {
+                tab_menu = Some((i, pos));
+            }
+        }
+        if let Some((i, pos)) = tab_menu {
+            self.app.cur = i;
+            self.app.focus = Focus::Editor;
+            self.app
+                .open_context_menu(crate::menu::ContextKind::Tab, (pos.x, pos.y));
         }
         if let Some((i, close)) = click {
             self.app.cur = i;
@@ -589,10 +744,16 @@ impl Gui {
             .and_then(|p| self.app.diagnostics.get(p))
             .unwrap_or(&empty);
         let b: &mut Buffer = &mut self.app.buffers[cur];
+        TAB.with(|t| t.set(b.tab_size));
+        let guides = self.app.config.editor.indent_guides;
+        let line_highlight = self.app.config.editor.highlight_current_line;
+        let guide_col = self.app.syn.guide().unwrap_or(mix(c.bg, c.fg, 0.12));
+        let active_guide_col = self.app.syn.active_guide().unwrap_or(mix(c.bg, c.fg, 0.32));
 
         let digits = b.lines.len().to_string().len().max(3) as f32;
         let gutter_w = (digits + 3.0) * cw;
         let text_left = r.left() + gutter_w;
+        self.text_geom = (cw, text_left, r.top(), lh);
         let text_cols = (((r.width() - gutter_w) / cw).floor() as usize).max(1);
 
         // Mouse: click, drag, wheel.
@@ -613,6 +774,66 @@ impl Gui {
             }
             Pos::new(line, col)
         };
+        // Pointer: I-beam over text, but the normal arrow over selected text (like Sublime).
+        // Uses the character cell under the pointer, not the nearest caret position.
+        let over_selection = |b: &Buffer, pt: Pos2| -> bool {
+            let Some((a, z)) = b.selection() else {
+                return false;
+            };
+            let line = b.scroll_y + ((pt.y - r.top()) / lh).floor().max(0.0) as usize;
+            if line >= b.lines.len() {
+                return false;
+            }
+            let target = (pt.x - text_left) / cw + b.scroll_x as f32;
+            let mut dcol = 0.0;
+            for (col, ch) in b.lines[line].chars().enumerate() {
+                let w = char_w(ch, dcol as usize) as f32;
+                if target >= dcol && target < dcol + w {
+                    let p = Pos::new(line, col);
+                    return a <= p && p < z;
+                }
+                dcol += w;
+            }
+            false
+        };
+        // The character cell under the pointer, for mouse hover (LSP info / diagnostics).
+        let char_under = |b: &Buffer, pt: Pos2| -> Option<Pos> {
+            let line = b.scroll_y + ((pt.y - r.top()) / lh).floor().max(0.0) as usize;
+            if line >= b.lines.len() || pt.x < text_left {
+                return None;
+            }
+            let target = (pt.x - text_left) / cw + b.scroll_x as f32;
+            let mut dcol = 0.0;
+            for (col, ch) in b.lines[line].chars().enumerate() {
+                let w = char_w(ch, dcol as usize) as f32;
+                if target >= dcol && target < dcol + w {
+                    return (!ch.is_whitespace()).then_some(Pos::new(line, col));
+                }
+                dcol += w;
+            }
+            None
+        };
+        let hover_at = if resp.dragged() || resp.is_pointer_button_down_on() {
+            None
+        } else {
+            resp.hover_pos().and_then(|hp| char_under(b, hp))
+        };
+        let mut right_click: Option<(Pos, Pos2, bool)> = None;
+        if resp.secondary_clicked()
+            && let Some(pt) = resp.interact_pointer_pos()
+        {
+            right_click = Some((to_pos(b, pt), pt, over_selection(b, pt)));
+        }
+        if resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+        } else if let Some(hp) = resp.hover_pos().filter(|hp| hp.x >= text_left - 2.0) {
+            let icon = if over_selection(b, hp) {
+                egui::CursorIcon::Default
+            } else {
+                egui::CursorIcon::Text
+            };
+            ui.ctx().set_cursor_icon(icon);
+        }
         let mut click: Option<(Pos, u32, bool)> = None;
         let mut drag: Option<Pos> = None;
         if let Some(pt) = resp.interact_pointer_pos() {
@@ -671,6 +892,50 @@ impl Gui {
             r.max,
         ));
         let x0 = text_left - b.scroll_x as f32 * cw;
+        // Indent guides: one line per indentation level; the guide of the block around the
+        // cursor is highlighted (Sublime's "active" guide).
+        let unit = if b.indent_unit == "\t" {
+            b.tab_size
+        } else {
+            b.indent_unit.len()
+        }
+        .max(1);
+        let active = if guides {
+            let w = b.indent_width(b.cursor.line);
+            // On a block's opening line, highlight the block below it.
+            let below = b
+                .lines
+                .get(b.cursor.line + 1)
+                .map(|_| b.indent_width(b.cursor.line + 1))
+                .unwrap_or(0);
+            let col = if below > w {
+                w
+            } else if w >= unit {
+                w - unit
+            } else {
+                usize::MAX
+            };
+            if col == usize::MAX {
+                None
+            } else {
+                let (mut top, mut bot) = (b.cursor.line, b.cursor.line);
+                while top > 0 && b.cursor.line - top < 3000 && b.indent_width(top - 1) > col {
+                    top -= 1;
+                }
+                while bot + 1 < b.lines.len()
+                    && bot - b.cursor.line < 3000
+                    && b.indent_width(bot + 1) > col
+                {
+                    bot += 1;
+                }
+                if b.indent_width(b.cursor.line) <= col {
+                    top = b.cursor.line + 1;
+                }
+                Some((col, top, bot))
+            }
+        } else {
+            None
+        };
         for row in 0..visible {
             let ln = b.scroll_y + row;
             if ln >= b.lines.len() {
@@ -679,7 +944,7 @@ impl Gui {
             let y = r.top() + row as f32 * lh;
             let line = &b.lines[ln];
             let lr = Rect::from_min_size(Pos2::new(r.left(), y), Vec2::new(r.width(), lh));
-            if ln == b.cursor.line && sel.is_none() {
+            if line_highlight && ln == b.cursor.line && sel.is_none() {
                 clip.rect_filled(lr, 0.0, c.line);
             }
             // Gutter.
@@ -746,6 +1011,27 @@ impl Gui {
                     );
                 }
             }
+            if guides {
+                let w = b.indent_width(ln);
+                let mut col = 0;
+                while col + unit <= w {
+                    let x = x0 + col as f32 * cw + 0.5;
+                    let is_active =
+                        active.is_some_and(|(ac, t, bt)| ac == col && ln >= t && ln <= bt);
+                    text_clip.line_segment(
+                        [Pos2::new(x, y), Pos2::new(x, y + lh)],
+                        Stroke::new(
+                            1.0,
+                            if is_active {
+                                active_guide_col
+                            } else {
+                                guide_col
+                            },
+                        ),
+                    );
+                    col += unit;
+                }
+            }
             // Text.
             let spans = b.hl.lines.get(ln);
             let job = line_job(line, spans, &font, c.fg, b.scroll_x, text_cols + 2);
@@ -793,11 +1079,35 @@ impl Gui {
         let cy = r.top() + (b.cursor.line as f32 - b.scroll_y as f32) * lh;
         let cursor_px = (cy >= r.top() && cy < r.bottom()).then_some(Pos2::new(cx, cy));
         if focused && cursor_px.is_some() {
-            text_clip.rect_filled(
-                Rect::from_min_size(Pos2::new(cx - 1.0, cy + 2.0), Vec2::new(2.0, lh - 4.0)),
-                0.0,
-                c.accent,
-            );
+            let ed = &self.app.config.editor;
+            let mark = Some((b.id, b.cursor, b.version));
+            if self.caret_mark.0 != mark {
+                self.caret_mark = (mark, Instant::now());
+            }
+            // Only animate while the window has focus (no idle repaints in the background).
+            let animate = ui.ctx().input(|i| i.focused);
+            let style = if animate {
+                ed.caret_style
+            } else {
+                CaretStyle::Solid
+            };
+            let (alpha, next) = caret_alpha(style, self.caret_mark.1.elapsed());
+            if let Some(next) = next {
+                ui.ctx().request_repaint_after(next);
+            }
+            let w = 1.0 + ed.caret_extra_width.clamp(0.0, 20.0);
+            let top = cy - ed.caret_extra_top.clamp(-lh / 2.0, lh);
+            let bottom = cy + lh + ed.caret_extra_bottom.clamp(-lh / 2.0, lh);
+            if alpha > 0.0 && bottom > top {
+                text_clip.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(cx - w / 2.0, top),
+                        Pos2::new(cx + w / 2.0, bottom),
+                    ),
+                    0.0,
+                    c.accent.gamma_multiply(alpha),
+                );
+            }
         }
         if b.scroll_y > 0 {
             // Subtle shadow under the tab bar when scrolled, like Sublime.
@@ -813,10 +1123,42 @@ impl Gui {
             }
         }
         self.app.hl_pending = !hl_done;
+        // Where a mouse-hover popup points.
+        self.hover_anchor_px = self
+            .app
+            .hover
+            .as_ref()
+            .and_then(|h| h.anchor)
+            .and_then(|a| {
+                let b = self.app.buf()?;
+                let line = b.lines.get(a.line)?;
+                let row = a.line.checked_sub(b.scroll_y)?;
+                Some(Pos2::new(
+                    x0 + display_col(line, a.col) as f32 * cw,
+                    r.top() + row as f32 * lh,
+                ))
+            });
+        self.keyboard_spot = cursor_px.map(|p| p + Vec2::new(0.0, lh));
         if let Some((pos, n, ext)) = click {
             self.app.editor_click(pos, n, ext);
         } else if let Some(pos) = drag {
             self.app.editor_drag(pos);
+        }
+        if let Some((pos, pt, in_sel)) = right_click {
+            // Like VS Code: right-click outside the selection moves the cursor there first.
+            if !in_sel {
+                self.app.editor_click(pos, 1, false);
+            }
+            self.app.focus = Focus::Editor;
+            self.app
+                .open_context_menu(crate::menu::ContextKind::Editor, (pt.x, pt.y));
+        }
+        let over_popup = self
+            .hover_rect
+            .zip(ui.ctx().pointer_hover_pos())
+            .is_some_and(|(hr, p)| hr.expand(8.0).contains(p));
+        if let Some(wait) = self.app.mouse_hover(hover_at, over_popup) {
+            ui.ctx().request_repaint_after(wait);
         }
         cursor_px
     }
@@ -854,7 +1196,7 @@ impl Gui {
 
     // ================================================================= status bar
 
-    fn draw_status(&self, p: &Painter, r: Rect, c: &Palette) {
+    fn draw_status(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
         p.rect_filled(r, 0.0, c.chrome);
         p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, c.border));
         let font = FontId::proportional(12.0);
@@ -894,27 +1236,72 @@ impl Gui {
                 .min_by_key(|d| d.severity)
                 .map(|d| d.message.lines().next().unwrap_or("").to_string())
         });
-        let mut right = vec![];
+        // Right side, Sublime style: each item is clickable.
+        let mut right: Vec<(String, Option<crate::commands::Command>)> = vec![];
         if let Some(b) = app.buf() {
             let lsp = app.lsp_status();
+            let has_servers = b
+                .lang
+                .as_ref()
+                .and_then(|l| app.config.language(l))
+                .is_some_and(|l| !l.servers.is_empty());
             if !lsp.is_empty() {
-                right.push(lsp);
+                right.push((lsp, Some(crate::commands::Command::LspInfo)));
+            } else if has_servers {
+                right.push(("no LSP".into(), Some(crate::commands::Command::LspInfo)));
             }
-            right.push(if b.indent_unit == "\t" {
-                "Tab Size: 4".into()
-            } else {
-                format!("Spaces: {}", b.indent_unit.len())
-            });
-            right.push(b.hl.syntax.clone());
+            right.push((
+                if b.indent_unit == "\t" {
+                    format!("Tab Size: {}", b.tab_size)
+                } else {
+                    format!("Spaces: {}", b.indent_unit.len())
+                },
+                Some(crate::commands::Command::Indentation),
+            ));
+            right.push((
+                b.hl.syntax.clone(),
+                Some(crate::commands::Command::SetSyntax),
+            ));
         }
-        let rtext = right.join("     ");
-        let rr = p.text(
-            Pos2::new(r.right() - 12.0, y),
-            Align2::RIGHT_CENTER,
-            &rtext,
-            font.clone(),
-            c.dim,
-        );
+        let mut x_right = r.right() - 6.0;
+        let mut clicked = None;
+        self.status_hits.clear();
+        for (i, (text, cmd)) in right.iter().enumerate().rev() {
+            let w = ui
+                .ctx()
+                .fonts_mut(|f| f.layout_no_wrap(text.clone(), font.clone(), c.dim).size().x);
+            let item = Rect::from_min_max(
+                Pos2::new(x_right - w - 16.0, r.top() + 2.0),
+                Pos2::new(x_right, r.bottom() - 1.0),
+            );
+            x_right = item.left() - 4.0;
+            let mut col = c.dim;
+            if let Some(cmd) = cmd {
+                self.status_hits.push((*cmd, item));
+            }
+            if cmd.is_some() {
+                let resp = ui.interact(item, Id::unique(("status", i)), Sense::click());
+                if resp.hovered() {
+                    p.rect_filled(item, 3.0, mix(c.chrome, c.fg, 0.08));
+                    col = c.fg;
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    clicked = *cmd;
+                }
+            }
+            p.text(
+                item.center(),
+                Align2::CENTER_CENTER,
+                text,
+                font.clone(),
+                col,
+            );
+        }
+        let rr = Rect::from_min_max(Pos2::new(x_right, r.top()), r.max);
+        if let Some(cmd) = clicked {
+            self.app.run(cmd);
+        }
         if let Some(m) = msg {
             let clip = p.with_clip_rect(Rect::from_min_max(
                 Pos2::new(x.right() + 24.0, r.top()),
@@ -1503,6 +1890,696 @@ impl Gui {
         }
     }
 
+    /// The bottom panel: a tab strip (terminals, CONSOLE) and the active view.
+    fn draw_bottom_panel(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
+        use crate::app::PanelTab;
+        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        p.rect_filled(r, 0.0, bg);
+        p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, c.border));
+        // Resize by dragging the top edge.
+        let edge = Rect::from_min_max(
+            r.left_top() - Vec2::new(0.0, 3.0),
+            r.right_top() + Vec2::new(0.0, 3.0),
+        );
+        let er = ui.interact(edge, Id::unique("panel-resize"), Sense::drag());
+        if er.hovered() || er.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            p.line_segment([r.left_top(), r.right_top()], Stroke::new(2.0, c.accent));
+        }
+        if er.dragged() {
+            self.app.panel.height = (self.app.panel.height - er.drag_delta().y).clamp(80.0, 1200.0);
+        }
+        // Tab strip.
+        let head = Rect::from_min_size(r.min, Vec2::new(r.width(), 26.0));
+        let font = FontId::proportional(11.0);
+        let mut x = r.left() + 8.0;
+        let mut tabs: Vec<(PanelTab, String)> = self
+            .app
+            .terminals
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                (
+                    PanelTab::Terminal(t.id),
+                    format!("TERMINAL {}: {}", i + 1, t.title()),
+                )
+            })
+            .collect();
+        tabs.push((PanelTab::Console, "CONSOLE".into()));
+        let mut clicked = None;
+        let mut close: Option<usize> = None;
+        let mut context: Option<(PanelTab, Pos2)> = None;
+        for (tab, label) in &tabs {
+            let label: String = label.chars().take(36).collect();
+            let is_term = matches!(tab, PanelTab::Terminal(_));
+            let w = ui
+                .ctx()
+                .fonts_mut(|f| f.layout_no_wrap(label.clone(), font.clone(), c.fg).size().x)
+                + if is_term { 38.0 } else { 20.0 };
+            let tr = Rect::from_min_size(Pos2::new(x, head.top()), Vec2::new(w, head.height()));
+            x += w;
+            let active = *tab == self.app.panel.tab;
+            let resp = ui.interact(
+                tr,
+                Id::unique(("panel-tab", format!("{tab:?}"))),
+                Sense::click(),
+            );
+            // Terminal tabs: × close button (shown on hover / when active), middle-click
+            // closes, right-click opens the terminal's context menu.
+            if let PanelTab::Terminal(id) = tab {
+                let xr = Rect::from_center_size(
+                    Pos2::new(tr.right() - 12.0, tr.center().y),
+                    Vec2::splat(14.0),
+                );
+                let over_x = resp.hover_pos().is_some_and(|hp| xr.contains(hp));
+                if active || resp.hovered() {
+                    if over_x {
+                        p.rect_filled(xr, 3.0, mix(bg, c.fg, 0.12));
+                    }
+                    let k = 3.5;
+                    let o = xr.center();
+                    let st = Stroke::new(1.2, if over_x { c.fg } else { c.dim });
+                    p.line_segment([o + Vec2::new(-k, -k), o + Vec2::new(k, k)], st);
+                    p.line_segment([o + Vec2::new(-k, k), o + Vec2::new(k, -k)], st);
+                }
+                if (resp.clicked() && over_x) || resp.middle_clicked() {
+                    close = Some(*id);
+                }
+            }
+            if resp.secondary_clicked()
+                && let Some(pos) = resp.interact_pointer_pos()
+            {
+                context = Some((*tab, pos));
+            }
+            let col = if active {
+                c.fg
+            } else if resp.hovered() {
+                mix(c.dim, c.fg, 0.5)
+            } else {
+                c.dim
+            };
+            p.text(
+                Pos2::new(tr.left() + 10.0, tr.center().y),
+                Align2::LEFT_CENTER,
+                &label,
+                font.clone(),
+                col,
+            );
+            if active {
+                p.rect_filled(
+                    Rect::from_min_max(
+                        Pos2::new(tr.left() + 6.0, tr.bottom() - 2.0),
+                        Pos2::new(tr.right() - 6.0, tr.bottom()),
+                    ),
+                    0.0,
+                    c.accent,
+                );
+            }
+            if resp.clicked() && close.is_none() {
+                clicked = Some(*tab);
+            }
+        }
+        if let Some(id) = close {
+            self.app.close_terminal(id);
+        }
+        if let Some((tab, pos)) = context {
+            self.app.panel.tab = tab;
+            let kind = if tab == PanelTab::Console {
+                crate::menu::ContextKind::Console
+            } else {
+                crate::menu::ContextKind::Terminal
+            };
+            self.app.focus = if tab == PanelTab::Console {
+                Focus::Console
+            } else {
+                Focus::Terminal
+            };
+            self.app.open_context_menu(kind, (pos.x, pos.y));
+        }
+        // "+" new terminal, "x" kill the current one.
+        let btn = |p: &Painter, ui: &mut egui::Ui, at: Pos2, id: &str, label: &str| -> bool {
+            let br = Rect::from_center_size(at, Vec2::splat(18.0));
+            let resp = ui.interact(br, Id::unique(id), Sense::click());
+            if resp.hovered() {
+                p.rect_filled(br, 3.0, mix(bg, c.fg, 0.1));
+            }
+            p.text(
+                br.center(),
+                Align2::CENTER_CENTER,
+                label,
+                FontId::proportional(14.0),
+                c.dim,
+            );
+            resp.clicked()
+        };
+        if btn(
+            p,
+            ui,
+            Pos2::new(r.right() - 20.0, head.center().y),
+            "panel-close",
+            "x",
+        ) {
+            match self.app.panel.tab {
+                PanelTab::Terminal(id) => self.app.close_terminal(id),
+                PanelTab::Console => {
+                    self.app.panel.visible = false;
+                    self.app.focus = Focus::Editor;
+                }
+            }
+        }
+        if btn(
+            p,
+            ui,
+            Pos2::new(r.right() - 42.0, head.center().y),
+            "panel-new",
+            "+",
+        ) {
+            self.app.new_terminal();
+        }
+        if let Some(tab) = clicked {
+            self.app.panel.tab = tab;
+            self.app.focus = if tab == PanelTab::Console {
+                Focus::Console
+            } else {
+                Focus::Terminal
+            };
+        }
+        let body = Rect::from_min_max(Pos2::new(r.left(), head.bottom()), r.max);
+        match self.app.panel.tab {
+            PanelTab::Terminal(id) => self.draw_terminal(ui, p, body, id, c),
+            PanelTab::Console => self.draw_console(ui, p, body, c),
+        }
+    }
+
+    fn term_color(col: vt100::Color, default: Color32) -> Color32 {
+        match col {
+            vt100::Color::Default => default,
+            vt100::Color::Idx(i) => {
+                let (r, g, b) = crate::terminal::palette(i);
+                Color32::from_rgb(r, g, b)
+            }
+            vt100::Color::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
+        }
+    }
+
+    fn draw_terminal(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, id: usize, c: &Palette) {
+        let focused = self.app.focus == Focus::Terminal && self.app.modal.is_none();
+        let font = FontId::monospace((self.app.font_size - 1.0).max(8.0));
+        let (cw, rh) = ui
+            .ctx()
+            .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+        let lh = (rh * 1.15).round();
+        let inner = r.shrink2(Vec2::new(10.0, 4.0));
+        let cols = ((inner.width() / cw).floor() as u16).max(10);
+        let rows = ((inner.height() / lh).floor() as u16).max(2);
+        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        let Some(t) = self.app.terminals.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        t.resize(rows, cols);
+        // Mouse: click focuses, drag selects (screen cells), wheel scrolls history.
+        let resp = ui.interact(inner, Id::unique(("term", id)), Sense::click_and_drag());
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+            let dy = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            if dy != 0.0 {
+                self.term_scroll_acc += dy / lh;
+                let n = self.term_scroll_acc.trunc();
+                self.term_scroll_acc -= n;
+                if n != 0.0 {
+                    t.scroll(n as isize);
+                }
+            }
+        }
+        let cell_at = |pt: Pos2| -> (u16, u16) {
+            let row = ((pt.y - inner.top()) / lh)
+                .floor()
+                .clamp(0.0, rows as f32 - 1.0) as u16;
+            let col = ((pt.x - inner.left()) / cw)
+                .floor()
+                .clamp(0.0, cols as f32 - 1.0) as u16;
+            (row, col)
+        };
+        if let Some(pt) = resp.interact_pointer_pos() {
+            if resp.drag_started() {
+                let at = cell_at(pt);
+                t.sel = Some((at, at));
+            } else if resp.dragged() {
+                if let Some((a, _)) = t.sel {
+                    t.sel = Some((a, cell_at(pt)));
+                }
+            } else if resp.clicked() {
+                t.sel = None;
+            }
+        }
+        if resp.clicked() || resp.drag_started() {
+            self.app.focus = Focus::Terminal;
+        }
+        let term_menu = resp
+            .secondary_clicked()
+            .then(|| resp.interact_pointer_pos())
+            .flatten();
+        let sel = t.sel.map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
+        let exited = t.is_exited();
+        let clip = p.with_clip_rect(r);
+        let fg = c.fg;
+        t.with_screen(|s| {
+            let (crow, ccol) = s.cursor_position();
+            for row in 0..rows {
+                let y = inner.top() + row as f32 * lh;
+                let mut job = LayoutJob::default();
+                let mut col = 0u16;
+                while col < cols {
+                    let Some(cell) = s.cell(row, col) else { break };
+                    let (mut f, mut b) = (
+                        Self::term_color(cell.fgcolor(), fg),
+                        Self::term_color(cell.bgcolor(), bg),
+                    );
+                    if cell.inverse() {
+                        std::mem::swap(&mut f, &mut b);
+                    }
+                    if cell.dim() {
+                        f = mix(b, f, 0.6);
+                    }
+                    let selected = sel.is_some_and(|((r0, c0), (r1, c1))| {
+                        (row, col) >= (r0, c0) && (row, col) <= (r1, c1)
+                    });
+                    if selected {
+                        b = c.sel;
+                    }
+                    let width = if cell.is_wide() { 2 } else { 1 };
+                    if b != bg {
+                        clip.rect_filled(
+                            Rect::from_min_size(
+                                Pos2::new(inner.left() + col as f32 * cw, y),
+                                Vec2::new(cw * width as f32, lh),
+                            ),
+                            0.0,
+                            b,
+                        );
+                    }
+                    let text = if cell.has_contents() {
+                        cell.contents().to_string()
+                    } else {
+                        " ".to_string()
+                    };
+                    job.append(
+                        &text,
+                        0.0,
+                        egui::TextFormat {
+                            font_id: font.clone(),
+                            color: if cell.bold() {
+                                mix(f, Color32::WHITE, 0.15)
+                            } else {
+                                f
+                            },
+                            italics: cell.italic(),
+                            underline: if cell.underline() {
+                                Stroke::new(1.0, f)
+                            } else {
+                                Stroke::NONE
+                            },
+                            ..Default::default()
+                        },
+                    );
+                    col += width;
+                }
+                let g = p.layout_job(job);
+                clip.galley(Pos2::new(inner.left(), y + (lh - rh) / 2.0), g, fg);
+            }
+            if !s.hide_cursor() && s.scrollback() == 0 && !exited {
+                let cr = Rect::from_min_size(
+                    Pos2::new(
+                        inner.left() + ccol as f32 * cw,
+                        inner.top() + crow as f32 * lh,
+                    ),
+                    Vec2::new(cw, lh),
+                );
+                if focused {
+                    clip.rect_filled(cr, 0.0, mix(c.accent, bg, 0.35));
+                } else {
+                    clip.rect_stroke(cr, 0.0, Stroke::new(1.0, c.dim), StrokeKind::Inside);
+                }
+            }
+            if s.scrollback() > 0 {
+                clip.text(
+                    r.right_top() + Vec2::new(-12.0, 6.0),
+                    Align2::RIGHT_TOP,
+                    format!("scrolled back {} lines", s.scrollback()),
+                    FontId::proportional(11.0),
+                    c.accent,
+                );
+            }
+        });
+        if exited {
+            clip.text(
+                Pos2::new(inner.left(), inner.bottom() - lh / 2.0),
+                Align2::LEFT_CENTER,
+                format!(
+                    "[process exited with code {} — press any key to close]",
+                    self.app
+                        .terminals
+                        .iter()
+                        .find(|t| t.id == id)
+                        .and_then(|t| *t.exit_code.lock().unwrap())
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "?".into())
+                ),
+                font,
+                c.dim,
+            );
+        }
+        if let Some(pos) = term_menu {
+            self.app.focus = Focus::Terminal;
+            self.app
+                .open_context_menu(crate::menu::ContextKind::Terminal, (pos.x, pos.y));
+        }
+    }
+
+    fn draw_console(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
+        use crate::log::Level;
+        let focused = self.app.focus == Focus::Console && self.app.modal.is_none();
+        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        let small = FontId::proportional(11.5);
+        let filt = &self.app.console.filter;
+        let hint = format!(
+            "{}{}{}type help",
+            if self.app.console.show_debug {
+                "debug output on · "
+            } else {
+                ""
+            },
+            if self.app.console.wrap {
+                ""
+            } else {
+                "no wrap · "
+            },
+            if filt.is_empty() {
+                String::new()
+            } else {
+                format!("filter \"{filt}\" · ")
+            }
+        );
+        p.text(
+            Pos2::new(r.right() - 64.0, r.top() - 13.0),
+            Align2::RIGHT_CENTER,
+            hint,
+            small.clone(),
+            c.dim,
+        );
+        let input = Rect::from_min_max(Pos2::new(r.left(), r.bottom() - 26.0), r.max);
+        let body = Rect::from_min_max(
+            Pos2::new(r.left() + 12.0, r.top() + 2.0),
+            Pos2::new(r.right() - 12.0, input.top()),
+        );
+        let entries = self.app.console_entries();
+        let mono = FontId::monospace(12.0);
+        let cw = ui.ctx().fonts_mut(|f| f.glyph_width(&mono, 'M'));
+        let lh = 17.0;
+        let wrap_cols = ((body.width() / cw).floor() as usize).max(20);
+        // Visual rows: (entry index, start char, end char).
+        let lines: Vec<Vec<char>> = entries
+            .iter()
+            .map(|e| App::console_line(e).chars().collect())
+            .collect();
+        let mut rows: Vec<(usize, usize, usize)> = vec![];
+        for (i, l) in lines.iter().enumerate() {
+            if self.app.console.wrap && l.len() > wrap_cols {
+                let mut s = 0;
+                while s < l.len() {
+                    rows.push((i, s, (s + wrap_cols).min(l.len())));
+                    s += wrap_cols;
+                }
+            } else {
+                rows.push((i, 0, l.len()));
+            }
+        }
+        let n_vis = ((body.height() / lh).floor() as usize).max(1);
+        let max_scroll = rows.len().saturating_sub(n_vis);
+        let resp = ui.interact(body, Id::unique("console"), Sense::click_and_drag());
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+            let d = ui
+                .ctx()
+                .input(|i| (i.smooth_scroll_delta, i.modifiers.shift));
+            let (dx, dy) = if d.1 { (d.0.y, 0.0) } else { (d.0.x, d.0.y) };
+            if dy != 0.0 {
+                let s = self.app.console.scroll as f32 + dy / lh;
+                self.app.console.scroll = s.max(0.0).round() as usize;
+            }
+            if dx != 0.0 && !self.app.console.wrap {
+                let longest = lines.iter().map(|l| l.len()).max().unwrap_or(0) as f32 * cw;
+                self.app.console.hscroll = (self.app.console.hscroll - dx)
+                    .clamp(0.0, (longest - body.width() + 40.0).max(0.0));
+            }
+        }
+        self.app.console.scroll = self.app.console.scroll.min(max_scroll);
+        let end = rows.len() - self.app.console.scroll;
+        let start = end.saturating_sub(n_vis);
+        let hx = if self.app.console.wrap {
+            0.0
+        } else {
+            self.app.console.hscroll
+        };
+        // Hit testing for selection.
+        let hit = |pt: Pos2| -> Option<crate::app::ConsolePos> {
+            let vr = start + ((pt.y - body.top()) / lh).floor().max(0.0) as usize;
+            let (ei, s, e) = *rows.get(vr.min(end.saturating_sub(1)))?;
+            let col = (((pt.x - body.left() + hx) / cw).round().max(0.0) as usize + s).min(e);
+            Some((entries[ei].id, col))
+        };
+        if let Some(pt) = resp.interact_pointer_pos() {
+            if resp.double_clicked() {
+                if let Some((id, col)) = hit(pt)
+                    && let Some(i) = entries.iter().position(|e| e.id == id)
+                {
+                    let l = &lines[i];
+                    let w = |ch: char| ch.is_alphanumeric() || ch == '_';
+                    let (mut a, mut b) = (col.min(l.len()), col.min(l.len()));
+                    while a > 0 && w(l[a - 1]) {
+                        a -= 1;
+                    }
+                    while b < l.len() && w(l[b]) {
+                        b += 1;
+                    }
+                    self.app.console.sel = Some(((id, a), (id, b)));
+                }
+            } else if resp.drag_started() {
+                self.app.console.sel = hit(pt).map(|h| (h, h));
+            } else if resp.dragged() {
+                if let (Some((a, _)), Some(h)) = (self.app.console.sel, hit(pt)) {
+                    self.app.console.sel = Some((a, h));
+                }
+            } else if resp.clicked() {
+                self.app.console.sel = None;
+            }
+        }
+        if resp.clicked() || resp.drag_started() {
+            self.app.focus = Focus::Console;
+        }
+        if resp.secondary_clicked()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            self.app.focus = Focus::Console;
+            self.app
+                .open_context_menu(crate::menu::ContextKind::Console, (pos.x, pos.y));
+        }
+        let sel = self
+            .app
+            .console
+            .sel
+            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
+        let clip = p.with_clip_rect(body);
+        for (row, &(ei, s, e)) in rows[start..end].iter().enumerate() {
+            let y = body.top() + row as f32 * lh;
+            let ent = &entries[ei];
+            let x0 = body.left() - hx;
+            // Selection highlight within this visual row.
+            if let Some(((ai, ac), (bi, bc))) = sel
+                && ent.id >= ai
+                && ent.id <= bi
+            {
+                let from = if ent.id == ai { ac.max(s) } else { s };
+                let to = if ent.id == bi { bc.min(e) } else { e };
+                if to > from || (ent.id != bi && e == lines[ei].len()) {
+                    let extra = if ent.id != bi && e == lines[ei].len() {
+                        0.5
+                    } else {
+                        0.0
+                    };
+                    clip.rect_filled(
+                        Rect::from_min_max(
+                            Pos2::new(x0 + (from - s) as f32 * cw, y),
+                            Pos2::new(x0 + (to.max(from) - s) as f32 * cw + extra * cw, y + lh),
+                        ),
+                        0.0,
+                        c.sel,
+                    );
+                }
+            }
+            // time [source] text, colored per part (only on the first visual row).
+            let text: String = lines[ei][s..e].iter().collect();
+            let level_col = match ent.level {
+                Level::Debug => c.dim,
+                Level::Info => c.fg,
+                Level::Warn => c.warn,
+                Level::Error => c.err,
+            };
+            let mut job = LayoutJob::default();
+            let prefix_len = if s == 0 {
+                (ent.time.len().min(8) + ent.source.len() + 4).min(text.chars().count())
+            } else {
+                0
+            };
+            let (pre, rest): (String, String) = (
+                text.chars().take(prefix_len).collect(),
+                text.chars().skip(prefix_len).collect(),
+            );
+            let fmt = |col| egui::TextFormat {
+                font_id: mono.clone(),
+                color: col,
+                ..Default::default()
+            };
+            job.append(&pre, 0.0, fmt(mix(c.info, c.dim, 0.4)));
+            job.append(&rest, 0.0, fmt(level_col));
+            let g = p.layout_job(job);
+            clip.galley(Pos2::new(x0, y + 1.0), g, c.fg);
+        }
+        if entries.is_empty() {
+            clip.text(
+                Pos2::new(body.left(), body.top() + 12.0),
+                Align2::LEFT_CENTER,
+                "No log output yet.",
+                small.clone(),
+                c.dim,
+            );
+        }
+        if self.app.console.scroll > 0 {
+            p.text(
+                Pos2::new(r.right() - 12.0, input.top() - 4.0),
+                Align2::RIGHT_BOTTOM,
+                format!("{} newer line(s) below", self.app.console.scroll),
+                small,
+                c.accent,
+            );
+        }
+        // Input line.
+        p.rect_filled(input, 0.0, mix(bg, c.fg, 0.04));
+        let pr = p.text(
+            Pos2::new(r.left() + 12.0, input.center().y),
+            Align2::LEFT_CENTER,
+            ">",
+            mono.clone(),
+            c.accent,
+        );
+        let it = &self.app.console.input;
+        let tr = p.text(
+            Pos2::new(pr.right() + 8.0, input.center().y),
+            Align2::LEFT_CENTER,
+            it,
+            mono.clone(),
+            c.fg,
+        );
+        if focused {
+            let before: String = it.chars().take(self.app.console.cursor).collect();
+            let bw = p
+                .ctx()
+                .fonts_mut(|f| f.layout_no_wrap(before, mono.clone(), c.fg).size().x);
+            p.rect_filled(
+                Rect::from_min_size(
+                    Pos2::new(tr.left() + bw, input.top() + 5.0),
+                    Vec2::new(2.0, input.height() - 10.0),
+                ),
+                0.0,
+                c.accent,
+            );
+        }
+        let ir = ui.interact(input, Id::unique("console-input"), Sense::click());
+        if ir.clicked() {
+            self.app.focus = Focus::Console;
+        }
+    }
+
+    fn draw_lsp_info(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
+        use crate::app::Tone;
+        let Some(Modal::LspInfo(v)) = &self.app.modal else {
+            return;
+        };
+        let lines = self.app.lsp_info();
+        p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
+        let r = Rect::from_center_size(
+            full.center(),
+            Vec2::new(
+                (full.width() * 0.75).clamp(520.0, 980.0),
+                full.height() * 0.84,
+            ),
+        );
+        p.rect_filled(
+            r.translate(Vec2::new(0.0, 5.0)),
+            8.0,
+            Color32::from_black_alpha(90),
+        );
+        p.rect_filled(r, 6.0, c.pop);
+        p.rect_stroke(r, 6.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+        p.text(
+            Pos2::new(r.left() + 18.0, r.top() + 24.0),
+            Align2::LEFT_CENTER,
+            "LSP Info",
+            FontId::proportional(16.0),
+            c.fg,
+        );
+        p.text(
+            Pos2::new(r.right() - 18.0, r.top() + 24.0),
+            Align2::RIGHT_CENTER,
+            "i install · r restart servers · s server manager · Up/Down scroll · Esc close",
+            FontId::proportional(11.5),
+            c.dim,
+        );
+        let green = Color32::from_rgb(0x7F, 0xD1, 0x7A);
+        let body = Rect::from_min_max(
+            Pos2::new(r.left() + 10.0, r.top() + 46.0),
+            Pos2::new(r.right() - 10.0, r.bottom() - 10.0),
+        );
+        let lh = 20.0;
+        let n_vis = ((body.height() / lh).floor() as usize).max(1);
+        let max_scroll = lines.len().saturating_sub(n_vis);
+        let resp = ui.interact(body, Id::unique("lspinfo"), Sense::hover());
+        let mut scroll = v.scroll.min(max_scroll);
+        if resp.hovered() {
+            let dy = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            if dy != 0.0 {
+                scroll = ((scroll as f32 - dy / lh).round().max(0.0) as usize).min(max_scroll);
+            }
+        }
+        let clip = p.with_clip_rect(body);
+        for (row, (tone, text)) in lines.iter().enumerate().skip(scroll).take(n_vis) {
+            let y = body.top() + (row - scroll) as f32 * lh + lh / 2.0;
+            let (font, col) = match tone {
+                Tone::Heading => (FontId::proportional(12.5), c.accent),
+                Tone::Text => (FontId::monospace(12.5), c.fg),
+                Tone::Dim => (FontId::monospace(12.0), c.dim),
+                Tone::Good => (FontId::monospace(12.5), green),
+                Tone::Warn => (FontId::monospace(12.5), c.warn),
+                Tone::Bad => (FontId::monospace(12.5), c.err),
+            };
+            clip.text(
+                Pos2::new(body.left() + 8.0, y),
+                Align2::LEFT_CENTER,
+                text,
+                font,
+                col,
+            );
+        }
+        if !self.app.installing.is_empty()
+            || self.app.lsp.clients.values().any(|c| c.alive && !c.ready)
+        {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
+        if let Some(Modal::LspInfo(v)) = &mut self.app.modal {
+            v.scroll = scroll;
+        }
+    }
+
     fn draw_servers(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
         use crate::app::ServerStatus as St;
         let Some(Modal::Servers(v)) = &self.app.modal else {
@@ -1588,7 +2665,9 @@ impl Gui {
                 St::OnPath(_) => (c.info, "on PATH".to_string()),
                 St::Installing => (c.accent, "installing…".to_string()),
                 St::Failed(_) => (c.err, "install failed".to_string()),
-                St::Missing if srv.install.is_some() => (c.dim, "not installed".to_string()),
+                St::Missing if srv.install.as_ref().is_some_and(|i| i.supported_here()) => {
+                    (c.dim, "not installed".to_string())
+                }
                 St::Missing => (c.dim, "not found (install manually)".to_string()),
             };
             clip.circle_filled(Pos2::new(rr.left() + 16.0, rr.center().y), 4.5, dot);
@@ -1778,7 +2857,7 @@ impl Gui {
         );
         p.rect_filled(r, 4.0, c.pop);
         p.rect_stroke(r, 4.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
-        let first = comp.sel.saturating_sub(rows - 1);
+        let first = comp.sel.unwrap_or(0).saturating_sub(rows - 1);
         let clip = p.with_clip_rect(r);
         let mut clicked = None;
         for (row, (i, &idx)) in comp
@@ -1794,15 +2873,14 @@ impl Gui {
                 Pos2::new(r.left() + 4.0, r.top() + 4.0 + row as f32 * lh),
                 Vec2::new(w - 8.0, lh),
             );
-            if i == comp.sel {
+            if Some(i) == comp.sel {
                 clip.rect_filled(rr, 3.0, c.pop_sel);
             }
-            clip.text(
-                Pos2::new(rr.left() + 6.0, rr.center().y),
-                Align2::LEFT_CENTER,
+            kind_icon(
+                &clip,
+                Pos2::new(rr.left() + 15.0, rr.center().y),
                 it.kind,
-                FontId::proportional(11.0),
-                c.info,
+                c.pop,
             );
             clip.text(
                 Pos2::new(rr.left() + 40.0, rr.center().y),
@@ -1831,18 +2909,56 @@ impl Gui {
         }
         if let Some(i) = clicked {
             if let Some(comp) = &mut self.app.completion {
-                comp.sel = i;
+                comp.sel = Some(i);
             }
             self.app.on_key(Key::new(crate::keys::KeyCode::Enter));
         }
     }
 
-    fn draw_hover(&self, p: &Painter, editor: Rect, at: Pos2, c: &Palette) {
+    fn draw_hover(&mut self, p: &Painter, editor: Rect, at: Pos2, c: &Palette) {
         let Some(hv) = &self.app.hover else { return };
-        let text = hv.lines.join("\n");
-        let font = FontId::monospace(12.5);
         let max_w = (editor.width() - 40.0).min(640.0);
-        let g = p.ctx().fonts_mut(|f| f.layout(text, font, c.fg, max_w));
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = max_w;
+        let mono = FontId::monospace(12.5);
+        // Diagnostics first (colored by severity), then the server's hover text.
+        for (sev, msg) in &hv.diagnostics {
+            let col = match sev {
+                1 => c.err,
+                2 => c.warn,
+                _ => c.info,
+            };
+            job.append(
+                &format!("{msg}\n"),
+                0.0,
+                egui::TextFormat {
+                    font_id: FontId::proportional(13.0),
+                    color: col,
+                    ..Default::default()
+                },
+            );
+        }
+        if !hv.diagnostics.is_empty() && !hv.lines.is_empty() {
+            job.append(
+                "\n",
+                0.0,
+                egui::TextFormat {
+                    font_id: FontId::proportional(6.0),
+                    color: c.dim,
+                    ..Default::default()
+                },
+            );
+        }
+        job.append(
+            &hv.lines.join("\n"),
+            0.0,
+            egui::TextFormat {
+                font_id: mono,
+                color: c.fg,
+                ..Default::default()
+            },
+        );
+        let g = p.layout_job(job);
         let size = g.size() + Vec2::new(20.0, 16.0);
         let h = size.y.min(editor.height() * 0.6);
         let x = at.x.clamp(
@@ -1861,6 +2977,144 @@ impl Gui {
         p.rect_stroke(r, 4.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
         p.with_clip_rect(r.shrink(4.0))
             .galley(r.min + Vec2::new(10.0, 8.0), g, c.fg);
+        self.hover_rect = Some(r);
+    }
+
+    /// A right-click menu (mouse or Shift+F10).
+    fn draw_context_menu(&mut self, ui: &mut egui::Ui, p: &Painter, full: Rect, c: &Palette) {
+        let Some(cm) = self.app.context_menu.clone() else {
+            return;
+        };
+        let font = FontId::proportional(UI_SIZE);
+        let small = FontId::proportional(12.0);
+        let rows: Vec<Option<(crate::commands::Command, String, String, bool)>> = cm
+            .items
+            .iter()
+            .map(|i| {
+                i.as_ref().map(|i| {
+                    (
+                        i.cmd,
+                        i.label.clone(),
+                        self.app.keymap.shortcut(i.cmd),
+                        self.app.enabled(i.cmd),
+                    )
+                })
+            })
+            .collect();
+        let mut lw: f32 = 120.0;
+        let mut kw: f32 = 0.0;
+        for (_, l, k, _) in rows.iter().flatten() {
+            lw = lw.max(
+                ui.ctx()
+                    .fonts_mut(|f| f.layout_no_wrap(l.clone(), font.clone(), c.fg).size().x),
+            );
+            kw = kw.max(
+                ui.ctx()
+                    .fonts_mut(|f| f.layout_no_wrap(k.clone(), small.clone(), c.dim).size().x),
+            );
+        }
+        let w = lw + kw + 56.0;
+        let h: f32 = rows
+            .iter()
+            .map(|r| if r.is_some() { MENU_ROW } else { 9.0 })
+            .sum::<f32>()
+            + 8.0;
+        let at = match cm.pos {
+            Some((x, y)) => Pos2::new(x, y),
+            None => match cm.kind {
+                crate::menu::ContextKind::Sidebar => self.sidebar_sel_px.unwrap_or(full.center()),
+                crate::menu::ContextKind::Editor | crate::menu::ContextKind::Tab => {
+                    self.keyboard_spot.unwrap_or(full.center())
+                }
+                _ => full.center() - Vec2::new(w / 2.0, 0.0),
+            },
+        };
+        let x = at.x.min(full.right() - w - 4.0).max(full.left() + 4.0);
+        let y = if at.y + h > full.bottom() - 4.0 {
+            (at.y - h).max(full.top() + 4.0)
+        } else {
+            at.y
+        };
+        let r = Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h));
+        p.rect_filled(
+            r.translate(Vec2::new(0.0, 4.0)),
+            6.0,
+            Color32::from_black_alpha(90),
+        );
+        p.rect_filled(r, 5.0, c.pop);
+        p.rect_stroke(r, 5.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
+        let mut yy = r.top() + 4.0;
+        let mut hovered = None;
+        let mut clicked = None;
+        for (i, row) in rows.iter().enumerate() {
+            let Some((_, label, keys, enabled)) = row else {
+                p.line_segment(
+                    [
+                        Pos2::new(r.left() + 10.0, yy + 4.5),
+                        Pos2::new(r.right() - 10.0, yy + 4.5),
+                    ],
+                    Stroke::new(1.0, c.border),
+                );
+                yy += 9.0;
+                continue;
+            };
+            let rr =
+                Rect::from_min_size(Pos2::new(r.left() + 4.0, yy), Vec2::new(w - 8.0, MENU_ROW));
+            yy += MENU_ROW;
+            if cm.sel == Some(i) && *enabled {
+                p.rect_filled(rr, 4.0, c.pop_sel);
+            }
+            let col = if *enabled {
+                c.fg
+            } else {
+                mix(c.fg, c.pop, 0.6)
+            };
+            p.text(
+                Pos2::new(rr.left() + 12.0, rr.center().y),
+                Align2::LEFT_CENTER,
+                label,
+                font.clone(),
+                col,
+            );
+            p.text(
+                Pos2::new(rr.right() - 12.0, rr.center().y),
+                Align2::RIGHT_CENTER,
+                keys,
+                small.clone(),
+                c.dim,
+            );
+            let resp = ui.interact(rr, Id::unique(("ctx", i)), Sense::click());
+            if resp.hovered() && *enabled {
+                hovered = Some(i);
+            }
+            if resp.clicked() && *enabled {
+                clicked = Some(i);
+            }
+        }
+        if let Some(i) = clicked {
+            self.app.context_activate(i);
+            return;
+        }
+        if let Some(i) = hovered
+            && let Some(cm) = &mut self.app.context_menu
+        {
+            cm.sel = Some(i);
+        }
+        // A click outside closes it (the right-click that opened it doesn't count).
+        let (pressed, pos, secondary) = ui.ctx().input(|i| {
+            (
+                i.pointer.any_pressed(),
+                i.pointer.interact_pos(),
+                i.pointer.secondary_pressed(),
+            )
+        });
+        if pressed
+            && !secondary
+            && let Some(pos) = pos
+            && !r.contains(pos)
+        {
+            self.app.context_menu = None;
+        }
     }
 }
 
@@ -1870,6 +3124,7 @@ impl eframe::App for Gui {
     }
 
     fn on_exit(&mut self) {
+        self.app.save_workspace();
         self.app.lsp.shutdown();
     }
 }
@@ -1878,7 +3133,8 @@ impl eframe::App for Gui {
 
 fn char_w(c: char, at: usize) -> usize {
     if c == '\t' {
-        TAB - at % TAB
+        let t = TAB.with(|t| t.get()).max(1);
+        t - at % t
     } else {
         c.width().unwrap_or(1).max(1)
     }
@@ -1979,6 +3235,57 @@ fn line_job(
     job
 }
 
+/// Completion kind icon: a small tinted tile with a letter, colored like VS Code's symbol
+/// icons (purple = callables, blue = values, orange = types). Drawn as shapes + ASCII so it
+/// never depends on icon-font coverage.
+fn kind_icon(p: &Painter, center: Pos2, kind: &str, bg: Color32) {
+    let purple = Color32::from_rgb(0xB1, 0x80, 0xD7);
+    let blue = Color32::from_rgb(0x75, 0xBE, 0xFF);
+    let orange = Color32::from_rgb(0xEE, 0x9D, 0x28);
+    let grey = Color32::from_rgb(0xA0, 0xA0, 0xA8);
+    let (glyph, col) = match kind {
+        "fn" => ("f", purple),
+        "meth" => ("m", purple),
+        "ctor" => ("c", purple),
+        "var" => ("v", blue),
+        "field" => ("F", blue),
+        "prop" => ("p", blue),
+        "const" => ("K", blue),
+        "val" | "unit" => ("1", blue),
+        "iface" => ("I", blue),
+        "class" => ("C", orange),
+        "struct" => ("S", orange),
+        "enum" => ("E", orange),
+        "variant" => ("e", orange),
+        "type" => ("T", orange),
+        "event" => ("!", orange),
+        "mod" => ("M", grey),
+        "kw" => ("k", grey),
+        "snip" => ("s", grey),
+        "file" => ("d", grey),
+        "dir" => ("D", grey),
+        "ref" => ("r", grey),
+        "op" => ("+", grey),
+        "color" => ("#", grey),
+        _ => ("t", grey),
+    };
+    let r = Rect::from_center_size(center, Vec2::splat(16.0));
+    p.rect_filled(r, 3.0, mix(bg, col, 0.22));
+    p.rect_stroke(
+        r,
+        3.0,
+        Stroke::new(1.0, mix(bg, col, 0.55)),
+        StrokeKind::Inside,
+    );
+    p.text(
+        r.center(),
+        Align2::CENTER_CENTER,
+        glyph,
+        FontId::monospace(11.0),
+        col,
+    );
+}
+
 /// Folder disclosure triangle (drawn, so it never depends on font coverage).
 /// Folder disclosure triangle, rotated from ▸ (0.0) to ▾ (1.0). Drawn as a shape so it
 /// never depends on font coverage.
@@ -2005,5 +3312,34 @@ fn squiggle(p: &Painter, x0: f32, x1: f32, y: f32, col: Color32) {
     }
     if pts.len() >= 2 {
         p.add(egui::Shape::line(pts, Stroke::new(1.0, col)));
+    }
+}
+
+/// Caret opacity `elapsed` after it last moved, and when the next frame is needed.
+/// The caret stays solid for a moment after moving (like Sublime), then animates.
+pub fn caret_alpha(style: CaretStyle, elapsed: Duration) -> (f32, Option<Duration>) {
+    const HOLD: f32 = 0.5; // seconds solid after a move
+    const PERIOD: f32 = 1.0; // one full off/on cycle
+    let t = elapsed.as_secs_f32();
+    match style {
+        CaretStyle::Solid => (1.0, None),
+        _ if t < HOLD => (1.0, Some(Duration::from_secs_f32(HOLD - t))),
+        CaretStyle::Blink => {
+            let phase = (t - HOLD) % PERIOD;
+            let half = PERIOD / 2.0;
+            let alpha = if phase < half { 0.0 } else { 1.0 };
+            let left = if phase < half {
+                half - phase
+            } else {
+                PERIOD - phase
+            };
+            (alpha, Some(Duration::from_secs_f32(left.max(0.001))))
+        }
+        CaretStyle::Smooth => {
+            // Cosine fade: 1 → 0 → 1 over a period, eased so it lingers at both ends.
+            let phase = ((t - HOLD) % PERIOD) / PERIOD;
+            let alpha = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
+            (alpha, Some(Duration::from_millis(16)))
+        }
     }
 }

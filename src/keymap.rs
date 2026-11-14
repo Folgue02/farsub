@@ -182,6 +182,7 @@ pub fn parse(spec: &str) -> Option<Spec> {
         "End" => KeyCode::End,
         "PageUp" => KeyCode::PageUp,
         "PageDown" => KeyCode::PageDown,
+        "Menu" => KeyCode::Menu,
         "Space" => KeyCode::Char(' '),
         k if k.len() > 1 && k.starts_with('F') => KeyCode::F(k[1..].parse().ok()?),
         k => {

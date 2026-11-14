@@ -49,6 +49,7 @@ fn code(k: KeyCode) -> Option<Code> {
         KeyCode::PageUp => "PageUp".into(),
         KeyCode::PageDown => "PageDown".into(),
         KeyCode::F(n) => format!("F{n}"),
+        KeyCode::Menu => return None,
     };
     name.parse().ok()
 }
@@ -75,12 +76,9 @@ impl NativeMenu {
     pub fn install(app: &App, tx: EventTx) -> Option<NativeMenu> {
         let menu = Menu::new();
         let mut items = vec![];
+        let accels = crate::menu::native_accelerators(&app.menus, &app.keymap);
         let mut item = |cmd: Command, label: &str| {
-            let acc = app
-                .keymap
-                .primary(cmd)
-                .filter(|b| b.spec.ctrl || b.spec.alt || matches!(b.spec.code, KeyCode::F(_)))
-                .and_then(|b| accelerator(&b.spec));
+            let acc = accels.get(&cmd).and_then(accelerator);
             let enabled = app.enabled(cmd);
             let mi = MenuItem::with_id(commands::id(cmd), label, enabled, acc);
             items.push((mi.clone(), cmd, enabled));

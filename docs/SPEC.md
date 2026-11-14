@@ -1,0 +1,214 @@
+# farsub — product specification
+
+The living description of how farsub works and should behave. When a decision changes,
+this document is corrected (not appended to). "Cmd" means Cmd on macOS and Ctrl on
+Windows/Linux; "Ctrl" means the Control key on every platform.
+
+## 1. Principles
+
+- **Sublime Text feel.** Layout, keys, palettes and behaviors follow Sublime Text unless a
+  decision below says otherwise. Where VS Code has the better-known convention (integrated
+  terminal), we follow VS Code.
+- **Keyboard first, mouse welcome.** Every action is reachable from the keyboard (shortcut,
+  command palette, or F10 menus). Mouse interactions mirror what Sublime/VS Code do.
+- **Nothing hard-coded.** Languages, servers, key bindings and menus ship as data in
+  `runtime/` and can be overridden from the user's config folder. Code only implements
+  commands and mechanisms.
+- **Never lose work.** Hot exit keeps unsaved changes across restarts; destructive file
+  operations go to the system Trash and ask first.
+
+## 2. Command line
+
+- `farsub [PATHS…]` opens files (`FILE[:LINE[:COL]]`), folders and `.farsub-project` files;
+  `-` reads stdin into a new untitled buffer.
+- **Does not block the shell**: the command hands off to a background process and returns
+  immediately (like `subl`). `-w/--wait` keeps it in the foreground until the window
+  closes, for use as `$EDITOR` / `git config core.editor "farsub -w"`.
+- Argument errors are reported in the shell (exit code 2) before handing off.
+- What opens: a project file → that project; folders → those folders (or added to the last
+  session with `-a`); files only → the last session (or the file's project root if there
+  is none); nothing → the last session, else the current folder. `-n` skips the session.
+- Headless commands run in the foreground and never open a window: `--list-servers`,
+  `--install-server`, `--uninstall-server`, `--check-config`. `--config` and `--data-dir`
+  redirect config/data folders.
+
+## 3. Window layout
+
+```
+┌ menu bar (in-window on Windows/Linux; system menu bar on macOS) ───────────────┐
+│ sidebar │ tabs                                                                  │
+│ FOLDERS │ editor                                                                │
+│         ├───────────────────────────────────────────────────────────────────────┤
+│         │ bottom panel: TERMINAL n │ CONSOLE  (optional, resizable)              │
+│         ├───────────────────────────────────────────────────────────────────────┤
+│         │ input panel (find, prompts)                                           │
+├ status bar ──────────────────────────────────────────────────────────────────────┤
+```
+
+- `ui_scale` (default 1.0, range 0.5–3) zooms the **whole interface**: every font, widget,
+  margin and hit area, like browser zoom. It's separate from `font_size` and from View →
+  Zoom In/Out (Cmd+= / Cmd+-), which size only the editor text, as in Sublime. Changing it
+  in the settings file applies immediately. The macOS menu bar is drawn by the OS and isn't
+  scaled.
+- The sidebar is resizable by dragging its right edge (double-click resets); its width is
+  saved in the workspace. Cmd+B toggles it, Cmd+0 focuses it.
+- The bottom panel is resizable by dragging its top edge; its height and visibility are
+  saved in the workspace.
+- Status bar, right side (all clickable): LSP status → LSP Info; indentation → Indentation
+  menu; syntax name → syntax picker.
+
+## 4. Editor
+
+- Mouse pointer: I-beam over text, normal arrow over selected text (Sublime), arrow over
+  the gutter.
+- Indentation: detected per file on open (tabs vs spaces; space width from the most common
+  indentation change between lines; a file indented with N spaces gets tab width N). The
+  Indentation menu offers spaces/tabs, tab width 1–8, guess from buffer, convert to
+  spaces/tabs (one undo step). Manual choices are remembered per file in the workspace.
+- Indentation guides at every level; the block around the cursor is highlighted.
+  `indent_guides = false` disables them.
+- Caret: Sublime's setting names. Width = 1 + `caret_extra_width`; it reaches
+  `caret_extra_top` px above and `caret_extra_bottom` px below the line. Defaults 1.5 / 1 /
+  1: a little thicker than a hairline and a little taller than the line.
+- Caret animation `caret_style`: `"smooth"` (default, as in Sublime: fades out and back in
+  once per second), `"blink"` (hard on/off, 0.5 s each) or `"solid"`. It stays solid for
+  0.5 s after every move or edit, and only animates while the window has focus (no
+  background repaints).
+- Goto Symbol (Cmd+R) lists symbol **names only**, as in Sublime: `add`, `Point`,
+  `impl Debug for Point<T>`, Markdown headings without `#`. The kind (fn, struct, class…)
+  is shown dimmed on the right; signatures never appear. Nested symbols are indented.
+  Results come from the language server when one is attached, otherwise from a built-in
+  scan of declaration keywords.
+- Current-line highlight is **off by default** (`highlight_current_line = true` turns it
+  on).
+- Mouse hover (LSP): resting the pointer on a symbol for 500 ms shows the server's hover
+  info; diagnostics under the pointer are listed on top in their severity color. Works
+  without a server for diagnostics alone. The popup closes when the pointer leaves both the
+  word and the popup, on typing, or on Esc. Cmd+I shows the same at the cursor.
+- Right-click moves the cursor to the click (unless it lands inside the selection, which is
+  kept) and opens the editor context menu.
+- Syntax: detected from extension/first line/packages; the status-bar syntax picker
+  overrides it per file, and the file's language (comment token, indentation defaults, LSP
+  server) follows the chosen syntax.
+
+## 5. Completion (LSP)
+
+- Opens automatically after 3 identifier characters or a server trigger character, or with
+  Ctrl+Space.
+- **Nothing is selected when the list opens.** Ctrl+N / Ctrl+P select the next/previous
+  item. On Windows/Linux these keys only navigate while the list is open (otherwise they are
+  Cmd+N / Cmd+P = New File / Goto Anything). Mouse click selects and accepts.
+- Enter / Tab accept the selected item. With nothing selected they behave normally
+  (newline / indent) and close the list. Esc closes it. Arrow keys and Page Up/Down move
+  the editor cursor and close the list. Typing more characters refilters the list and
+  clears the selection again.
+- Each item shows a kind icon: a small colored badge with a glyph per kind (function,
+  method, variable, field/property, class/struct, interface, module, keyword, snippet,
+  constant, enum, file…), plus the label and detail.
+
+## 6. Bottom panel
+
+One panel, tabs in its header: one tab per terminal ("TERMINAL n: <title>", the title is
+the shell name or what the program sets), then CONSOLE. Every terminal tab has its own ×
+(shown on the active/hovered tab); middle-click also closes it. Header buttons: `+` new
+terminal, `x` kills the current terminal (or hides the panel on the console tab).
+
+### 6.1 Terminal (VS Code style)
+
+- **Ctrl+`** toggles the panel showing the terminal (creating one on first use) and focuses
+  it; pressing it while the terminal has focus hides the panel. **Ctrl+Shift+`** opens a
+  new terminal. Terminals start in the project's first folder with the user's `$SHELL`
+  (`cmd.exe`/PowerShell on Windows), or `terminal_shell` if set; `TERM=xterm-256color`.
+- **Ctrl+Tab / Ctrl+Shift+Tab** cycle terminal tabs (wrapping) while a terminal has
+  focus; in the editor they keep switching files.
+- Keys go to the shell, including Ctrl combinations (Ctrl+C interrupts). Cmd shortcuts on
+  macOS stay app shortcuts and never reach the shell. A short list of app shortcuts always
+  works in the terminal on every platform: toggle/new terminal, show console, command
+  palette, Goto Anything, focus sidebar. Shift+Page Up/Down scroll the history.
+- Copy/paste: Cmd+C copies the selection (on Windows/Linux Ctrl+Shift+C; plain Ctrl+C is
+  sent to the shell when nothing is selected); Cmd+V / Ctrl+Shift+V pastes (bracketed paste
+  when the program asks for it).
+- Mouse: drag to select text; wheel scrolls back through history.
+- When the shell exits with code 0 (e.g. `exit`) its tab closes by itself (VS Code); the
+  panel hides when it was the last one. A non-zero exit keeps the tab showing
+  "[process exited with code N — press any key to close]".
+- Killing a tab (×, middle-click, Terminal: Kill Terminal, `x`) kills its shell.
+  Terminals are not restored across restarts.
+
+### 6.2 Console (app log)
+
+- Opened from the command palette: **"View: Show Console"** (no default shortcut), or the
+  View menu. It is a tab of the bottom panel.
+- Shows the app log: status messages, language-server log messages/start/exit/initialize
+  failures, server install output, package errors, panics. Also written to
+  `<data>/logs/farsub.log`.
+- Text is **selectable**: drag to select, double-click selects a word, Cmd+A selects all,
+  Cmd+C copies.
+- Long lines **wrap** by default; `wrap` in the console input toggles wrapping, and with
+  wrapping off the panel scrolls sideways (Shift+wheel / horizontal trackpad scroll).
+- Input line: `help`, `clear`, `debug` (show raw server stderr), `filter TEXT`, `wrap`,
+  `log`, `lsp`, or any command id. Up/Down recall history. Esc clears the selection, or
+  hides the panel when nothing is selected.
+
+## 7. Context menus
+
+- Right-click opens a context menu in the editor, sidebar (selects the row first), editor
+  tabs, terminal and console. **Shift+F10** or the **Menu** key opens the same menu for
+  the focused area at the cursor/selected row.
+- Items are data: `[context.editor|sidebar|tab|terminal|console] items = [...]` in
+  `menus.toml` (command ids, `"-"` separators); user files override per section.
+- Keyboard: arrows move, Enter runs, a letter runs the item starting with it, Esc or a
+  click outside closes. Disabled items are dimmed and skipped.
+- egui's own widget focus is never used: every key goes through the app's routing, so Tab
+  never moves focus to (and Enter never "clicks") a menu-bar button.
+
+## 8. Sidebar
+
+- Every project folder is a top-level node. Keyboard: arrows/hjkl move and fold, Enter
+  opens, Space marks, `a` new file, `A` new folder, `r` rename/move, `c`/`x`/`p`
+  copy/cut/paste, `D` duplicate, `y` copy path, `d`/Delete trash (asks), `.` hidden files.
+- Hover highlight; folders open/close with a slide + rotating arrow animation.
+
+## 9. Projects and workspaces
+
+- `NAME.farsub-project`: folders (path, name, exclude patterns), `[settings]` overriding
+  editor settings, optional `[[languages]]`/`[[servers]]`.
+- `NAME.farsub-workspace` next to it: open files, cursors, scroll, syntax/indentation
+  overrides, expanded folders, sidebar width, panel state, find text, closed files,
+  unsaved buffer contents. Folder windows without a project file keep their workspace in
+  the data folder. Autosaved every 30 s and on exit.
+- Hot exit (default on): quitting never prompts; unsaved changes return next launch.
+
+## 10. Language servers
+
+- nvim-lspconfig-style server files (`servers/*.toml`) and languages listing servers in
+  preference order; the first installed (by farsub, or on PATH) is used.
+- Mason-like manager (Tools → Language Servers): install via npm / pip venv / cargo / go /
+  GitHub release / script into the data folder; status, logs, update, uninstall. Placeholders
+  `${install_dir}`, `${root}`, `${home}` in server args/env/settings/initialization options.
+- Built-in servers: pyright, basedpyright, pylsp (Python); ts_ls (JS/TS, installs
+  `typescript@5` because TypeScript 7 has no `tsserver`); bashls; gopls (needs Go);
+  rust_analyzer and clangd (official prebuilt binaries from their GitHub releases, on
+  macOS, Linux and Windows). npm and pip servers need Node.js / Python.
+- Any server with a source that works on this OS/CPU can be installed from the manager. A
+  recipe with nothing for this platform shows as "not installed" (no install action), and
+  installing it explains why.
+- GitHub release source (`[install.github]`, like Mason's): `repo`, optional `tag` (latest
+  by default), and `assets` globs keyed `"<os>-<arch>"` or `"<os>"` (os: macos, linux,
+  windows; arch: x86_64, aarch64). The download, `.zip` / `.tar.gz` / `.gz` extraction and
+  executable lookup all happen inside farsub, so they don't depend on `curl`, `tar` or `sh`
+  and work the same on Windows. `GITHUB_TOKEN` is used if set (API rate limit).
+- LSP Info (Cmd+Alt+I / status bar): this file's language/syntax, configured servers and
+  their status, attached server details (command, root, pid, sync, capabilities, stderr),
+  all running servers; `i` install, `r` restart, `s` manager.
+- A server that fails `initialize` is shown as failed with its reason (never stuck on
+  "starting").
+
+## 11. Menus and keys
+
+- macOS: native menu bar. Native shortcuts only come from global/editor bindings and each
+  key combination is registered once (a sidebar-only binding must never capture a key
+  while typing — e.g. Cmd+X always cuts text in the editor).
+- Windows/Linux: in-window menu bar; F10 opens the in-window menus everywhere.
+- Keymap viewer: Cmd+Shift+/ lists all bindings; user overrides in `keymap.toml`
+  (`command = ""` unbinds, `platforms` limits).

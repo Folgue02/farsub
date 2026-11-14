@@ -28,12 +28,33 @@ items = ["focus_sidebar", "reveal_in_sidebar", "-", "sidebar_new_file", "sidebar
 
 [[menu]]
 title = "View"
-items = ["toggle_sidebar", "toggle_menu_bar", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
+items = ["toggle_sidebar", "toggle_menu_bar", "-", "set_syntax", "indentation", "-", "toggle_terminal", "new_terminal", "toggle_console", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
 
 [[menu]]
 title = "Tools"
-items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "manage_servers", "-", "install_package", "remove_package", "browse_packages", "reload_packages"]
+items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "-", "install_package", "remove_package", "browse_packages", "reload_packages"]
+
+[[menu]]
+title = "Project"
+items = ["open_project", "switch_project", "save_project_as", "close_project", "-", "add_folder", "remove_folder", "-", "edit_project"]
 
 [[menu]]
 title = "Help"
 items = ["show_keymap", "show_commands"]
+
+# Right-click menus (like Sublime's Context.sublime-menu / Side Bar.sublime-menu).
+# Shift+F10 or the Menu key opens the one for the focused pane.
+[context.editor]
+items = ["cut", "copy", "paste", "-", "select_all", "-", "goto_definition", "find_references", "rename", "hover", "format", "-", "toggle_comment", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager"]
+
+[context.sidebar]
+items = ["sidebar_new_file", "sidebar_new_folder", "-", "sidebar_rename", "sidebar_duplicate", "-", "sidebar_copy", "sidebar_cut", "sidebar_paste", "sidebar_copy_path", "-", "open_terminal_here", "reveal_in_file_manager", "-", "sidebar_delete", "-", "remove_folder"]
+
+[context.tab]
+items = ["close_buffer", "close_other_tabs", "close_tabs_to_right", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager", "-", "set_syntax"]
+
+[context.terminal]
+items = ["copy", "paste", "clear_terminal", "-", "new_terminal", "close_terminal"]
+
+[context.console]
+items = ["copy", "select_all", "-", "console_toggle_wrap", "console_clear"]

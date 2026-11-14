@@ -121,6 +121,12 @@ impl Syntax {
             .map(rgb)
             .unwrap_or(Color32::from_rgb(50, 51, 44))
     }
+    pub fn guide(&self) -> Option<Color32> {
+        self.theme.settings.guide.map(rgb)
+    }
+    pub fn active_guide(&self) -> Option<Color32> {
+        self.theme.settings.active_guide.map(rgb)
+    }
     pub fn gutter(&self) -> Color32 {
         self.theme
             .settings

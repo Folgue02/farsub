@@ -20,6 +20,20 @@ pub enum Mode {
     Locations,
     Themes,
     Packages,
+    Projects,
+    Syntaxes,
+    Indentation,
+}
+
+/// Items of the Indentation menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndentAction {
+    Spaces,
+    Tabs,
+    Width(usize),
+    Guess,
+    ToSpaces,
+    ToTabs,
 }
 
 #[derive(Clone, Debug)]
@@ -30,6 +44,9 @@ pub enum Action {
     Buffer(usize),
     Theme(String),
     Package(String),
+    Project(crate::project::Last),
+    Syntax(String),
+    Indent(IndentAction),
     #[allow(dead_code)]
     None,
 }
@@ -68,7 +85,13 @@ impl Palette {
             mode,
             fixed: matches!(
                 mode,
-                Mode::Buffers | Mode::Locations | Mode::Themes | Mode::Packages
+                Mode::Buffers
+                    | Mode::Locations
+                    | Mode::Themes
+                    | Mode::Packages
+                    | Mode::Projects
+                    | Mode::Syntaxes
+                    | Mode::Indentation
             ),
             title: String::new(),
             query: query.to_string(),

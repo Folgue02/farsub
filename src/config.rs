@@ -15,14 +15,17 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/runtime_files.rs"));
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct EditorConfig {
     pub font_size: f32,
+    /// Scale for the whole interface (all fonts, widgets, spacing), like browser zoom.
+    /// 1.0 = 100%. Separate from font_size, which only sizes the editor text.
+    pub ui_scale: f32,
     pub tab_size: usize,
     pub use_tabs: bool,
     pub theme: String,
@@ -30,12 +33,31 @@ pub struct EditorConfig {
     pub show_menu_bar: bool,
     /// Animate sidebar folders opening/closing.
     pub animations: bool,
+    /// Vertical lines at each indentation level (like Sublime's indent guides).
+    pub indent_guides: bool,
+    /// Highlight the line the cursor is on (off by default).
+    pub highlight_current_line: bool,
+    /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
+    pub terminal_shell: Option<String>,
+    /// How the caret animates: "smooth" (fades in and out), "blink", or "solid".
+    pub caret_style: CaretStyle,
+    /// Pixels added to the 1px caret width (Sublime's `caret_extra_width`).
+    pub caret_extra_width: f32,
+    /// Pixels the caret reaches above the line (Sublime's `caret_extra_top`).
+    pub caret_extra_top: f32,
+    /// Pixels the caret reaches below the line (Sublime's `caret_extra_bottom`).
+    pub caret_extra_bottom: f32,
+    /// Keep unsaved changes across restarts instead of asking on quit (like Sublime).
+    pub hot_exit: bool,
+    /// Start without arguments → reopen the last project/folders.
+    pub restore_session: bool,
 }
 
 impl Default for EditorConfig {
     fn default() -> Self {
         EditorConfig {
             font_size: 14.0,
+            ui_scale: 1.0,
             tab_size: 4,
             use_tabs: false,
             theme: "Monokai Extended".into(),
@@ -43,8 +65,29 @@ impl Default for EditorConfig {
             // macOS gets the native menu bar instead.
             show_menu_bar: !cfg!(target_os = "macos"),
             animations: true,
+            indent_guides: true,
+            highlight_current_line: false,
+            terminal_shell: None,
+            caret_style: CaretStyle::Smooth,
+            caret_extra_width: 1.5,
+            caret_extra_top: 1.0,
+            caret_extra_bottom: 1.0,
+            hot_exit: true,
+            restore_session: true,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CaretStyle {
+    /// Fades out and back in (Sublime's default "smooth").
+    #[default]
+    Smooth,
+    /// Hard on/off blinking.
+    Blink,
+    /// Always visible.
+    Solid,
 }
 
 /// How to install a server (like a mason.nvim package). One source is used.
@@ -61,12 +104,48 @@ pub struct InstallSpec {
     /// Shell script run in the install folder ($FARSUB_INSTALL_DIR); `bin` is relative to it.
     #[serde(default)]
     pub script: Option<String>,
+    /// A prebuilt binary from a GitHub release (like Mason's github source).
+    #[serde(default)]
+    pub github: Option<GithubSource>,
     /// Executable name if it differs from the server's `command`.
     #[serde(default)]
     pub bin: Option<String>,
 }
 
+/// `[install.github]`: download a release asset, extract it, find the executable.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct GithubSource {
+    /// "owner/name"
+    pub repo: String,
+    /// Release tag; the latest release when absent.
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Asset name glob per platform: "<os>-<arch>" (os: macos, linux, windows; arch:
+    /// x86_64, aarch64) or just "<os>" for any architecture.
+    #[serde(default)]
+    pub assets: HashMap<String, String>,
+}
+
+impl GithubSource {
+    /// The asset glob for this machine, if the project ships one.
+    pub fn asset_for_this_platform(&self) -> Option<&str> {
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        self.assets
+            .get(&format!("{os}-{arch}"))
+            .or_else(|| self.assets.get(os))
+            .map(String::as_str)
+    }
+}
+
 impl InstallSpec {
+    /// Whether this recipe can install on the current OS/CPU.
+    pub fn supported_here(&self) -> bool {
+        match &self.github {
+            Some(g) => g.asset_for_this_platform().is_some(),
+            None => true,
+        }
+    }
+
     pub fn source(&self) -> String {
         if !self.npm.is_empty() {
             format!("npm: {}", self.npm.join(" "))
@@ -76,6 +155,8 @@ impl InstallSpec {
             format!("cargo: {c}")
         } else if let Some(g) = &self.go {
             format!("go: {g}")
+        } else if let Some(g) = &self.github {
+            format!("github: {}", g.repo)
         } else if self.script.is_some() {
             "script".into()
         } else {
@@ -210,6 +291,14 @@ struct KeymapFile {
 struct MenusFile {
     #[serde(default)]
     menu: Vec<MenuDef>,
+    /// Right-click menus by place: editor, sidebar, tab, terminal, console.
+    #[serde(default)]
+    context: HashMap<String, ContextDef>,
+}
+
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct ContextDef {
+    pub items: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -220,6 +309,8 @@ pub struct Config {
     pub keys: Vec<KeyBinding>,
     pub docs: Vec<KeyDoc>,
     pub menus: Vec<MenuDef>,
+    /// Right-click menus (context name → items), like Sublime's Context.sublime-menu.
+    pub context_menus: HashMap<String, Vec<String>>,
     /// The main config.toml.
     pub path: Option<PathBuf>,
     /// Where installed servers go.
@@ -353,7 +444,13 @@ impl Config {
             }
         } else if name == "menus.toml" {
             let m: MenusFile = toml::from_str(text).map_err(err)?;
-            self.menus = m.menu;
+            // A file with only [context.*] sections keeps the menu bar as it is.
+            if !m.menu.is_empty() {
+                self.menus = m.menu;
+            }
+            for (k, v) in m.context {
+                self.context_menus.insert(k, v.items);
+            }
         }
         Ok(())
     }
@@ -443,12 +540,27 @@ pub const TEMPLATE: &str = r##"# farsub settings. Save this file to apply change
 
 [editor]
 font_size = 14.0
+# Scale the whole interface: fonts, sidebar, tabs, menus, panels (1.25 = 125%).
+ui_scale = 1.0
 tab_size = 4
 use_tabs = false
 show_sidebar = true
 # In-window menu bar (macOS uses the system menu bar either way).
 # show_menu_bar = true
 animations = true
+indent_guides = true
+highlight_current_line = false
+# Shell for the terminal panel (default: $SHELL).
+# terminal_shell = "/bin/zsh"
+# Caret: "smooth" (fade in/out), "blink" or "solid"; size in pixels like Sublime's
+# caret_extra_width / caret_extra_top / caret_extra_bottom (width = 1 + extra).
+caret_style = "smooth"
+caret_extra_width = 1.5
+caret_extra_top = 1.0
+caret_extra_bottom = 1.0
+# Keep unsaved changes when quitting and reopen the last session on start.
+hot_exit = true
+restore_session = true
 # Any bundled theme ("Monokai Extended", "OneHalfDark", "Nord", "Dracula", "GitHub",
 # "Solarized (dark)", "Visual Studio Dark+", …) or a .tmTheme from Packages/.
 theme = "Monokai Extended"

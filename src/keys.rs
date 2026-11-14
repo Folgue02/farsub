@@ -22,6 +22,8 @@ pub enum KeyCode {
     PageUp,
     PageDown,
     F(u8),
+    /// The context-menu ("Application") key.
+    Menu,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +73,7 @@ impl Key {
             E::End => KeyCode::End,
             E::PageUp => KeyCode::PageUp,
             E::PageDown => KeyCode::PageDown,
+            E::Menu => KeyCode::Menu,
             E::Space => KeyCode::Char(' '),
             E::Colon => KeyCode::Char(':'),
             E::Comma => KeyCode::Char(','),

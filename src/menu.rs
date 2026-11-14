@@ -23,6 +23,61 @@ pub struct Menu {
     pub items: Vec<Option<Item>>,
 }
 
+/// Where a right-click menu was opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ContextKind {
+    Editor,
+    Sidebar,
+    Tab,
+    Terminal,
+    Console,
+}
+
+impl ContextKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            ContextKind::Editor => "editor",
+            ContextKind::Sidebar => "sidebar",
+            ContextKind::Tab => "tab",
+            ContextKind::Terminal => "terminal",
+            ContextKind::Console => "console",
+        }
+    }
+}
+
+/// An open right-click menu. `pos` is a screen position, or `None` to place it at the
+/// keyboard location (cursor / selected row) when opened with Shift+F10 or the Menu key.
+#[derive(Clone, Debug)]
+pub struct ContextMenu {
+    pub kind: ContextKind,
+    pub items: Vec<Option<Item>>,
+    pub pos: Option<(f32, f32)>,
+    pub sel: Option<usize>,
+}
+
+/// Build the right-click menus from config (same item syntax as the menu bar).
+pub fn build_context(
+    defs: &std::collections::HashMap<String, Vec<String>>,
+) -> (
+    std::collections::HashMap<String, Vec<Option<Item>>>,
+    Vec<String>,
+) {
+    let mut errs = vec![];
+    let mut out = std::collections::HashMap::new();
+    for (name, items) in defs {
+        let (m, e) = build(&[MenuDef {
+            title: format!("context.{name}"),
+            items: items.clone(),
+        }]);
+        errs.extend(e);
+        out.insert(
+            name.clone(),
+            m.into_iter().next().map(|m| m.items).unwrap_or_default(),
+        );
+    }
+    (out, errs)
+}
+
 pub fn build(defs: &[MenuDef]) -> (Vec<Menu>, Vec<String>) {
     let mut errs = vec![];
     let menus = defs
@@ -68,11 +123,25 @@ pub fn default_label(cmd: Command) -> String {
         SwitchBuffer => Some("Switch Open File…"),
         UpperCase => Some("Convert to Upper Case"),
         LowerCase => Some("Convert to Lower Case"),
-        Rename => Some("Rename Symbol…"),
         ShowKeymap => Some("Keyboard Shortcuts"),
         SelectTheme => Some("Color Theme…"),
         OpenSettings => Some("Settings & Languages…"),
         ManageServers => Some("Language Servers…"),
+        RevealInFileManager if cfg!(target_os = "macos") => Some("Reveal in Finder"),
+        RevealInFileManager if cfg!(windows) => Some("Reveal in File Explorer"),
+        RevealInFileManager => Some("Open Containing Folder"),
+        CloseBuffer => Some("Close"),
+        Hover => Some("Show Hover Info"),
+        Format => Some("Format Document"),
+        Rename => Some("Rename Symbol…"),
+        RemoveFolder => Some("Remove Folder from Project"),
+        CloseTerminal => Some("Kill Terminal"),
+        LspInfo => Some("LSP Info"),
+        ToggleConsole => Some("Show Console"),
+        ToggleTerminal => Some("Terminal"),
+        NewTerminal => Some("New Terminal"),
+        Indentation => Some("Indentation…"),
+        SetSyntax => Some("Syntax…"),
         _ => None,
     };
     if let Some(s) = special {
@@ -80,4 +149,76 @@ pub fn default_label(cmd: Command) -> String {
     }
     let n = commands::name(cmd);
     n.split_once(": ").map(|(_, r)| r).unwrap_or(n).to_string()
+}
+
+/// Which shortcut each menu item shows as a *native* accelerator. Native accelerators are
+/// global (the OS menu grabs the key before the window sees it), so only global/editor
+/// bindings qualify, and each key combination is used once — otherwise e.g. Sidebar › Cut
+/// would steal Cmd+X from Edit › Cut while you're typing.
+pub fn native_accelerators(
+    menus: &[Menu],
+    keymap: &crate::keymap::Keymap,
+) -> std::collections::HashMap<Command, crate::keymap::Spec> {
+    use crate::keymap::Ctx;
+    use crate::keys::KeyCode;
+    let mut used: Vec<crate::keymap::Spec> = vec![];
+    let mut out = std::collections::HashMap::new();
+    for m in menus {
+        for it in m.items.iter().flatten() {
+            let Some(b) = keymap.bindings.iter().find(|b| {
+                b.cmd == it.cmd
+                    && b.ctx != Ctx::Sidebar
+                    && (b.spec.ctrl || b.spec.alt || matches!(b.spec.code, KeyCode::F(_)))
+            }) else {
+                continue;
+            };
+            let same = |s: &crate::keymap::Spec| {
+                s.code == b.spec.code
+                    && s.ctrl == b.spec.ctrl
+                    && s.shift == b.spec.shift
+                    && s.alt == b.spec.alt
+            };
+            if used.iter().any(same) || out.contains_key(&it.cmd) {
+                continue;
+            }
+            used.push(b.spec);
+            out.insert(it.cmd, b.spec);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_accelerators_never_steal_editor_keys() {
+        let c = crate::config::Config::builtin();
+        let (km, _) = crate::keymap::Keymap::from_config(&c);
+        let (menus, errs) = build(&c.menus);
+        assert!(errs.is_empty(), "{errs:?}");
+        let acc = native_accelerators(&menus, &km);
+        let x = acc.get(&Cut).expect("Edit › Cut has Cmd+X");
+        assert_eq!(x.code, crate::keys::KeyCode::Char('x'));
+        for cmd in [
+            SidebarCut,
+            SidebarCopy,
+            SidebarPaste,
+            SidebarNewFile,
+            SidebarRename,
+            SidebarDelete,
+        ] {
+            assert!(
+                !acc.contains_key(&cmd),
+                "{cmd:?} must not get a native accelerator"
+            );
+        }
+        let mut seen = vec![];
+        for s in acc.values() {
+            let k = (format!("{:?}", s.code), s.ctrl, s.shift, s.alt);
+            assert!(!seen.contains(&k), "duplicate accelerator {k:?}");
+            seen.push(k);
+        }
+    }
 }

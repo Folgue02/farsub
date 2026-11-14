@@ -423,6 +423,33 @@ context = "sidebar"
 keys = "Cmd+Alt+L"
 command = "manage_servers"
 
+[[keys]]
+keys = "Cmd+Alt+P"
+command = "switch_project"
+
+[[keys]]
+keys = "Cmd+Alt+I"
+command = "lsp_info"
+
+# VS Code: Ctrl+` toggles the terminal, Ctrl+Shift+` opens another one. The console
+# (app log) is opened from the command palette: "View: Show Console".
+[[keys]]
+keys = "Ctrl+`"
+command = "toggle_terminal"
+
+[[keys]]
+keys = "Ctrl+Shift+`"
+command = "new_terminal"
+
+# Context menu for the focused pane, from the keyboard.
+[[keys]]
+keys = "Shift+F10"
+command = "open_context_menu"
+
+[[keys]]
+keys = "Menu"
+command = "open_context_menu"
+
 # ---- built-in keys that are not commands (listed in the keymap viewer)
 [[docs]]
 section = "Editor"

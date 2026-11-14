@@ -1,19 +1,24 @@
-//! Sidebar file tree for the editor view. Directory listings are read lazily and cached;
-//! only expanded folders are flattened into the visible node list.
+//! Sidebar file tree. Each project folder is a top-level node (like Sublime's FOLDERS);
+//! listings are read lazily and cached, and only expanded folders are flattened into the
+//! visible node list. Project exclude patterns hide matching entries.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+
+use crate::project::Folder;
 
 pub struct Node {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
     pub depth: usize,
+    /// A project folder (top-level node).
+    pub is_root: bool,
 }
 
 pub struct Tree {
-    pub root: PathBuf,
+    pub roots: Vec<Folder>,
     pub nodes: Vec<Node>,
     pub sel: usize,
     pub scroll: usize,
@@ -37,7 +42,7 @@ const ALWAYS_HIDDEN: &[&str] = &[".git", ".DS_Store", ".hg", ".svn"];
 impl Tree {
     pub fn new() -> Self {
         Tree {
-            root: PathBuf::new(),
+            roots: vec![],
             nodes: vec![],
             sel: 0,
             scroll: 0,
@@ -50,23 +55,44 @@ impl Tree {
         }
     }
 
-    pub fn set_root(&mut self, root: PathBuf, show_hidden: bool) {
-        if root == self.root && show_hidden == self.show_hidden && !self.nodes.is_empty() {
+    pub fn set_roots(&mut self, roots: Vec<Folder>, show_hidden: bool) {
+        if roots == self.roots && show_hidden == self.show_hidden && !self.nodes.is_empty() {
             return;
         }
-        if root != self.root {
-            self.expanded.clear();
+        // Newly added project folders start expanded.
+        for r in &roots {
+            if !self.roots.iter().any(|o| o.path == r.path) {
+                self.expanded.insert(r.path.clone());
+            }
+        }
+        if roots
+            .iter()
+            .all(|r| !self.roots.iter().any(|o| o.path == r.path))
+        {
             self.sel = 0;
             self.scroll = 0;
         }
-        self.root = root;
+        self.roots = roots;
         self.show_hidden = show_hidden;
         self.cache.clear();
         self.rebuild();
     }
 
+    pub fn is_root(&self, p: &Path) -> bool {
+        self.roots.iter().any(|r| r.path == p)
+    }
+
+    /// The project folder containing a path (deepest, for nested folders).
+    pub fn root_of(&self, p: &Path) -> Option<&Folder> {
+        self.roots
+            .iter()
+            .filter(|r| p.starts_with(&r.path))
+            .max_by_key(|r| r.path.components().count())
+    }
+
     fn children(&mut self, dir: &Path) -> &[(String, bool)] {
         let show_hidden = self.show_hidden;
+        let folder = self.root_of(dir).cloned();
         self.cache.entry(dir.to_path_buf()).or_insert_with(|| {
             let mut v: Vec<(String, bool)> = std::fs::read_dir(dir)
                 .map(|rd| {
@@ -74,12 +100,16 @@ impl Tree {
                         .filter_map(|e| {
                             let name = e.file_name().to_string_lossy().into_owned();
                             if ALWAYS_HIDDEN.contains(&name.as_str())
+                                || name.ends_with(".farsub-workspace")
                                 || (!show_hidden && name.starts_with('.'))
                             {
                                 return None;
                             }
                             // Follow symlinks so linked folders expand.
                             let is_dir = std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir());
+                            if folder.as_ref().is_some_and(|f| f.excluded(&name, is_dir)) {
+                                return None;
+                            }
                             Some((name, is_dir))
                         })
                         .collect()
@@ -96,8 +126,18 @@ impl Tree {
     pub fn rebuild(&mut self) {
         let keep = self.selected_path().map(Path::to_path_buf);
         let mut out = vec![];
-        let root = self.root.clone();
-        self.walk(&root, 0, &mut out);
+        for r in self.roots.clone() {
+            out.push(Node {
+                name: r.name.clone(),
+                path: r.path.clone(),
+                is_dir: true,
+                depth: 0,
+                is_root: true,
+            });
+            if self.expanded.contains(&r.path) {
+                self.walk(&r.path, 1, &mut out);
+            }
+        }
         self.nodes = out;
         if let Some(k) = keep {
             if let Some(i) = self.nodes.iter().position(|n| n.path == k) {
@@ -117,6 +157,7 @@ impl Tree {
                 path: path.clone(),
                 is_dir,
                 depth,
+                is_root: false,
             });
             if open {
                 self.walk(&path, depth + 1, out);
@@ -162,9 +203,16 @@ impl Tree {
                 .path
                 .parent()
                 .map(Path::to_path_buf)
-                .unwrap_or_else(|| self.root.clone()),
-            None => self.root.clone(),
+                .unwrap_or_else(|| self.first_root()),
+            None => self.first_root(),
         }
+    }
+
+    pub fn first_root(&self) -> PathBuf {
+        self.roots
+            .first()
+            .map(|r| r.path.clone())
+            .unwrap_or_default()
     }
 
     pub fn toggle_mark(&mut self) {
@@ -295,12 +343,15 @@ impl Tree {
             return 1.0;
         };
         let mut f = 1.0;
+        if n.is_root {
+            return 1.0;
+        }
         for a in n.path.ancestors().skip(1) {
-            if a == self.root {
-                break;
-            }
             if let Some(pr) = self.progress(a) {
                 f *= pr;
+            }
+            if self.is_root(a) {
+                break;
             }
         }
         f
@@ -314,20 +365,27 @@ impl Tree {
 
     /// Expand a folder (and its ancestors) without moving the selection.
     pub fn expand_path(&mut self, dir: &Path) {
+        let Some(root) = self.root_of(dir).map(|r| r.path.clone()) else {
+            return;
+        };
         for a in dir.ancestors() {
-            if !a.starts_with(&self.root) || a == self.root {
+            self.expanded.insert(a.to_path_buf());
+            if a == root {
                 break;
             }
-            self.expanded.insert(a.to_path_buf());
         }
     }
 
     /// Expand every folder between the root and `path`, then select it.
     pub fn reveal(&mut self, path: &Path) {
-        let Ok(rel) = path.strip_prefix(&self.root) else {
+        let Some(root) = self.root_of(path).map(|r| r.path.clone()) else {
             return;
         };
-        let mut cur = self.root.clone();
+        let Ok(rel) = path.strip_prefix(&root) else {
+            return;
+        };
+        self.expanded.insert(root.clone());
+        let mut cur = root.clone();
         let comps: Vec<_> = rel.components().collect();
         for c in comps.iter().take(comps.len().saturating_sub(1)) {
             cur.push(c);
@@ -357,58 +415,121 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::FolderDef;
+
+    fn tmp(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("farsub-tree-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.canonicalize().unwrap()
+    }
+
+    fn names(t: &Tree) -> Vec<String> {
+        t.nodes
+            .iter()
+            .map(|n| format!("{}{}", "  ".repeat(n.depth), n.name))
+            .collect()
+    }
 
     #[test]
     fn expand_collapse_reveal() {
-        let d = std::env::temp_dir().join(format!("farsub-tree-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = tmp("basic");
         std::fs::create_dir_all(d.join("src/deep")).unwrap();
         std::fs::create_dir_all(d.join(".git")).unwrap();
         std::fs::write(d.join("src/deep/x.rs"), "").unwrap();
         std::fs::write(d.join("b.txt"), "").unwrap();
         let mut t = Tree::new();
         t.anim = Duration::ZERO;
-        t.set_root(d.clone(), false);
-        let names: Vec<_> = t.nodes.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, ["src", "b.txt"], ".git hidden, dirs first");
+        t.set_roots(vec![Folder::plain(d.clone())], false);
+        let root = d.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            names(&t),
+            [root.clone(), "  src".into(), "  b.txt".into()],
+            ".git hidden, dirs first"
+        );
+        assert!(t.nodes[0].is_root);
+        t.sel = 1;
         t.expand();
-        assert_eq!(t.nodes.len(), 3);
+        assert_eq!(t.nodes.len(), 4);
         t.collapse();
-        assert_eq!(t.nodes.len(), 2);
+        assert_eq!(t.nodes.len(), 3);
         t.reveal(&d.join("src/deep/x.rs"));
         assert_eq!(t.selected().unwrap().name, "x.rs");
-        assert_eq!(t.selected().unwrap().depth, 2);
+        assert_eq!(t.selected().unwrap().depth, 3);
         t.collapse(); // file -> parent folder
         assert_eq!(t.selected().unwrap().name, "deep");
         t.jump_char('b');
         assert_eq!(t.selected().unwrap().name, "b.txt");
+        // Collapsing the root folder hides everything under it.
+        t.sel = 0;
+        t.collapse();
+        assert_eq!(t.nodes.len(), 1);
+    }
+
+    #[test]
+    fn multiple_folders_and_excludes() {
+        let a = tmp("multi-a");
+        let b = tmp("multi-b");
+        std::fs::create_dir_all(a.join("target")).unwrap();
+        std::fs::create_dir_all(a.join("src")).unwrap();
+        std::fs::write(a.join("app.min.js"), "").unwrap();
+        std::fs::write(a.join("app.js"), "").unwrap();
+        std::fs::write(b.join("lib.rs"), "").unwrap();
+        let fa = Folder::new(
+            a.clone(),
+            FolderDef {
+                path: ".".into(),
+                name: Some("App".into()),
+                folder_exclude_patterns: vec!["target".into()],
+                file_exclude_patterns: vec!["*.min.js".into()],
+            },
+        );
+        let mut t = Tree::new();
+        t.anim = Duration::ZERO;
+        t.set_roots(vec![fa, Folder::plain(b.clone())], false);
+        let bname = b.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(
+            names(&t),
+            [
+                "App".to_string(),
+                "  src".into(),
+                "  app.js".into(),
+                bname,
+                "  lib.rs".into()
+            ]
+        );
+        assert_eq!(t.root_of(&b.join("lib.rs")).unwrap().path, b);
+        t.reveal(&b.join("lib.rs"));
+        assert_eq!(t.selected().unwrap().name, "lib.rs");
+        assert_eq!(t.target_dir(), b);
     }
 
     #[test]
     fn folder_animation_grows_and_shrinks() {
-        let d = std::env::temp_dir().join(format!("farsub-anim-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let d = tmp("anim");
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/a.rs"), "").unwrap();
         let mut t = Tree::new();
         t.anim = Duration::from_millis(80);
-        t.set_root(d.clone(), false);
+        t.set_roots(vec![Folder::plain(d.clone())], false);
+        t.tick();
+        t.sel = 1;
         t.expand();
-        assert_eq!(t.nodes.len(), 2, "children appear immediately");
-        assert!(t.row_factor(1) < 0.6, "but start small");
+        assert_eq!(t.nodes.len(), 3, "children appear immediately");
+        assert!(t.row_factor(2) < 0.6, "but start small");
         assert!(t.arrow(&d.join("src")) < 0.6);
         std::thread::sleep(Duration::from_millis(100));
         assert!(!t.tick(), "animation finished");
-        assert_eq!(t.row_factor(1), 1.0);
+        assert_eq!(t.row_factor(2), 1.0);
         assert_eq!(t.arrow(&d.join("src")), 1.0);
-        t.sel = 1;
+        t.sel = 2;
         t.collapse(); // on a file: jump to parent
         t.collapse(); // close the folder
-        assert_eq!(t.nodes.len(), 2, "children stay while shrinking");
+        assert_eq!(t.nodes.len(), 3, "children stay while shrinking");
         assert!(t.tick());
         std::thread::sleep(Duration::from_millis(100));
         t.tick();
-        assert_eq!(t.nodes.len(), 1, "removed once closed");
+        assert_eq!(t.nodes.len(), 2, "removed once closed");
         assert_eq!(t.arrow(&d.join("src")), 0.0);
     }
 }

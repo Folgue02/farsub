@@ -1,6 +1,7 @@
 //! A small mason.nvim: installs language servers into farsub's own data folder
-//! (`<data>/servers/<name>/`) from npm, pip (a private venv), cargo, go, or a script, so
-//! nothing touches the system. Output is streamed back as log lines.
+//! (`<data>/servers/<name>/`) from npm, pip (a private venv), cargo, go, a GitHub release
+//! (prebuilt binaries, downloaded and extracted in-process on every platform) or a script,
+//! so nothing touches the system. Output is streamed back as log lines.
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -65,13 +66,23 @@ pub fn install(data: PathBuf, s: ServerConfig, tx: EventTx) {
     });
 }
 
-fn run_install(data: &Path, s: &ServerConfig, log: &dyn Fn(String)) -> Result<PathBuf, String> {
+/// Install synchronously (used by the CLI), streaming output to `log`.
+pub fn run_install(data: &Path, s: &ServerConfig, log: &dyn Fn(String)) -> Result<PathBuf, String> {
     let Some(spec) = &s.install else {
         return Err(format!(
             "{} has no [install] section; install `{}` yourself",
             s.name, s.command
         ));
     };
+    if !spec.supported_here() {
+        return Err(format!(
+            "{} has no prebuilt download for {}-{}; install `{}` yourself",
+            s.name,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            s.command
+        ));
+    }
     let dir = server_dir(data, &s.name);
     // Keep the previous install until the new one succeeds (installs happen in place
     // because Python venvs can't be moved after creation).
@@ -165,6 +176,9 @@ fn install_into(
         run(c, dir, log)?;
         return Ok(Path::new("bin").join(exe(bin)));
     }
+    if let Some(gh) = &spec.github {
+        return github_install(dir, gh, bin, log);
+    }
     if let Some(script) = &spec.script {
         let (sh, flag) = if cfg!(windows) {
             ("cmd", "/C")
@@ -177,6 +191,136 @@ fn install_into(
         return Ok(PathBuf::from(bin));
     }
     Err("the [install] section names no source (npm, pip, cargo, go or script)".into())
+}
+
+fn http_get(url: &str) -> Result<ureq::Response, String> {
+    let mut req = ureq::get(url).set("User-Agent", "farsub-installer");
+    if url.starts_with("https://api.github.com/") {
+        req = req.set("Accept", "application/vnd.github+json");
+        // Optional, for the API's rate limit (60 requests/hour without it).
+        if let Ok(t) = std::env::var("GITHUB_TOKEN") {
+            req = req.set("Authorization", &format!("Bearer {t}"));
+        }
+    }
+    req.call().map_err(|e| format!("{url}: {e}"))
+}
+
+/// Download the release asset matching this platform, extract it and return the
+/// executable's path relative to `dir`.
+fn github_install(
+    dir: &Path,
+    gh: &crate::config::GithubSource,
+    bin: &str,
+    log: &dyn Fn(String),
+) -> Result<PathBuf, String> {
+    let pattern = gh.asset_for_this_platform().ok_or_else(|| {
+        format!(
+            "{} has no prebuilt binary for {}-{}",
+            gh.repo,
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let glob = globset::Glob::new(pattern)
+        .map_err(|e| format!("bad asset pattern {pattern:?}: {e}"))?
+        .compile_matcher();
+    let api = match &gh.tag {
+        Some(t) => format!("https://api.github.com/repos/{}/releases/tags/{t}", gh.repo),
+        None => format!("https://api.github.com/repos/{}/releases/latest", gh.repo),
+    };
+    log(format!("$ GET {api}"));
+    let body = http_get(&api)?
+        .into_string()
+        .map_err(|e| format!("reading release info: {e}"))?;
+    let release: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("bad release info: {e}"))?;
+    let tag = release["tag_name"].as_str().unwrap_or("?").to_string();
+    let asset = release["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| a["name"].as_str().is_some_and(|n| glob.is_match(n)))
+        .ok_or_else(|| {
+            format!(
+                "release {tag} of {} has no asset matching {pattern:?}",
+                gh.repo
+            )
+        })?;
+    let name = asset["name"].as_str().unwrap_or_default().to_string();
+    let url = asset["browser_download_url"]
+        .as_str()
+        .ok_or("asset has no download URL")?;
+    let size = asset["size"].as_u64().unwrap_or(0);
+    log(format!(
+        "downloading {name} ({:.1} MB) from release {tag}",
+        size as f64 / 1_048_576.0
+    ));
+    let archive = dir.join(&name);
+    {
+        let mut reader = http_get(url)?.into_reader();
+        let mut f = std::fs::File::create(&archive).map_err(|e| e.to_string())?;
+        std::io::copy(&mut reader, &mut f).map_err(|e| format!("download failed: {e}"))?;
+    }
+    log(format!("extracting {name}"));
+    extract(&archive, dir, &exe(bin))?;
+    let _ = std::fs::remove_file(&archive);
+    let found =
+        find_file(dir, &exe(bin)).ok_or_else(|| format!("{} not found in {name}", exe(bin)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&found, std::fs::Permissions::from_mode(0o755));
+    }
+    Ok(found.strip_prefix(dir).unwrap_or(&found).to_path_buf())
+}
+
+/// Unpack `.zip`, `.tar.gz`/`.tgz`, `.tar.xz`-less tarballs, a single gzipped file
+/// (written as `bin`), or a plain executable.
+fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), String> {
+    let name = archive
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let open = || std::fs::File::open(archive).map_err(|e| e.to_string());
+    if name.ends_with(".zip") {
+        let mut z = zip::ZipArchive::new(open()?).map_err(|e| format!("bad zip: {e}"))?;
+        z.extract(dir).map_err(|e| format!("unzip failed: {e}"))?;
+    } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+        let gz = flate2::read::GzDecoder::new(open()?);
+        tar::Archive::new(gz)
+            .unpack(dir)
+            .map_err(|e| format!("untar failed: {e}"))?;
+    } else if name.ends_with(".tar") {
+        tar::Archive::new(open()?)
+            .unpack(dir)
+            .map_err(|e| format!("untar failed: {e}"))?;
+    } else if name.ends_with(".gz") {
+        let mut gz = flate2::read::GzDecoder::new(open()?);
+        let mut out = std::fs::File::create(dir.join(bin)).map_err(|e| e.to_string())?;
+        std::io::copy(&mut gz, &mut out).map_err(|e| format!("gunzip failed: {e}"))?;
+    } else {
+        std::fs::copy(archive, dir.join(bin)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// First file called `name` under `dir` (shallowest first).
+fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
+    let mut queue = std::collections::VecDeque::from([dir.to_path_buf()]);
+    while let Some(d) = queue.pop_front() {
+        let mut subdirs = vec![];
+        for e in std::fs::read_dir(&d).ok()?.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                subdirs.push(p);
+            } else if p.file_name().is_some_and(|n| n == name) {
+                return Some(p);
+            }
+        }
+        subdirs.sort();
+        queue.extend(subdirs);
+    }
+    None
 }
 
 fn run(mut c: Command, cwd: &Path, log: &dyn Fn(String)) -> Result<(), String> {
@@ -226,6 +370,104 @@ fn run(mut c: Command, cwd: &Path, log: &dyn Fn(String)) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_archives_and_finds_the_binary() {
+        use std::io::Write;
+        let root = std::env::temp_dir().join(format!("farsub-extract-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let bin = exe("tool");
+        // zip with a nested bin/ folder (like clangd_<ver>/bin/clangd)
+        let zdir = root.join("z");
+        std::fs::create_dir_all(&zdir).unwrap();
+        let zpath = zdir.join("tool-1.0.zip");
+        {
+            let mut z = zip::ZipWriter::new(std::fs::File::create(&zpath).unwrap());
+            let o = zip::write::SimpleFileOptions::default();
+            z.add_directory("tool_1.0/bin/", o).unwrap();
+            z.start_file(format!("tool_1.0/bin/{bin}"), o).unwrap();
+            z.write_all(b"zip-binary").unwrap();
+            z.finish().unwrap();
+        }
+        extract(&zpath, &zdir, &bin).unwrap();
+        let f = find_file(&zdir, &bin).unwrap();
+        assert!(f.ends_with(Path::new("tool_1.0").join("bin").join(&bin)));
+        assert_eq!(std::fs::read(f).unwrap(), b"zip-binary");
+        // single gzipped executable (like rust-analyzer-<triple>.gz)
+        let gdir = root.join("g");
+        std::fs::create_dir_all(&gdir).unwrap();
+        let gpath = gdir.join("tool-x86_64.gz");
+        {
+            let mut e = flate2::write::GzEncoder::new(
+                std::fs::File::create(&gpath).unwrap(),
+                flate2::Compression::fast(),
+            );
+            e.write_all(b"gz-binary").unwrap();
+            e.finish().unwrap();
+        }
+        extract(&gpath, &gdir, &bin).unwrap();
+        assert_eq!(std::fs::read(gdir.join(&bin)).unwrap(), b"gz-binary");
+        // tar.gz
+        let tdir = root.join("t");
+        std::fs::create_dir_all(&tdir).unwrap();
+        let tpath = tdir.join("tool.tar.gz");
+        {
+            let gz = flate2::write::GzEncoder::new(
+                std::fs::File::create(&tpath).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut t = tar::Builder::new(gz);
+            let data = b"tar-binary";
+            let mut h = tar::Header::new_gnu();
+            h.set_size(data.len() as u64);
+            h.set_mode(0o755);
+            h.set_cksum();
+            t.append_data(&mut h, format!("pkg/{bin}"), &data[..])
+                .unwrap();
+            t.into_inner().unwrap().finish().unwrap();
+        }
+        extract(&tpath, &tdir, &bin).unwrap();
+        assert_eq!(
+            std::fs::read(find_file(&tdir, &bin).unwrap()).unwrap(),
+            b"tar-binary"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn github_assets_pick_this_platform() {
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        let mut g = crate::config::GithubSource {
+            repo: "o/r".into(),
+            ..Default::default()
+        };
+        assert!(g.asset_for_this_platform().is_none());
+        g.assets.insert(os.into(), "any-arch-*.zip".into());
+        assert_eq!(g.asset_for_this_platform(), Some("any-arch-*.zip"));
+        g.assets.insert(format!("{os}-{arch}"), "exact.gz".into());
+        assert_eq!(g.asset_for_this_platform(), Some("exact.gz"));
+        // Every built-in GitHub recipe covers the three desktop platforms.
+        let cfg = crate::config::Config::builtin();
+        for name in ["rust_analyzer", "clangd"] {
+            let gh = cfg
+                .server(name)
+                .unwrap()
+                .install
+                .clone()
+                .unwrap()
+                .github
+                .unwrap();
+            for plat in ["macos", "linux", "windows"] {
+                assert!(
+                    gh.assets
+                        .keys()
+                        .any(|k| k == plat || k.starts_with(&format!("{plat}-"))),
+                    "{name} has no {plat} asset"
+                );
+            }
+        }
+    }
     use std::sync::mpsc;
 
     fn wait_done(rx: &mpsc::Receiver<AppEvent>) -> (Vec<String>, Result<PathBuf, String>) {

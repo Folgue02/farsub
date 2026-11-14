@@ -4,9 +4,14 @@ args = ["--stdio"]
 root_markers = ["tsconfig.json", "jsconfig.json", "package.json"]
 description = "TypeScript & JavaScript language server (tsserver)"
 
+# A project's own node_modules/typescript is preferred; otherwise use the TypeScript that
+# the server manager installed next to the server. ${install_dir} is replaced with the
+# install folder (the setting is dropped when the server comes from PATH instead).
 [initialization_options]
 hostInfo = "farsub"
+tsserver = { fallbackPath = "${install_dir}/node_modules/typescript/lib" }
 
 [install]
-npm = ["typescript-language-server", "typescript"]
+# TypeScript 7 is the native (Go) compiler and has no tsserver, which this server needs.
+npm = ["typescript-language-server", "typescript@5"]
 bin = "typescript-language-server"

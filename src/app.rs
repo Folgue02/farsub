@@ -21,8 +21,10 @@ use crate::keys::{Key, KeyCode};
 use crate::lsp::{Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
 use crate::menu::{self, Menu, MenuState};
 use crate::packages;
-use crate::palette::{Action, Item, Mode, Palette};
+use crate::palette::{Action, IndentAction, Item, Mode, Palette};
+use crate::project::{self, Last, Project, Recent};
 use crate::tree::Tree;
+use crate::workspace::{BufferState, Workspace};
 
 pub enum AppEvent {
     Lsp(usize, Value),
@@ -54,6 +56,13 @@ impl EventTx {
         let _ = self.wake.set(Box::new(f));
     }
 
+    /// Repaint without an event (e.g. terminal output arrived).
+    pub fn wake(&self) {
+        if let Some(w) = self.wake.get() {
+            w();
+        }
+    }
+
     pub fn send(&self, ev: AppEvent) -> bool {
         let ok = self.tx.send(ev).is_ok();
         if let Some(w) = self.wake.get() {
@@ -67,19 +76,78 @@ impl EventTx {
 pub enum Focus {
     Editor,
     Sidebar,
+    Console,
+    Terminal,
+}
+
+/// What the bottom panel shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PanelTab {
+    Terminal(usize),
+    Console,
+}
+
+/// The bottom panel (terminals + console), resizable from its top edge.
+pub struct Panel {
+    pub visible: bool,
+    pub tab: PanelTab,
+    pub height: f32,
+}
+
+/// A console selection end: (log entry id, char offset in the rendered line).
+pub type ConsolePos = (u64, usize);
+
+/// The console panel (View › Show Console, Ctrl+`): the app log plus a command line.
+pub struct Console {
+    pub input: String,
+    pub cursor: usize,
+    history: Vec<String>,
+    hist_pos: Option<usize>,
+    /// Lines scrolled up from the bottom (0 = follow new output).
+    pub scroll: usize,
+    pub show_debug: bool,
+    pub filter: String,
+    /// Wrap long lines (otherwise the panel scrolls sideways).
+    pub wrap: bool,
+    pub hscroll: f32,
+    /// (anchor, head) of the text selection.
+    pub sel: Option<(ConsolePos, ConsolePos)>,
+}
+
+impl Default for Console {
+    fn default() -> Self {
+        Console {
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            hist_pos: None,
+            scroll: 0,
+            show_debug: false,
+            filter: String::new(),
+            wrap: true,
+            hscroll: 0.0,
+            sel: None,
+        }
+    }
 }
 
 pub enum PromptKind {
     NewFile(PathBuf),
     NewFolder(PathBuf),
-    RenameMove(PathBuf),
+    /// (source, folder the typed path is relative to)
+    RenameMove(PathBuf, PathBuf),
     SaveAs,
     OpenPath,
-    Find { origin: Pos },
+    Find {
+        origin: Pos,
+    },
     ReplaceFind,
     ReplaceWith(String),
     RenameSymbol,
     PackageUrl,
+    OpenProject,
+    SaveProjectAs,
+    AddFolder,
 }
 
 impl PromptKind {
@@ -88,9 +156,12 @@ impl PromptKind {
             self,
             PromptKind::NewFile(_)
                 | PromptKind::NewFolder(_)
-                | PromptKind::RenameMove(_)
+                | PromptKind::RenameMove(..)
                 | PromptKind::SaveAs
                 | PromptKind::OpenPath
+                | PromptKind::OpenProject
+                | PromptKind::SaveProjectAs
+                | PromptKind::AddFolder
         )
     }
 }
@@ -127,6 +198,23 @@ pub enum Modal {
     Confirm(Confirm),
     Keymap(KeymapView),
     Servers(ServersView),
+    LspInfo(LspInfoView),
+}
+
+/// LSP Info (like Neovim's :LspInfo).
+pub struct LspInfoView {
+    pub scroll: usize,
+}
+
+/// How an LSP Info line is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Heading,
+    Text,
+    Dim,
+    Good,
+    Warn,
+    Bad,
 }
 
 /// The language-server manager (like :Mason).
@@ -238,16 +326,32 @@ pub struct Completion {
     pub start: Pos,
     pub items: Vec<CompItem>,
     pub shown: Vec<usize>,
-    pub sel: usize,
+    /// Nothing is selected until Ctrl+N / Ctrl+P (see docs/SPEC.md §5).
+    pub sel: Option<usize>,
 }
 
 pub struct Hover {
     pub lines: Vec<String>,
+    /// Diagnostics at the hovered position: (severity, message).
+    pub diagnostics: Vec<(u8, String)>,
+    /// Buffer position the popup points at (mouse hover); `None` = at the cursor.
+    pub anchor: Option<Pos>,
+}
+
+/// Mouse-hover tracking: the word under the pointer and since when it's been there.
+struct HoverTrack {
+    buf: usize,
+    word: (Pos, Pos),
+    pos: Pos,
+    since: Instant,
+    requested: bool,
 }
 
 pub struct App {
-    /// Project folder shown in the sidebar and searched by Goto Anything.
-    pub root: PathBuf,
+    /// The open project (or anonymous folder set) shown in the sidebar.
+    pub project: Project,
+    pub recent: Recent,
+    last_autosave: Instant,
     pub config: Config,
     pub focus: Focus,
     pub sidebar_visible: bool,
@@ -264,7 +368,7 @@ pub struct App {
     lsp_warned: HashSet<String>,
     pub diagnostics: HashMap<PathBuf, Vec<Diag>>,
     pub files: HashMap<PathBuf, Vec<String>>,
-    indexing: Option<PathBuf>,
+    indexing: HashSet<PathBuf>,
     pub search: Option<String>,
     clip: String,
     clip_line: bool,
@@ -286,6 +390,16 @@ pub struct App {
     /// Open menu (menu bar navigation), if any.
     pub menu: Option<MenuState>,
     pub menu_bar_visible: bool,
+    pub console: Console,
+    /// Right-click menu, if open.
+    pub context_menu: Option<menu::ContextMenu>,
+    contexts: HashMap<String, Vec<Option<menu::Item>>>,
+    hover_track: Option<HoverTrack>,
+    pub panel: Panel,
+    pub terminals: Vec<crate::terminal::Terminal>,
+    next_term_id: usize,
+    /// Sidebar width in points (drag its edge to resize).
+    pub sidebar_width: f32,
     pub keymap: Keymap,
     pub menus: Vec<Menu>,
     /// Server name → install log (present while installing or after a failure).
@@ -387,13 +501,16 @@ fn markdown_to_lines(s: &str) -> Vec<String> {
 }
 
 impl App {
-    pub fn new(root: PathBuf, config: Config, tx: EventTx) -> Self {
+    pub fn new(project: Project, config: Config, tx: EventTx) -> Self {
         let syn = Syntax::load(&config.editor.theme);
         let mut tree = Tree::new();
         tree.anim = Duration::from_millis(if config.editor.animations { 160 } else { 0 });
-        tree.set_root(root.clone(), false);
+        tree.set_roots(project.folders.clone(), false);
+        let recent = Recent::load(config.data_dir.as_deref());
         let mut app = App {
-            root,
+            project,
+            recent,
+            last_autosave: Instant::now(),
             focus: Focus::Editor,
             sidebar_visible: config.editor.show_sidebar,
             show_hidden: false,
@@ -409,7 +526,7 @@ impl App {
             lsp_warned: HashSet::new(),
             diagnostics: HashMap::new(),
             files: HashMap::new(),
-            indexing: None,
+            indexing: HashSet::new(),
             search: None,
             clip: String::new(),
             clip_line: false,
@@ -426,6 +543,18 @@ impl App {
             theme_before: None,
             menu: None,
             menu_bar_visible: config.editor.show_menu_bar,
+            console: Console::default(),
+            context_menu: None,
+            contexts: HashMap::new(),
+            hover_track: None,
+            panel: Panel {
+                visible: false,
+                tab: PanelTab::Console,
+                height: 240.0,
+            },
+            terminals: vec![],
+            next_term_id: 1,
+            sidebar_width: 250.0,
             keymap: Keymap::default(),
             menus: vec![],
             install_log: HashMap::new(),
@@ -435,6 +564,9 @@ impl App {
             config,
             tx,
         };
+        app.apply_project_config();
+        app.recent.touch(&app.project);
+        app.recent.save(app.config.data_dir.as_deref());
         let errs = app.rebuild_keys_and_menus();
         if let Some(e) = app.config.error.clone().or(errs) {
             app.msg(format!("Config error: {e}"));
@@ -452,7 +584,9 @@ impl App {
     }
 
     pub fn msg(&mut self, s: impl Into<String>) {
-        self.status = Some((s.into(), Instant::now()));
+        let s = s.into();
+        crate::log::info("app", &s);
+        self.status = Some((s, Instant::now()));
     }
 
     /// Expire the status message; returns true if the UI needs a repaint.
@@ -479,7 +613,7 @@ impl App {
     }
 
     pub fn title(&self) -> String {
-        let root = self.root.file_name().unwrap_or_default().to_string_lossy();
+        let root = self.project.name();
         match self.buf() {
             Some(b) => format!(
                 "{}{} — {root}",
@@ -499,11 +633,33 @@ impl App {
         self.files.clear();
     }
 
-    fn rel(&self, p: &Path) -> String {
-        p.strip_prefix(&self.root)
-            .unwrap_or(p)
-            .display()
-            .to_string()
+    /// A path for display: relative to its project folder (prefixed with the folder's name
+    /// when the project has several).
+    pub fn rel(&self, p: &Path) -> String {
+        match self.project.folder_of(p) {
+            Some(f) => {
+                let rest = p.strip_prefix(&f.path).unwrap_or(p).display().to_string();
+                if self.project.folders.len() > 1 {
+                    if rest.is_empty() {
+                        f.name.clone()
+                    } else {
+                        format!("{}/{rest}", f.name)
+                    }
+                } else {
+                    rest
+                }
+            }
+            None => p.display().to_string(),
+        }
+    }
+
+    /// Where relative paths typed in prompts start from.
+    pub fn base_dir(&self) -> PathBuf {
+        self.project
+            .primary()
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_default()
     }
 
     fn resolve(&self, base: &Path, s: &str) -> PathBuf {
@@ -531,6 +687,10 @@ impl App {
         if k.is_text_key() {
             return false;
         }
+        if self.context_menu.is_some() {
+            self.context_key(k);
+            return true;
+        }
         if self.menu.is_some() {
             self.menu_key(k);
             return true;
@@ -550,8 +710,36 @@ impl App {
             self.modal_key(k);
             return true;
         }
+        // Completion navigation (literal Ctrl on macOS; on other platforms Ctrl+N/P only
+        // navigate while the list is open).
+        if self.completion.is_some()
+            && self.focus == Focus::Editor
+            && k.ctrl
+            && !k.sup
+            && !k.shift
+            && !k.alt
+            && matches!(k.code, KeyCode::Char('n') | KeyCode::Char('p'))
+        {
+            self.comp_move(if k.code == KeyCode::Char('n') { 1 } else { -1 });
+            return true;
+        }
         if self.hover.is_some() && k.code == KeyCode::Esc {
             self.hover = None;
+            return true;
+        }
+        if self.focus == Focus::Terminal && self.terminal_shown().is_some() {
+            return self.terminal_key(k);
+        }
+        if self.focus == Focus::Console && self.console_shown() {
+            if k.ctrl && !k.shift && !k.alt && k.code == KeyCode::Char('a') {
+                self.console_select_all();
+                return true;
+            }
+            if let Some(cmd) = self.keymap.lookup(k, Ctx::Global) {
+                self.run(cmd);
+            } else {
+                self.console_key(k);
+            }
             return true;
         }
         let sidebar = self.focus == Focus::Sidebar && self.sidebar_visible;
@@ -581,10 +769,16 @@ impl App {
     /// Typed text (already composed by the OS: shifted chars, dead keys, IME).
     pub fn on_text(&mut self, s: &str) {
         for c in s.chars().filter(|c| !c.is_control()) {
+            if self.context_menu.is_some() {
+                self.context_char(c);
+                continue;
+            }
             if self.menu.is_some() {
                 self.menu_char(c);
                 continue;
             }
+            let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
+            let in_console = self.focus == Focus::Console && self.console_shown();
             match &mut self.modal {
                 Some(Modal::Keymap(v)) => {
                     v.query.push(c);
@@ -592,6 +786,7 @@ impl App {
                     v.scroll = 0;
                 }
                 Some(Modal::Servers(_)) => self.servers_char(c),
+                Some(Modal::LspInfo(_)) => self.lsp_info_char(c),
                 Some(Modal::Palette(p)) => {
                     p.query.push(c);
                     self.palette_query_changed();
@@ -612,6 +807,26 @@ impl App {
                         _ => self.modal = Some(Modal::Confirm(cf)),
                     }
                 }
+                None if in_term => {
+                    if let Some(id) = self.terminal_shown()
+                        && self.terminals.iter().any(|t| t.id == id && t.is_exited())
+                    {
+                        // "Press any key to close" covers letters too.
+                        self.close_terminal(id);
+                        return;
+                    }
+                    let mut b = [0u8; 4];
+                    let bytes = c.encode_utf8(&mut b).as_bytes().to_vec();
+                    if let Some(t) = self.current_terminal_mut() {
+                        t.sel = None;
+                        t.write(&bytes);
+                    }
+                }
+                None if in_console => {
+                    let b = crate::editor::byte_idx(&self.console.input, self.console.cursor);
+                    self.console.input.insert(b, c);
+                    self.console.cursor += 1;
+                }
                 None if self.focus == Focus::Sidebar && self.sidebar_visible => self.tree_char(c),
                 None => self.editor_text(c),
             }
@@ -619,6 +834,8 @@ impl App {
     }
 
     pub fn on_paste(&mut self, s: &str) {
+        let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
+        let in_console = self.focus == Focus::Console && self.console_shown();
         match &mut self.modal {
             Some(Modal::Prompt(p)) => {
                 let line = s.lines().next().unwrap_or("");
@@ -632,6 +849,17 @@ impl App {
                 self.palette_query_changed();
             }
             Some(_) => {}
+            None if in_term => {
+                if let Some(t) = self.current_terminal_mut() {
+                    t.paste(s);
+                }
+            }
+            None if in_console => {
+                let line = s.lines().next().unwrap_or("");
+                let b = crate::editor::byte_idx(&self.console.input, self.console.cursor);
+                self.console.input.insert_str(b, line);
+                self.console.cursor += char_len(line);
+            }
             None if self.focus == Focus::Sidebar && self.sidebar_visible => {
                 self.run(Command::SidebarPaste)
             }
@@ -641,6 +869,26 @@ impl App {
 
     pub fn on_copy(&mut self, cut: bool) {
         if self.modal.is_some() {
+            return;
+        }
+        if self.focus == Focus::Terminal && self.terminal_shown().is_some() {
+            // Copy the selection; with nothing selected the key goes to the shell (on
+            // Windows/Linux, Ctrl+C / Ctrl+X arrive here as copy/cut events).
+            if let Some(t) = self.current_terminal_mut() {
+                match t.selection_text() {
+                    Some(text) if !cut => {
+                        t.sel = None;
+                        self.pending_copy = Some(text);
+                    }
+                    _ => t.write(if cut { b"\x18" } else { b"\x03" }),
+                }
+            }
+            return;
+        }
+        if self.focus == Focus::Console && self.console_shown() {
+            if let Some(t) = self.console_selection_text() {
+                self.pending_copy = Some(t);
+            }
             return;
         }
         let cmd = match (self.focus == Focus::Sidebar && self.sidebar_visible, cut) {
@@ -678,8 +926,16 @@ impl App {
                     && c.alive
                 {
                     c.alive = false;
-                    let name = c.cmd.clone();
-                    self.msg(format!("{name} exited"));
+                    std::thread::sleep(Duration::from_millis(20));
+                    let code = c.exit_code();
+                    let name = c.server.clone();
+                    let why = code
+                        .map(|c| format!(" (exit code {c})"))
+                        .unwrap_or_default();
+                    crate::log::warn(&format!("lsp:{name}"), format!("server exited{why}"));
+                    self.msg(format!(
+                        "{name} exited{why} — see the console (Ctrl+`) or LSP Info"
+                    ));
                 }
             }
             AppEvent::Install(name, ev) => self.on_install(name, ev),
@@ -693,14 +949,14 @@ impl App {
             },
             AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Files(root, list) => {
-                self.indexing = None;
-                self.files.insert(root.clone(), list);
-                if let Some(Modal::Palette(p)) = &mut self.modal
-                    && p.mode == Mode::Files
-                {
-                    p.loading = false;
-                    let items = Self::file_items(&root, &self.files[&root]);
-                    p.set_items(items);
+                self.indexing.remove(&root);
+                self.files.insert(root, list);
+                if matches!(&self.modal, Some(Modal::Palette(p)) if p.mode == Mode::Files) {
+                    let (items, loading) = self.project_file_items();
+                    if let Some(p) = self.palette() {
+                        p.loading = loading;
+                        p.set_items(items);
+                    }
                 }
             }
         }
@@ -728,6 +984,7 @@ impl App {
             Some(Modal::Prompt(p)) => self.prompt_key(k, p),
             Some(Modal::Keymap(v)) => self.keymap_key(k, v),
             Some(Modal::Servers(v)) => self.servers_key(k, v),
+            Some(Modal::LspInfo(v)) => self.lsp_info_key(k, v),
             Some(Modal::Confirm(c)) => match k.code {
                 KeyCode::Enter => self.confirm(c.kind),
                 KeyCode::Esc => {}
@@ -841,7 +1098,8 @@ impl App {
             KeyCode::Tab if p.kind.is_path() => {
                 let base = match &p.kind {
                     PromptKind::NewFile(d) | PromptKind::NewFolder(d) => d.clone(),
-                    _ => self.root.clone(),
+                    PromptKind::RenameMove(_, base) => base.clone(),
+                    _ => self.base_dir(),
                 };
                 p.input = complete_path(&base, &p.input);
                 p.cursor = char_len(&p.input);
@@ -925,11 +1183,11 @@ impl App {
                     Err(e) => self.msg(format!("Create folder failed: {e}")),
                 }
             }
-            PromptKind::RenameMove(src) => {
+            PromptKind::RenameMove(src, base) => {
                 if input.is_empty() {
                     return;
                 }
-                let dst = self.resolve(&self.root.clone(), &input);
+                let dst = self.resolve(&base, &input);
                 if dst == src {
                     return;
                 }
@@ -950,7 +1208,7 @@ impl App {
                 if input.is_empty() {
                     return;
                 }
-                let path = self.resolve(&self.root.clone(), &input);
+                let path = self.resolve(&self.base_dir(), &input);
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -965,10 +1223,12 @@ impl App {
                 if input.is_empty() {
                     return;
                 }
-                let path = self.resolve(&self.root.clone(), &input);
+                let path = self.resolve(&self.base_dir(), &input);
                 let path = path.canonicalize().unwrap_or(path);
-                if path.is_dir() {
-                    self.set_root(path);
+                if path.extension().is_some_and(|e| e == project::PROJECT_EXT) {
+                    self.open_project_file(&path);
+                } else if path.is_dir() {
+                    self.switch_project(Project::from_folders(vec![path]));
                 } else if path.is_file() {
                     self.open_file(&path, true);
                 } else {
@@ -992,6 +1252,62 @@ impl App {
                     .map(|b| b.replace_all(&f, &p.input))
                     .unwrap_or(0);
                 self.msg(format!("Replaced {n} occurrence(s)"));
+            }
+            PromptKind::OpenProject => {
+                if input.is_empty() {
+                    return;
+                }
+                let path = self.resolve(&self.base_dir(), &input);
+                if path.is_dir() {
+                    self.switch_project(Project::from_folders(vec![
+                        path.canonicalize().unwrap_or(path),
+                    ]));
+                } else {
+                    self.open_project_file(&path);
+                }
+            }
+            PromptKind::SaveProjectAs => {
+                if input.is_empty() {
+                    return;
+                }
+                let mut path = self.resolve(&self.base_dir(), &input);
+                if path.extension().is_none_or(|e| e != project::PROJECT_EXT) {
+                    path.set_extension(project::PROJECT_EXT);
+                }
+                let old_ws = self.project.workspace_file(self.config.data_dir.as_deref());
+                match self.project.save_as(&path) {
+                    Ok(()) => {
+                        if let Some(old) = old_ws
+                            && self
+                                .project
+                                .file
+                                .as_ref()
+                                .is_some_and(|f| f.with_extension(project::WORKSPACE_EXT) != old)
+                        {
+                            let _ = std::fs::remove_file(old);
+                        }
+                        self.save_workspace();
+                        self.recent.touch(&self.project);
+                        self.recent.save(self.config.data_dir.as_deref());
+                        self.refresh_tree();
+                        self.msg(format!("Saved project {}", path.display()));
+                    }
+                    Err(e) => self.msg(format!("Save project failed: {e}")),
+                }
+            }
+            PromptKind::AddFolder => {
+                if input.is_empty() {
+                    return;
+                }
+                let path = self.resolve(&self.base_dir(), &input);
+                let path = path.canonicalize().unwrap_or(path);
+                if !path.is_dir() {
+                    return self.msg(format!("Not a folder: {input}"));
+                }
+                if self.project.add_folder(path.clone()) {
+                    self.project_folders_changed();
+                    self.tree.reveal(&path);
+                }
             }
             PromptKind::PackageUrl => {
                 if input.is_empty() {
@@ -1017,12 +1333,246 @@ impl App {
         }
     }
 
-    pub fn set_root(&mut self, root: PathBuf) {
-        self.root = root.clone();
-        self.tree.set_root(root, self.show_hidden);
+    // ===================================================================== projects & workspaces
+
+    /// Merge project `[[languages]]`/`[[servers]]` and `[settings]` over the loaded config.
+    fn apply_project_config(&mut self) {
+        let mut errs = vec![];
+        if let Some(snippet) = self.project.config_snippet()
+            && let Err(e) = self.config.merge_str(&snippet)
+        {
+            errs.push(e);
+        }
+        if !self.project.settings.is_empty() {
+            match project::apply_settings(&self.config.editor, &self.project.settings) {
+                Ok(ed) => self.config.editor = ed,
+                Err(e) => errs.push(e),
+            }
+        }
+        self.font_size = self.config.editor.font_size;
+        if !errs.is_empty() {
+            self.msg(format!("Project settings: {}", errs.join("; ")));
+        }
+    }
+
+    fn open_project_file(&mut self, path: &Path) {
+        match Project::load(path) {
+            Ok(p) => self.switch_project(p),
+            Err(e) => self.msg(format!("Open project failed: {e}")),
+        }
+    }
+
+    /// Save the current session, close everything, and open another project's session.
+    pub fn switch_project(&mut self, p: Project) {
+        self.save_workspace();
+        for i in 0..self.buffers.len() {
+            self.close_lsp_doc(i);
+        }
+        self.lsp.restart();
+        self.buffers.clear();
+        self.cur = 0;
+        self.diagnostics.clear();
+        self.completion = None;
+        self.hover = None;
+        self.modal = None;
+        self.files.clear();
+        self.closed.clear();
+        self.jumps.clear();
+        self.tree.expanded.clear();
         self.tree_revealed = None;
+        self.project = p;
+        // Reload config so the previous project's settings don't leak into this one.
+        let data = self.config.data_dir.clone();
+        let path = self.config.path.clone();
+        self.config = Config::load_from(path);
+        if data.is_some() {
+            self.config.data_dir = data;
+        }
+        self.apply_project_config();
+        let _ = self.rebuild_keys_and_menus();
+        self.syn.set_theme(&self.config.editor.theme);
+        self.tree
+            .set_roots(self.project.folders.clone(), self.show_hidden);
+        self.restore_workspace();
+        self.recent.touch(&self.project);
+        self.recent.save(self.config.data_dir.as_deref());
+        self.msg(format!("Opened {}", self.project.name()));
+    }
+
+    /// Folders were added/removed: update the sidebar and the project file (if any).
+    fn project_folders_changed(&mut self) {
+        if let Some(f) = self.project.file.clone()
+            && let Err(e) = self.project.save_as(&f)
+        {
+            self.msg(format!("Couldn't update {}: {e}", f.display()));
+        }
+        self.tree
+            .set_roots(self.project.folders.clone(), self.show_hidden);
+        self.files.clear();
         self.sidebar_visible = true;
-        self.msg(format!("Opened folder {}", self.root.display()));
+    }
+
+    /// The project file was edited in farsub: apply folders and settings in place.
+    fn reload_project_file(&mut self) {
+        let Some(f) = self.project.file.clone() else {
+            return;
+        };
+        match Project::load(&f) {
+            Ok(p) => {
+                self.project = p;
+                self.reload_config();
+                self.tree
+                    .set_roots(self.project.folders.clone(), self.show_hidden);
+                self.files.clear();
+                self.msg("Project reloaded");
+            }
+            Err(e) => self.msg(format!("Project error: {e}")),
+        }
+    }
+
+    pub fn capture_workspace(&self) -> Workspace {
+        let hot = self.config.editor.hot_exit;
+        let buffers = self
+            .buffers
+            .iter()
+            .filter(|b| b.path.is_some() || (hot && b.modified))
+            .map(|b| BufferState {
+                path: b.path.clone(),
+                cursor: (b.cursor.line, b.cursor.col),
+                anchor: b.anchor.map(|a| (a.line, a.col)),
+                scroll: (b.scroll_y, b.scroll_x),
+                unsaved: (hot && b.modified).then(|| b.text()),
+                syntax: b.syntax_override.then(|| b.hl.syntax.clone()),
+                indent: b
+                    .indent_override
+                    .then(|| (b.indent_unit == "\t", b.tab_size)),
+            })
+            .collect();
+        let mut expanded: Vec<PathBuf> = self
+            .tree
+            .expanded
+            .iter()
+            .filter(|p| !self.tree.is_root(p))
+            .cloned()
+            .collect();
+        expanded.sort();
+        let collapsed_roots = self
+            .project
+            .folders
+            .iter()
+            .filter(|f| !self.tree.expanded.contains(&f.path));
+        let mut ws = Workspace {
+            buffers,
+            active: self.cur,
+            sidebar_visible: self.sidebar_visible,
+            show_hidden: self.show_hidden,
+            expanded,
+            search: self.search.clone(),
+            closed: self.closed.iter().rev().take(20).rev().cloned().collect(),
+            sidebar_width: Some(self.sidebar_width),
+            console_visible: self.console_shown(),
+            console_height: Some(self.panel.height),
+        };
+        // Remember collapsed project folders as "!path" entries.
+        ws.expanded
+            .extend(collapsed_roots.map(|f| PathBuf::from(format!("!{}", f.path.display()))));
+        ws
+    }
+
+    pub fn save_workspace(&mut self) {
+        self.last_autosave = Instant::now();
+        let Some(f) = self.project.workspace_file(self.config.data_dir.as_deref()) else {
+            return;
+        };
+        if let Err(e) = self.capture_workspace().save(&f) {
+            self.msg(format!("Couldn't save session: {e}"));
+        }
+    }
+
+    /// Called by the GUI every frame; saves the session every 30 seconds.
+    pub fn autosave_tick(&mut self) {
+        if self.last_autosave.elapsed() > Duration::from_secs(30) {
+            self.save_workspace();
+        }
+    }
+
+    pub fn restore_workspace(&mut self) {
+        let Some(f) = self.project.workspace_file(self.config.data_dir.as_deref()) else {
+            return;
+        };
+        let Some(ws) = Workspace::load(&f) else {
+            return;
+        };
+        for bs in &ws.buffers {
+            let i = match (&bs.path, &bs.unsaved) {
+                (Some(p), None) if p.is_file() => self.open_file(p, false),
+                (_, None) => None,
+                (path, Some(text)) => {
+                    let id = self.next_buf_id;
+                    self.next_buf_id += 1;
+                    let b = Buffer::from_text(
+                        id,
+                        path.clone(),
+                        text,
+                        HlCache::new("Plain Text".into()),
+                    );
+                    self.buffers.push(b);
+                    let i = self.buffers.len() - 1;
+                    if let Some(p) = path.clone() {
+                        self.set_buffer_path(i, p);
+                    }
+                    self.buffers[i].modified = true;
+                    self.lsp_open(i);
+                    Some(i)
+                }
+            };
+            if let Some(i) = i {
+                let b = &mut self.buffers[i];
+                b.cursor = b.clamp(Pos::new(bs.cursor.0, bs.cursor.1));
+                b.anchor = bs.anchor.map(|a| b.clamp(Pos::new(a.0, a.1)));
+                b.want_col = b.cursor.col;
+                b.scroll_y = bs.scroll.0.min(b.lines.len().saturating_sub(1));
+                b.scroll_x = bs.scroll.1;
+                if let Some(sx) = &bs.syntax {
+                    self.set_syntax_at(i, sx);
+                }
+                if let Some((tabs, w)) = bs.indent {
+                    let b = &mut self.buffers[i];
+                    b.set_tab_width(w);
+                    b.set_indent(if tabs {
+                        crate::editor::Indent::Tabs
+                    } else {
+                        crate::editor::Indent::Spaces(w)
+                    });
+                }
+            }
+        }
+        self.cur = ws.active.min(self.buffers.len().saturating_sub(1));
+        self.sidebar_visible = ws.sidebar_visible;
+        self.show_hidden = ws.show_hidden;
+        for e in &ws.expanded {
+            let s = e.to_string_lossy();
+            if let Some(root) = s.strip_prefix('!') {
+                self.tree.expanded.remove(Path::new(root));
+            } else if e.is_dir() {
+                self.tree.expanded.insert(e.clone());
+            }
+        }
+        self.tree
+            .set_roots(self.project.folders.clone(), self.show_hidden);
+        self.tree.rebuild();
+        self.search = ws.search.clone();
+        self.closed = ws.closed.clone();
+        if let Some(w) = ws.sidebar_width {
+            self.sidebar_width = w.clamp(120.0, 900.0);
+        }
+        if let Some(h) = ws.console_height {
+            self.panel.height = h.clamp(80.0, 1200.0);
+        }
+        if ws.console_visible {
+            self.panel.visible = true;
+            self.panel.tab = PanelTab::Console;
+        }
     }
 
     // ===================================================================== sidebar
@@ -1032,7 +1582,8 @@ impl App {
         self.focus = Focus::Sidebar;
         self.completion = None;
         self.hover = None;
-        self.tree.set_root(self.root.clone(), self.show_hidden);
+        self.tree
+            .set_roots(self.project.folders.clone(), self.show_hidden);
         let cur = self.buf().and_then(|b| b.path.clone());
         if let Some(p) = cur
             && self.tree_revealed.as_ref() != Some(&p)
@@ -1144,12 +1695,24 @@ impl App {
                 let Some(src) = self.tree.selected_path().map(Path::to_path_buf) else {
                     return;
                 };
-                let rel = self.rel(&src);
-                self.prompt(
-                    "Rename / move to (relative to the project)",
-                    &rel,
-                    PromptKind::RenameMove(src),
+                if self.tree.is_root(&src) {
+                    return self.msg("That's a project folder — use Project › Remove Folder, or rename it on disk");
+                }
+                let base = self
+                    .tree
+                    .root_of(&src)
+                    .map(|f| f.path.clone())
+                    .unwrap_or_else(|| self.base_dir());
+                let rel = src
+                    .strip_prefix(&base)
+                    .unwrap_or(&src)
+                    .display()
+                    .to_string();
+                let title = format!(
+                    "Rename / move to (relative to {})",
+                    base.file_name().unwrap_or_default().to_string_lossy()
                 );
+                self.prompt(&title, &rel, PromptKind::RenameMove(src, base));
                 // Put the cursor before the extension, like Sublime/VS Code.
                 if let Some(Modal::Prompt(p)) = &mut self.modal
                     && let Some(dot) = p.input.rfind('.')
@@ -1236,7 +1799,10 @@ impl App {
                 let t = self.tree.targets();
                 let mut last = None;
                 for src in &t {
-                    let parent = src.parent().unwrap_or(&self.root).to_path_buf();
+                    let parent = src
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| self.base_dir());
                     let name = src
                         .file_name()
                         .unwrap_or_default()
@@ -1326,7 +1892,13 @@ impl App {
     }
 
     fn reload_config(&mut self) {
-        let new = Config::load_from(self.config.path.clone());
+        let mut new = Config::load_from(self.config.path.clone());
+        if let Some(snippet) = self.project.config_snippet() {
+            let _ = new.merge_str(&snippet);
+        }
+        if let Ok(ed) = project::apply_settings(&new.editor, &self.project.settings) {
+            new.editor = ed;
+        }
         if let Some(e) = &new.error {
             return self.msg(format!("Config error: {e}"));
         }
@@ -1400,32 +1972,50 @@ impl App {
         }
     }
 
-    fn file_root(&self) -> PathBuf {
-        self.root.clone()
+    /// Goto Anything items for every project folder that has been indexed. Returns true if
+    /// some folders are still being indexed.
+    fn project_file_items(&mut self) -> (Vec<Item>, bool) {
+        let multi = self.project.folders.len() > 1;
+        let mut items = vec![];
+        let mut loading = false;
+        for f in self.project.folders.clone() {
+            match self.files.get(&f.path) {
+                Some(list) => items.extend(list.iter().map(|rel| Item {
+                    label: if multi {
+                        format!("{}/{rel}", f.name)
+                    } else {
+                        rel.clone()
+                    },
+                    detail: String::new(),
+                    action: Action::Open(f.path.join(rel), None),
+                })),
+                None => {
+                    loading = true;
+                    self.start_indexing(f);
+                }
+            }
+        }
+        (items, loading)
     }
 
-    fn file_items(root: &Path, files: &[String]) -> Vec<Item> {
-        files
-            .iter()
-            .map(|f| Item {
-                label: f.clone(),
-                detail: String::new(),
-                action: Action::Open(root.join(f), None),
-            })
-            .collect()
-    }
-
-    fn start_indexing(&mut self, root: PathBuf) {
-        if self.indexing.as_ref() == Some(&root) {
+    fn start_indexing(&mut self, folder: crate::project::Folder) {
+        if !self.indexing.insert(folder.path.clone()) {
             return;
         }
-        self.indexing = Some(root.clone());
+        let root = folder.path.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let mut out = Vec::new();
+            let excl = folder.clone();
             let walker = ignore::WalkBuilder::new(&root)
                 .hidden(true)
                 .git_ignore(true)
+                .filter_entry(move |e| {
+                    let name = e.file_name().to_string_lossy();
+                    let is_dir = e.file_type().is_some_and(|t| t.is_dir());
+                    e.depth() == 0
+                        || (!excl.excluded(&name, is_dir) && !name.ends_with(".farsub-workspace"))
+                })
                 .build();
             for e in walker.flatten() {
                 if e.file_type().is_some_and(|t| t.is_file())
@@ -1449,18 +2039,10 @@ impl App {
         let mut title = String::new();
         let items: Vec<Item> = match mode {
             Mode::Files => {
-                let root = self.file_root();
-                title = format!(
-                    "Files in {}",
-                    root.file_name().unwrap_or_default().to_string_lossy()
-                );
-                if let Some(list) = self.files.get(&root) {
-                    Self::file_items(&root, list)
-                } else {
-                    self.start_indexing(root);
-                    loading = true;
-                    vec![]
-                }
+                title = format!("Files in {}", self.project.name());
+                let (items, still) = self.project_file_items();
+                loading = still;
+                items
             }
             Mode::Commands => COMMANDS
                 .iter()
@@ -1517,6 +2099,126 @@ impl App {
                         label: n,
                     })
                     .collect()
+            }
+            Mode::Projects => {
+                let mut v: Vec<Item> = self
+                    .recent
+                    .projects
+                    .iter()
+                    .filter(|p| p.is_file())
+                    .map(|p| Item {
+                        label: p
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        detail: p.display().to_string(),
+                        action: Action::Project(Last::Project(p.clone())),
+                    })
+                    .collect();
+                v.extend(
+                    self.recent
+                        .folders
+                        .iter()
+                        .filter(|fs| fs.iter().all(|f| f.is_dir()))
+                        .map(|fs| Item {
+                            label: fs
+                                .iter()
+                                .map(|f| {
+                                    f.file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .into_owned()
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            detail: fs
+                                .iter()
+                                .map(|f| f.display().to_string())
+                                .collect::<Vec<_>>()
+                                .join("  ·  "),
+                            action: Action::Project(Last::Folders(fs.clone())),
+                        }),
+                );
+                v
+            }
+            Mode::Syntaxes => {
+                let cur = self.buf().map(|b| b.hl.syntax.clone()).unwrap_or_default();
+                let mut v: Vec<Item> = self
+                    .syn
+                    .ss
+                    .syntaxes()
+                    .iter()
+                    .filter(|s| !s.hidden)
+                    .map(|s| Item {
+                        label: s.name.clone(),
+                        detail: if s.name == cur {
+                            "current".into()
+                        } else {
+                            s.file_extensions
+                                .iter()
+                                .take(4)
+                                .map(|e| format!(".{e}"))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        },
+                        action: Action::Syntax(s.name.clone()),
+                    })
+                    .collect();
+                v.sort_by_key(|i| i.label.to_lowercase());
+                v.dedup_by(|a, b| a.label == b.label);
+                v
+            }
+            Mode::Indentation => {
+                let Some(b) = self.buf() else { return };
+                let kind = b.indent_kind();
+                let cur = |on: bool| {
+                    if on {
+                        "current".to_string()
+                    } else {
+                        String::new()
+                    }
+                };
+                let guess = match crate::editor::guess_indent(&b.lines) {
+                    Some(crate::editor::Indent::Tabs) => "detected: tabs".to_string(),
+                    Some(crate::editor::Indent::Spaces(n)) => format!("detected: {n} spaces"),
+                    None => "nothing to detect".into(),
+                };
+                let mut v = vec![
+                    Item {
+                        label: "Indent Using Spaces".into(),
+                        detail: cur(kind != crate::editor::Indent::Tabs),
+                        action: Action::Indent(IndentAction::Spaces),
+                    },
+                    Item {
+                        label: "Indent Using Tabs".into(),
+                        detail: cur(kind == crate::editor::Indent::Tabs),
+                        action: Action::Indent(IndentAction::Tabs),
+                    },
+                ];
+                for n in 1..=8 {
+                    v.push(Item {
+                        label: format!("Tab Width: {n}"),
+                        detail: cur(b.tab_size == n),
+                        action: Action::Indent(IndentAction::Width(n)),
+                    });
+                }
+                v.push(Item {
+                    label: "Guess Settings From Buffer".into(),
+                    detail: guess,
+                    action: Action::Indent(IndentAction::Guess),
+                });
+                v.push(Item {
+                    label: "Convert Indentation to Spaces".into(),
+                    detail: String::new(),
+                    action: Action::Indent(IndentAction::ToSpaces),
+                });
+                v.push(Item {
+                    label: "Convert Indentation to Tabs".into(),
+                    detail: String::new(),
+                    action: Action::Indent(IndentAction::ToTabs),
+                });
+                v
             }
             Mode::Packages => self
                 .packages
@@ -1687,6 +2389,52 @@ impl App {
                     self.focus = Focus::Editor;
                 }
             }
+            Action::Project(last) => match last {
+                Last::Project(f) => self.open_project_file(&f),
+                Last::Folders(fs) => self.switch_project(Project::from_folders(fs)),
+            },
+            Action::Indent(a) => {
+                let Some(b) = self.buf_mut() else { return };
+                let note = match a {
+                    IndentAction::Spaces => {
+                        let w = b.tab_size;
+                        b.set_indent(crate::editor::Indent::Spaces(w));
+                        format!("Indent using {w} spaces")
+                    }
+                    IndentAction::Tabs => {
+                        b.set_indent(crate::editor::Indent::Tabs);
+                        "Indent using tabs".into()
+                    }
+                    IndentAction::Width(n) => {
+                        b.set_tab_width(n);
+                        format!("Tab width: {n}")
+                    }
+                    IndentAction::Guess => match b.guess_indentation() {
+                        Some(crate::editor::Indent::Tabs) => "Detected: tabs".into(),
+                        Some(crate::editor::Indent::Spaces(n)) => format!("Detected: {n} spaces"),
+                        None => "No indentation to detect".into(),
+                    },
+                    IndentAction::ToSpaces => format!(
+                        "Converted {} line(s) to spaces",
+                        b.convert_indentation(false)
+                    ),
+                    IndentAction::ToTabs => {
+                        format!("Converted {} line(s) to tabs", b.convert_indentation(true))
+                    }
+                };
+                self.msg(note);
+            }
+            Action::Syntax(n) => {
+                let i = self.cur;
+                if i < self.buffers.len() {
+                    self.set_syntax_at(i, &n);
+                    let lang = self.buffers[i]
+                        .lang
+                        .clone()
+                        .unwrap_or_else(|| "no language".into());
+                    self.msg(format!("Syntax: {n} ({lang})"));
+                }
+            }
             Action::Package(n) => {
                 self.modal = Some(Modal::Confirm(Confirm {
                     message: format!("Move package {n} to the Trash?"),
@@ -1764,6 +2512,43 @@ impl App {
         self.focus = Focus::Editor;
     }
 
+    /// Open a file at a 1-based line/column (CLI `file:line:col`).
+    pub fn open_at(&mut self, path: &Path, line: Option<usize>, col: Option<usize>) {
+        let i = if path.exists() {
+            self.open_file(path, true)
+        } else {
+            self.open_new_path(path.to_path_buf());
+            Some(self.cur)
+        };
+        if let (Some(i), Some(l)) = (i, line) {
+            let pg = self.page;
+            let b = &mut self.buffers[i];
+            b.goto(Pos::new(
+                l.saturating_sub(1),
+                col.unwrap_or(1).saturating_sub(1),
+            ));
+            center(b, pg);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn untitled_for_test(&mut self, text: &str) {
+        self.open_untitled(text);
+    }
+
+    /// A new untitled buffer with some text (e.g. piped in on stdin).
+    pub fn open_untitled(&mut self, text: &str) {
+        let id = self.next_buf_id;
+        self.next_buf_id += 1;
+        let first = text.lines().next().unwrap_or("");
+        let syntax = self.syn.detect(None, first);
+        let mut b = Buffer::from_text(id, None, text, HlCache::new(syntax));
+        b.modified = !text.is_empty();
+        self.buffers.push(b);
+        self.cur = self.buffers.len() - 1;
+        self.focus = Focus::Editor;
+    }
+
     fn goto_location(&mut self, path: &Path, pos: Option<Pos>) {
         self.push_jump();
         if let Some(i) = self.open_file(path, true)
@@ -1819,7 +2604,9 @@ impl App {
                         .is_some_and(|(p, d)| {
                             p.starts_with(&d) && p.extension().is_some_and(|e| e == "toml")
                         });
-                if in_config {
+                if saved.is_some() && saved == self.project.file {
+                    self.reload_project_file();
+                } else if in_config {
                     self.reload_config();
                 }
                 self.tree.refresh();
@@ -1856,17 +2643,25 @@ impl App {
         if self.buffers.is_empty() {
             return;
         }
-        // Completion popup navigation.
-        if self.completion.is_some() {
+        // Completion list: Enter/Tab accept only an explicitly selected item (Ctrl+N/P);
+        // otherwise keys do their normal thing and the list closes.
+        if let Some(c) = &self.completion {
+            let selected = c.sel.is_some();
             match k.code {
-                KeyCode::Up => return self.comp_move(-1),
-                KeyCode::Down => return self.comp_move(1),
-                KeyCode::PageUp => return self.comp_move(-8),
-                KeyCode::PageDown => return self.comp_move(8),
-                KeyCode::Enter | KeyCode::Tab if !k.ctrl && !k.shift => return self.comp_accept(),
+                KeyCode::Enter | KeyCode::Tab if !k.ctrl && !k.shift && selected => {
+                    return self.comp_accept();
+                }
                 KeyCode::Esc => {
                     self.completion = None;
                     return;
+                }
+                KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Enter
+                | KeyCode::Tab => {
+                    self.completion = None;
                 }
                 _ => {}
             }
@@ -1966,6 +2761,9 @@ impl App {
         let (km, mut errs) = Keymap::from_config(&self.config);
         let (menus, merrs) = menu::build(&self.config.menus);
         errs.extend(merrs);
+        let (contexts, cerrs) = menu::build_context(&self.config.context_menus);
+        errs.extend(cerrs);
+        self.contexts = contexts;
         self.keymap = km;
         self.menus = menus;
         (!errs.is_empty()).then(|| errs.join("; "))
@@ -2079,6 +2877,7 @@ impl App {
     fn on_install(&mut self, name: String, ev: InstallEvent) {
         match ev {
             InstallEvent::Log(l) => {
+                crate::log::info(&format!("install:{name}"), &l);
                 let log = self.install_log.entry(name).or_default();
                 log.push(l);
                 if log.len() > 200 {
@@ -2094,6 +2893,7 @@ impl App {
                         self.reopen_lsp_docs();
                     }
                     Err(e) => {
+                        crate::log::error(&format!("install:{name}"), &e);
                         self.msg(format!("{name}: install failed — {e}"));
                         self.install_failed.insert(name, e);
                     }
@@ -2180,6 +2980,9 @@ impl App {
                 None => self.buffers[i].hl.invalidate(0),
             }
         }
+        for e in &l.errors {
+            crate::log::error("packages", e);
+        }
         if !l.errors.is_empty() {
             self.msg(format!("Package errors: {}", l.errors.join("; ")));
         } else if !self.packages.is_empty() {
@@ -2190,6 +2993,931 @@ impl App {
         }
     }
 
+    // ===================================================================== syntax & LSP info
+
+    /// The language config that goes with a syntax (an explicit `syntax = …` wins, then
+    /// shared file extensions).
+    fn language_for_syntax(&self, syntax: &str) -> Option<crate::config::LanguageConfig> {
+        if let Some(l) = self
+            .config
+            .languages
+            .iter()
+            .rev()
+            .find(|l| l.syntax.as_deref() == Some(syntax))
+        {
+            return Some(l.clone());
+        }
+        let sr = self.syn.ss.find_syntax_by_name(syntax)?;
+        self.config
+            .languages
+            .iter()
+            .rev()
+            .find(|l| {
+                l.extensions
+                    .iter()
+                    .any(|e| sr.file_extensions.iter().any(|x| x.eq_ignore_ascii_case(e)))
+            })
+            .cloned()
+    }
+
+    /// Set a buffer's syntax by hand; its language (comments, indentation, LSP) follows.
+    pub fn set_syntax_at(&mut self, i: usize, name: &str) {
+        if self.syn.ss.find_syntax_by_name(name).is_none() {
+            return;
+        }
+        let lang = self.language_for_syntax(name);
+        let b = &mut self.buffers[i];
+        b.hl.reset(name.to_string());
+        b.syntax_override = true;
+        let new_lang = lang.as_ref().map(|l| l.name.clone());
+        if new_lang != b.lang {
+            self.close_lsp_doc(i);
+            let b = &mut self.buffers[i];
+            b.apply_language(lang.as_ref(), &self.config.editor);
+            b.lang = new_lang;
+            self.lsp_warned.clear();
+            self.lsp_open(i);
+        }
+    }
+
+    /// Everything LSP Info shows, as styled lines (kept here so it's testable).
+    pub fn lsp_info(&self) -> Vec<(Tone, String)> {
+        use Tone::*;
+        let mut out: Vec<(Tone, String)> = vec![];
+        let row = |k: &str, v: String| format!("  {k:<14}{v}");
+        let b = self.buf();
+        out.push((Heading, "This file".into()));
+        let Some(b) = b else {
+            out.push((Dim, "  No file open.".into()));
+            return self.lsp_info_running(out);
+        };
+        out.push((
+            Text,
+            row(
+                "file",
+                b.path
+                    .as_ref()
+                    .map(|p| self.rel(p))
+                    .unwrap_or_else(|| "untitled".into()),
+            ),
+        ));
+        out.push((
+            Text,
+            row(
+                "syntax",
+                format!(
+                    "{}{}",
+                    b.hl.syntax,
+                    if b.syntax_override {
+                        "  (set by hand)"
+                    } else {
+                        ""
+                    }
+                ),
+            ),
+        ));
+        let lang = b.lang.as_ref().and_then(|l| self.config.language(l));
+        match lang {
+            None => {
+                out.push((
+                    Warn,
+                    row(
+                        "language",
+                        "none — no language config matches this file".into(),
+                    ),
+                ));
+                out.push((
+                    Dim,
+                    "  Pick a syntax (click it in the status bar) or add languages/<name>.toml."
+                        .into(),
+                ));
+            }
+            Some(l) => {
+                out.push((
+                    Text,
+                    row(
+                        "language",
+                        format!("{}  (languageId \"{}\")", l.name, l.language_id()),
+                    ),
+                ));
+                if l.servers.is_empty() {
+                    out.push((
+                        Dim,
+                        "  No language servers are configured for this language.".into(),
+                    ));
+                } else {
+                    out.push((Text, String::new()));
+                    out.push((
+                        Heading,
+                        "Servers for this language (first available is used)".into(),
+                    ));
+                    let attached = b.lsp_client.and_then(|c| self.lsp.clients.get(&c));
+                    for name in &l.servers {
+                        let Some(s) = self.config.server(name) else {
+                            out.push((
+                                Bad,
+                                row(name, "not defined (no servers/<name>.toml)".into()),
+                            ));
+                            continue;
+                        };
+                        let running = self
+                            .lsp
+                            .clients
+                            .values()
+                            .any(|c| c.alive && c.server == *name);
+                        let (tone, what) = if attached.is_some_and(|c| c.server == *name && c.alive)
+                        {
+                            (Good, "running — attached to this file".to_string())
+                        } else if running {
+                            (Good, "running (another project root)".to_string())
+                        } else {
+                            match self.server_status(s) {
+                                ServerStatus::Installed(p) => {
+                                    (Text, format!("installed  {}", p.display()))
+                                }
+                                ServerStatus::OnPath(p) => {
+                                    (Text, format!("on PATH  {}", p.display()))
+                                }
+                                ServerStatus::Installing => (Warn, "installing…".into()),
+                                ServerStatus::Failed(e) => (Bad, format!("install failed: {e}")),
+                                ServerStatus::Missing => match &s.install {
+                                    Some(i) => (
+                                        Warn,
+                                        format!(
+                                            "not installed — press i to install ({})",
+                                            i.source()
+                                        ),
+                                    ),
+                                    None => (
+                                        Bad,
+                                        format!("not found — install `{}` yourself", s.command),
+                                    ),
+                                },
+                            }
+                        };
+                        out.push((tone, row(name, what)));
+                    }
+                }
+            }
+        }
+        if let Some(c) = b.lsp_client.and_then(|c| self.lsp.clients.get(&c)) {
+            out.push((Text, String::new()));
+            out.push((Heading, format!("Attached server: {}", c.server)));
+            let state = if !c.alive {
+                (Bad, "exited".to_string())
+            } else if !c.ready {
+                (Warn, "starting…".to_string())
+            } else {
+                (Good, "ready".to_string())
+            };
+            let up = c.started.elapsed().as_secs();
+            out.push((
+                state.0,
+                row(
+                    "status",
+                    format!(
+                        "{}  · pid {} · up {}m{:02}s",
+                        state.1,
+                        c.pid,
+                        up / 60,
+                        up % 60
+                    ),
+                ),
+            ));
+            out.push((Text, row("command", c.path.display().to_string())));
+            out.push((Text, row("root", c.root.display().to_string())));
+            if let Some(p) = &c.progress {
+                out.push((Warn, row("progress", p.clone())));
+            }
+            out.push((
+                Text,
+                row(
+                    "sync",
+                    if c.sync_kind == 2 {
+                        "incremental".into()
+                    } else {
+                        "full document".into()
+                    },
+                ),
+            ));
+            let caps: Vec<&str> = [
+                ("completionProvider", "completion"),
+                ("hoverProvider", "hover"),
+                ("definitionProvider", "definition"),
+                ("referencesProvider", "references"),
+                ("renameProvider", "rename"),
+                ("documentFormattingProvider", "formatting"),
+                ("documentSymbolProvider", "symbols"),
+                ("workspaceSymbolProvider", "project symbols"),
+                ("codeActionProvider", "code actions"),
+                ("signatureHelpProvider", "signature help"),
+            ]
+            .iter()
+            .filter(|(k, _)| c.has_cap(k))
+            .map(|(_, v)| *v)
+            .collect();
+            out.push((
+                Text,
+                row(
+                    "capabilities",
+                    if caps.is_empty() {
+                        "(waiting for initialize)".into()
+                    } else {
+                        caps.join(", ")
+                    },
+                ),
+            ));
+            if let Some(ds) = b.path.as_ref().and_then(|p| self.diagnostics.get(p)) {
+                let e = ds.iter().filter(|d| d.severity == 1).count();
+                let w = ds.iter().filter(|d| d.severity == 2).count();
+                let pl = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+                out.push((
+                    Text,
+                    row(
+                        "diagnostics",
+                        format!(
+                            "{}, {}, {} other in this file",
+                            pl(e, "error"),
+                            pl(w, "warning"),
+                            ds.len() - e - w
+                        ),
+                    ),
+                ));
+            }
+            let err = c.stderr.lock().unwrap();
+            if !err.is_empty() {
+                out.push((Text, String::new()));
+                out.push((Heading, "Server output (stderr, newest last)".into()));
+                for l in err
+                    .iter()
+                    .rev()
+                    .take(12)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                {
+                    out.push((Dim, format!("  {}", l.replace('\t', "    "))));
+                }
+            }
+        }
+        self.lsp_info_running(out)
+    }
+
+    fn lsp_info_running(&self, mut out: Vec<(Tone, String)>) -> Vec<(Tone, String)> {
+        out.push((Tone::Text, String::new()));
+        out.push((Tone::Heading, "All running servers".into()));
+        let mut cs: Vec<_> = self.lsp.clients.iter().collect();
+        cs.sort_by_key(|(id, _)| **id);
+        if cs.is_empty() {
+            out.push((Tone::Dim, "  none".into()));
+        }
+        for (id, c) in cs {
+            let files = self
+                .buffers
+                .iter()
+                .filter(|b| b.lsp_client == Some(*id))
+                .count();
+            let state = if !c.alive {
+                "exited"
+            } else if !c.ready {
+                "starting"
+            } else {
+                "ready"
+            };
+            let tone = if c.alive { Tone::Text } else { Tone::Bad };
+            out.push((
+                tone,
+                format!(
+                    "  {:<14}{:<9}{} file(s)   {}",
+                    c.server,
+                    state,
+                    files,
+                    c.root.display()
+                ),
+            ));
+        }
+        out
+    }
+
+    /// The first configured server for this file that isn't installed but could be.
+    fn installable_for_current(&self) -> Option<String> {
+        let lang = self
+            .buf()?
+            .lang
+            .as_ref()
+            .and_then(|l| self.config.language(l))?;
+        lang.servers
+            .iter()
+            .find(|n| {
+                self.config.server(n).is_some_and(|s| {
+                    s.install.as_ref().is_some_and(|i| i.supported_here())
+                        && matches!(
+                            self.server_status(s),
+                            ServerStatus::Missing | ServerStatus::Failed(_)
+                        )
+                })
+            })
+            .cloned()
+    }
+
+    fn lsp_info_key(&mut self, k: Key, mut v: LspInfoView) {
+        match k.code {
+            KeyCode::Esc => return,
+            KeyCode::Up => v.scroll = v.scroll.saturating_sub(1),
+            KeyCode::Down => v.scroll += 1,
+            KeyCode::PageUp => v.scroll = v.scroll.saturating_sub(15),
+            KeyCode::PageDown => v.scroll += 15,
+            KeyCode::Home => v.scroll = 0,
+            _ => {}
+        }
+        self.modal = Some(Modal::LspInfo(v));
+    }
+
+    fn lsp_info_char(&mut self, c: char) {
+        match c {
+            'i' => match self.installable_for_current() {
+                Some(n) => self.install_server(&n),
+                None => self.msg("Nothing to install for this file"),
+            },
+            'r' => {
+                self.restart_lsp();
+                self.msg("Language servers restarted");
+            }
+            's' => self.run(Command::ManageServers),
+            'q' => self.modal = None,
+            _ => {}
+        }
+    }
+
+    // ===================================================================== bottom panel
+
+    pub fn console_shown(&self) -> bool {
+        self.panel.visible && self.panel.tab == PanelTab::Console
+    }
+
+    /// The terminal shown in the panel, if the panel is showing one.
+    pub fn terminal_shown(&self) -> Option<usize> {
+        match self.panel.tab {
+            PanelTab::Terminal(id)
+                if self.panel.visible && self.terminals.iter().any(|t| t.id == id) =>
+            {
+                Some(id)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn current_terminal_mut(&mut self) -> Option<&mut crate::terminal::Terminal> {
+        let id = self.terminal_shown()?;
+        self.terminals.iter_mut().find(|t| t.id == id)
+    }
+
+    pub fn show_terminal(&mut self, id: usize) {
+        self.panel.visible = true;
+        self.panel.tab = PanelTab::Terminal(id);
+        self.focus = Focus::Terminal;
+        self.completion = None;
+        self.hover = None;
+    }
+
+    pub fn new_terminal(&mut self) {
+        let cwd = self.base_dir();
+        self.new_terminal_in(&cwd);
+    }
+
+    pub fn new_terminal_in(&mut self, cwd: &Path) {
+        let id = self.next_term_id;
+        self.next_term_id += 1;
+        let cwd = cwd.to_path_buf();
+        match crate::terminal::Terminal::spawn(
+            id,
+            &cwd,
+            24,
+            80,
+            self.config.editor.terminal_shell.as_deref(),
+            self.tx.clone(),
+        ) {
+            Ok(t) => {
+                self.terminals.push(t);
+                self.show_terminal(id);
+            }
+            Err(e) => {
+                crate::log::error("terminal", &e);
+                self.msg(format!("Couldn't start a terminal: {e}"));
+            }
+        }
+    }
+
+    /// Close terminals whose shell exited cleanly (like VS Code); failed ones stay open
+    /// showing their exit code until a key is pressed.
+    pub fn reap_terminals(&mut self) {
+        let done: Vec<(usize, Option<u32>)> = self
+            .terminals
+            .iter()
+            .filter(|t| t.is_exited())
+            .map(|t| (t.id, *t.exit_code.lock().unwrap()))
+            .collect();
+        for (id, code) in done {
+            if code == Some(0) {
+                crate::log::info("terminal", "shell exited");
+                self.close_terminal(id);
+            }
+        }
+    }
+
+    pub fn close_terminal(&mut self, id: usize) {
+        let Some(i) = self.terminals.iter().position(|t| t.id == id) else {
+            return;
+        };
+        self.terminals.remove(i);
+        let next = self
+            .terminals
+            .get(i.saturating_sub(1))
+            .or(self.terminals.first())
+            .map(|t| t.id);
+        if self.panel.tab == PanelTab::Terminal(id) {
+            match next {
+                Some(n) => self.panel.tab = PanelTab::Terminal(n),
+                None => {
+                    self.panel.visible = false;
+                    self.panel.tab = PanelTab::Console;
+                    if self.focus == Focus::Terminal {
+                        self.focus = Focus::Editor;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Keys while a terminal has focus go to the shell, except a few app shortcuts.
+    fn terminal_key(&mut self, k: Key) -> bool {
+        use Command::*;
+        let Some(id) = self.terminal_shown() else {
+            return false;
+        };
+        let (exited, rows, app_cursor) = self
+            .terminals
+            .iter()
+            .find(|t| t.id == id)
+            .map(|t| (t.is_exited(), t.size.0 as isize, t.application_cursor()))
+            .unwrap_or((false, 10, false));
+        if exited && !k.ctrl && !k.sup {
+            // "Press any key to close", like VS Code.
+            self.close_terminal(id);
+            return true;
+        }
+        // Ctrl+Tab / Ctrl+Shift+Tab cycle terminal tabs while a terminal has focus.
+        if k.code == KeyCode::Tab && k.ctrl && !k.alt {
+            let n = self.terminals.len();
+            if let Some(i) = self.terminals.iter().position(|t| t.id == id)
+                && n > 1
+            {
+                let next = if k.shift {
+                    (i + n - 1) % n
+                } else {
+                    (i + 1) % n
+                };
+                let nid = self.terminals[next].id;
+                self.show_terminal(nid);
+            }
+            return true;
+        }
+        let primary = |c: char| {
+            k.code == KeyCode::Char(c) && ((k.sup && !k.shift) || (k.ctrl && k.shift && !k.sup))
+        };
+        if primary('c') {
+            if let Some(t) = self.current_terminal_mut()
+                && let Some(text) = t.selection_text()
+            {
+                t.sel = None;
+                self.pending_copy = Some(text);
+            }
+            return true;
+        }
+        if primary('v') {
+            let text = self.clipboard_text();
+            if let Some(t) = self.current_terminal_mut() {
+                t.paste(&text);
+            }
+            return true;
+        }
+        const ALWAYS: [Command; 6] = [
+            ToggleTerminal,
+            NewTerminal,
+            ShowCommands,
+            GotoFile,
+            FocusSidebar,
+            ToggleConsole,
+        ];
+        if let Some(cmd) = self.keymap.lookup(k, Ctx::Global)
+            && (k.sup || ALWAYS.contains(&cmd))
+        {
+            self.run(cmd);
+            return true;
+        }
+        if k.sup {
+            return true; // other Cmd shortcuts never reach the shell
+        }
+        if k.shift && matches!(k.code, KeyCode::PageUp | KeyCode::PageDown) {
+            if let Some(t) = self.current_terminal_mut() {
+                t.scroll(if k.code == KeyCode::PageUp {
+                    rows - 1
+                } else {
+                    1 - rows
+                });
+            }
+            return true;
+        }
+        if let Some(bytes) = crate::terminal::key_bytes(k, app_cursor)
+            && let Some(t) = self.current_terminal_mut()
+        {
+            t.sel = None;
+            t.write(&bytes);
+            return true;
+        }
+        // Plain text keys arrive as text events.
+        false
+    }
+
+    // ===================================================================== context menus
+
+    /// Open the right-click menu for a place, at a screen position (or the keyboard spot).
+    pub fn open_context_menu(&mut self, kind: menu::ContextKind, pos: (f32, f32)) {
+        self.open_context_menu_at(kind, Some(pos));
+    }
+
+    pub fn open_context_menu_at(&mut self, kind: menu::ContextKind, pos: Option<(f32, f32)>) {
+        let items = self.contexts.get(kind.name()).cloned().unwrap_or_default();
+        if items.is_empty() {
+            return;
+        }
+        self.completion = None;
+        self.hover = None;
+        self.menu = None;
+        let sel = pos
+            .is_none()
+            .then(|| {
+                items
+                    .iter()
+                    .position(|i| i.as_ref().is_some_and(|i| self.enabled(i.cmd)))
+            })
+            .flatten();
+        self.context_menu = Some(menu::ContextMenu {
+            kind,
+            items,
+            pos,
+            sel,
+        });
+    }
+
+    pub fn context_activate(&mut self, i: usize) {
+        let Some(cm) = self.context_menu.take() else {
+            return;
+        };
+        if let Some(Some(it)) = cm.items.get(i)
+            && self.enabled(it.cmd)
+        {
+            self.run(it.cmd);
+        }
+    }
+
+    fn context_key(&mut self, k: Key) {
+        let Some(cm) = &self.context_menu else { return };
+        let n = cm.items.len();
+        let enabled: Vec<bool> = cm
+            .items
+            .iter()
+            .map(|i| i.as_ref().is_some_and(|i| self.enabled(i.cmd)))
+            .collect();
+        let step = |from: Option<usize>, d: isize| -> Option<usize> {
+            let mut i = from
+                .map(|x| x as isize)
+                .unwrap_or(if d > 0 { -1 } else { n as isize });
+            for _ in 0..n {
+                i = (i + d).rem_euclid(n as isize);
+                if enabled[i as usize] {
+                    return Some(i as usize);
+                }
+            }
+            from
+        };
+        let sel = cm.sel;
+        match k.code {
+            KeyCode::Esc => self.context_menu = None,
+            KeyCode::Up => self.context_menu.as_mut().unwrap().sel = step(sel, -1),
+            KeyCode::Down => self.context_menu.as_mut().unwrap().sel = step(sel, 1),
+            KeyCode::Enter => {
+                if let Some(i) = sel {
+                    self.context_activate(i);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn context_char(&mut self, c: char) {
+        let Some(cm) = &self.context_menu else { return };
+        let c = c.to_ascii_lowercase();
+        let hit = cm.items.iter().position(|i| {
+            i.as_ref()
+                .is_some_and(|i| self.enabled(i.cmd) && i.label.to_lowercase().starts_with(c))
+        });
+        if let Some(i) = hit {
+            self.context_activate(i);
+        }
+    }
+
+    /// The file a context command acts on: the sidebar selection, else the current file.
+    fn context_path(&self) -> Option<PathBuf> {
+        if self.focus == Focus::Sidebar
+            && let Some(p) = self.tree.selected_path()
+        {
+            return Some(p.to_path_buf());
+        }
+        self.buf().and_then(|b| b.path.clone())
+    }
+
+    // ===================================================================== mouse hover
+
+    pub fn diagnostics_at(&self, p: Pos) -> Vec<(u8, String)> {
+        let Some(path) = self.buf().and_then(|b| b.path.as_ref()) else {
+            return vec![];
+        };
+        let mut v: Vec<(u8, String)> = self
+            .diagnostics
+            .get(path)
+            .map(|ds| {
+                ds.iter()
+                    .filter(|d| d.start <= p && (p < d.end || (d.start == d.end && p == d.start)))
+                    .map(|d| (d.severity, d.message.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    /// Called by the GUI every frame with the buffer position under the pointer (or
+    /// `None`). After the pointer rests on a word for `HOVER_DELAY`, asks the language
+    /// server for hover info at that spot (diagnostics there are shown too).
+    pub fn mouse_hover(&mut self, at: Option<Pos>, over_popup: bool) -> Option<Duration> {
+        const HOVER_DELAY: Duration = Duration::from_millis(500);
+        let blocked = self.modal.is_some()
+            || self.completion.is_some()
+            || self.context_menu.is_some()
+            || self.menu.is_some();
+        let Some(at) = at.filter(|_| !blocked) else {
+            if !over_popup {
+                self.hover_track = None;
+                if self.hover.as_ref().is_some_and(|h| h.anchor.is_some()) {
+                    self.hover = None;
+                }
+            }
+            return None;
+        };
+        let Some(b) = self.buf() else { return None };
+        let word = b
+            .word_bounds(at)
+            .unwrap_or((at, Pos::new(at.line, at.col + 1)));
+        let id = b.id;
+        let same = self
+            .hover_track
+            .as_ref()
+            .is_some_and(|t| t.buf == id && t.word == word);
+        if !same {
+            if self.hover.as_ref().is_some_and(|h| h.anchor.is_some()) && !over_popup {
+                self.hover = None;
+            }
+            self.hover_track = Some(HoverTrack {
+                buf: id,
+                word,
+                pos: at,
+                since: Instant::now(),
+                requested: false,
+            });
+            return Some(HOVER_DELAY);
+        }
+        let t = self.hover_track.as_mut().unwrap();
+        if t.requested {
+            return None;
+        }
+        let left = HOVER_DELAY.saturating_sub(t.since.elapsed());
+        if !left.is_zero() {
+            return Some(left);
+        }
+        t.requested = true;
+        let pos = t.pos;
+        let sent = self.lsp_request_at(
+            "textDocument/hover",
+            json!({}),
+            Pending::Hover {
+                buf: id,
+                pos,
+                mouse: true,
+            },
+            "hoverProvider",
+            pos,
+            false,
+        );
+        if !sent {
+            let diags = self.diagnostics_at(pos);
+            if !diags.is_empty() {
+                self.hover = Some(Hover {
+                    lines: vec![],
+                    diagnostics: diags,
+                    anchor: Some(pos),
+                });
+            }
+        }
+        None
+    }
+
+    // ===================================================================== console selection
+
+    /// The rendered text of a log line in the console.
+    pub fn console_line(e: &crate::log::Entry) -> String {
+        format!(
+            "{} [{}] {}",
+            &e.time[..8.min(e.time.len())],
+            e.source,
+            e.text
+        )
+    }
+
+    pub fn console_entries(&self) -> Vec<crate::log::Entry> {
+        let min = if self.console.show_debug {
+            crate::log::Level::Debug
+        } else {
+            crate::log::Level::Info
+        };
+        crate::log::entries(min, &self.console.filter)
+    }
+
+    pub fn console_select_all(&mut self) {
+        let es = self.console_entries();
+        if let (Some(a), Some(b)) = (es.first(), es.last()) {
+            self.console.sel = Some(((a.id, 0), (b.id, Self::console_line(b).chars().count())));
+        }
+    }
+
+    pub fn console_selection_text(&self) -> Option<String> {
+        let (a, b) = self.console.sel?;
+        let (a, b) = if a <= b { (a, b) } else { (b, a) };
+        let mut out = vec![];
+        for e in self
+            .console_entries()
+            .iter()
+            .filter(|e| e.id >= a.0 && e.id <= b.0)
+        {
+            let line: Vec<char> = Self::console_line(e).chars().collect();
+            let s = if e.id == a.0 { a.1.min(line.len()) } else { 0 };
+            let t = if e.id == b.0 {
+                b.1.min(line.len())
+            } else {
+                line.len()
+            };
+            out.push(line[s..t.max(s)].iter().collect::<String>());
+        }
+        let text = out.join("\n");
+        (!text.is_empty()).then_some(text)
+    }
+
+    // ===================================================================== console
+
+    fn console_key(&mut self, k: Key) {
+        let c = &mut self.console;
+        match k.code {
+            KeyCode::Esc => {
+                if c.sel.take().is_none() {
+                    self.panel.visible = false;
+                    self.focus = Focus::Editor;
+                }
+            }
+            KeyCode::Enter => {
+                let line = std::mem::take(&mut c.input);
+                c.cursor = 0;
+                c.hist_pos = None;
+                if !line.trim().is_empty() && c.history.last() != Some(&line) {
+                    c.history.push(line.clone());
+                }
+                self.console_exec(line.trim());
+            }
+            KeyCode::Backspace if c.cursor > 0 => {
+                let b = crate::editor::byte_idx(&c.input, c.cursor - 1);
+                c.input.remove(b);
+                c.cursor -= 1;
+            }
+            KeyCode::Delete if c.cursor < char_len(&c.input) => {
+                let b = crate::editor::byte_idx(&c.input, c.cursor);
+                c.input.remove(b);
+            }
+            KeyCode::Left => c.cursor = c.cursor.saturating_sub(1),
+            KeyCode::Right => c.cursor = (c.cursor + 1).min(char_len(&c.input)),
+            KeyCode::Home => c.cursor = 0,
+            KeyCode::End => c.cursor = char_len(&c.input),
+            KeyCode::Up | KeyCode::Down if !c.history.is_empty() => {
+                let n = c.history.len();
+                let pos = match (c.hist_pos, k.code) {
+                    (None, KeyCode::Up) => Some(n - 1),
+                    (Some(p), KeyCode::Up) => Some(p.saturating_sub(1)),
+                    (Some(p), _) if p + 1 < n => Some(p + 1),
+                    _ => None,
+                };
+                c.hist_pos = pos;
+                c.input = pos.map(|p| c.history[p].clone()).unwrap_or_default();
+                c.cursor = char_len(&c.input);
+            }
+            KeyCode::PageUp => c.scroll += 10,
+            KeyCode::PageDown => c.scroll = c.scroll.saturating_sub(10),
+            KeyCode::Char('u') if k.ctrl => {
+                c.input.clear();
+                c.cursor = 0;
+            }
+            KeyCode::Char('l') if k.ctrl => crate::log::clear(),
+            _ => {}
+        }
+    }
+
+    /// Run a console line: a few built-ins, otherwise a command id (like Sublime's
+    /// `window.run_command`).
+    pub fn console_exec(&mut self, line: &str) {
+        use crate::log;
+        if line.is_empty() {
+            return;
+        }
+        log::info("console", format!("> {line}"));
+        let (word, rest) = line
+            .split_once(' ')
+            .map(|(a, b)| (a, b.trim()))
+            .unwrap_or((line, ""));
+        match word {
+            "help" => log::info(
+                "console",
+                "help · clear · debug (toggle server output) · filter TEXT · wrap (toggle line wrap) · log (open log file) · lsp (LSP info) · \
+                 <command id> runs a command, e.g. restart_lsp, goto_file, toggle_sidebar (see Help › Keyboard Shortcuts)",
+            ),
+            "clear" => log::clear(),
+            "wrap" => {
+                self.console.wrap = !self.console.wrap;
+                self.console.hscroll = 0.0;
+                log::info(
+                    "console",
+                    format!(
+                        "line wrapping {}",
+                        if self.console.wrap { "on" } else { "off" }
+                    ),
+                );
+            }
+            "debug" => {
+                self.console.show_debug = !self.console.show_debug;
+                log::info(
+                    "console",
+                    format!(
+                        "debug output {}",
+                        if self.console.show_debug {
+                            "shown"
+                        } else {
+                            "hidden"
+                        }
+                    ),
+                );
+            }
+            "filter" => {
+                self.console.filter = rest.to_string();
+                log::info(
+                    "console",
+                    if rest.is_empty() {
+                        "filter cleared".into()
+                    } else {
+                        format!("showing lines matching \"{rest}\"")
+                    },
+                );
+            }
+            "log" => match self.config.data_dir.clone() {
+                Some(d) => {
+                    let f = d.join("logs").join("farsub.log");
+                    self.open_file(&f, true);
+                }
+                None => log::warn("console", "no data folder"),
+            },
+            "lsp" => {
+                for (_, l) in self.lsp_info() {
+                    log::info("console", if l.is_empty() { " ".into() } else { l });
+                }
+            }
+            id => match crate::commands::from_id(id) {
+                Some(cmd) => {
+                    self.focus = Focus::Editor;
+                    self.run(cmd);
+                    if self.focus == Focus::Editor && self.modal.is_none() {
+                        self.focus = Focus::Console;
+                    }
+                }
+                None => log::error("console", format!("unknown command `{id}` (type help)")),
+            },
+        }
+    }
+
     // ===================================================================== menu & keymap
 
     /// Whether a command can do anything right now (menus grey out the rest).
@@ -2197,7 +3925,16 @@ impl App {
         use Command::*;
         let has_buf = !self.buffers.is_empty();
         let lsp = self.buf().is_some_and(|b| b.lsp_client.is_some());
+        let in_panel = matches!(self.focus, Focus::Terminal | Focus::Console);
         match cmd {
+            Copy | Paste | SelectAll if in_panel => true,
+            CloseOtherTabs => self.buffers.len() > 1,
+            CloseTabsToRight => self.cur + 1 < self.buffers.len(),
+            CopyFilePath | RevealInFileManager => {
+                (self.focus == Focus::Sidebar && self.tree.selected_path().is_some())
+                    || self.buf().is_some_and(|b| b.path.is_some())
+            }
+            ClearTerminal => self.terminal_shown().is_some(),
             Save | SaveAs | CloseBuffer | Undo | Redo | Copy | Cut | Paste | SelectAll
             | SelectLine | SelectWord | DeleteLine | DuplicateLine | MoveLineUp | MoveLineDown
             | ToggleComment | Indent | Outdent | InsertLineAfter | InsertLineBefore | JoinLines
@@ -2210,6 +3947,7 @@ impl App {
             JumpBack => !self.jumps.is_empty(),
             SidebarPaste => self.file_clip.is_some(),
             RemovePackage => !self.packages.is_empty(),
+            SetSyntax | Indentation => has_buf,
             _ => true,
         }
     }
@@ -2403,7 +4141,7 @@ impl App {
                 self.focus = Focus::Editor;
             }
             OpenFolder => {
-                let def = format!("{}/", self.root.display());
+                let def = format!("{}/", self.base_dir().display());
                 self.prompt(
                     "Open folder or file  (Tab completes)",
                     &def,
@@ -2422,7 +4160,11 @@ impl App {
             }
             Quit => {
                 let n = self.buffers.iter().filter(|b| b.modified).count();
-                if n > 0 {
+                if self.config.editor.hot_exit {
+                    // Unsaved changes are kept in the workspace and restored next time.
+                    self.save_workspace();
+                    self.quit = true;
+                } else if n > 0 {
                     self.modal = Some(Modal::Confirm(Confirm {
                         message: format!("{n} file(s) have unsaved changes. Quit anyway?"),
                         kind: ConfirmKind::Quit,
@@ -2464,7 +4206,8 @@ impl App {
             }
             ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
-                self.tree.set_root(self.root.clone(), self.show_hidden);
+                self.tree
+                    .set_roots(self.project.folders.clone(), self.show_hidden);
                 let s = if self.show_hidden { "shown" } else { "hidden" };
                 self.msg(format!("Hidden files {s}"));
             }
@@ -2480,6 +4223,251 @@ impl App {
                     self.focus_sidebar();
                 }
                 self.sidebar_nav(cmd);
+            }
+            OpenProject => {
+                let def = format!("{}/", self.base_dir().display());
+                self.prompt(
+                    "Open project (.farsub-project) or folder  (Tab completes)",
+                    &def,
+                    PromptKind::OpenProject,
+                );
+            }
+            SwitchProject => {
+                let mut p = Palette::new(Mode::Projects, "");
+                p.title = "Recent projects and folders".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+            }
+            SaveProjectAs => {
+                let base = self.base_dir();
+                let name = self
+                    .project
+                    .file
+                    .as_ref()
+                    .map(|f| f.display().to_string())
+                    .unwrap_or_else(|| {
+                        let stem = base
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+                        base.join(format!("{stem}.{}", project::PROJECT_EXT))
+                            .display()
+                            .to_string()
+                    });
+                self.prompt("Save project as", &name, PromptKind::SaveProjectAs);
+            }
+            CloseProject => self.switch_project(Project::default()),
+            AddFolder => {
+                let def = format!(
+                    "{}/",
+                    self.base_dir().parent().unwrap_or(Path::new("/")).display()
+                );
+                self.prompt(
+                    "Add folder to project  (Tab completes)",
+                    &def,
+                    PromptKind::AddFolder,
+                );
+            }
+            RemoveFolder => {
+                let target = self
+                    .tree
+                    .selected_path()
+                    .and_then(|p| self.tree.root_of(p))
+                    .map(|f| f.path.clone())
+                    .or_else(|| {
+                        (self.project.folders.len() == 1)
+                            .then(|| self.project.folders[0].path.clone())
+                    });
+                match target {
+                    Some(p) if self.project.remove_folder(&p) => {
+                        self.project_folders_changed();
+                        self.msg(format!("Removed {} from the project", p.display()));
+                    }
+                    _ => self.msg("Select a project folder in the sidebar first"),
+                }
+            }
+            EditProject => match self.project.file.clone() {
+                Some(f) => {
+                    self.open_file(&f, true);
+                }
+                None => {
+                    self.msg("This window has no project file yet — Project › Save Project As…")
+                }
+            },
+            Indentation => {
+                if self.buffers.is_empty() {
+                    return self.msg("No open file");
+                }
+                let mut p = Palette::new(Mode::Indentation, "");
+                p.title = "Indentation for this file".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+            }
+            SetSyntax => {
+                if self.buffers.is_empty() {
+                    return self.msg("No open file");
+                }
+                let mut p = Palette::new(Mode::Syntaxes, "");
+                p.title = "Set syntax for this file".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+                let cur = self.buf().map(|b| b.hl.syntax.clone()).unwrap_or_default();
+                if let Some(Modal::Palette(p)) = &mut self.modal
+                    && let Some(i) = p.shown.iter().position(|(i, _)| p.items[*i].label == cur)
+                {
+                    p.sel = i;
+                }
+            }
+            OpenContextMenu => {
+                let kind = match self.focus {
+                    Focus::Sidebar if self.sidebar_visible => menu::ContextKind::Sidebar,
+                    Focus::Terminal => menu::ContextKind::Terminal,
+                    Focus::Console => menu::ContextKind::Console,
+                    _ => menu::ContextKind::Editor,
+                };
+                self.open_context_menu_at(kind, None);
+            }
+            Copy | Cut | Paste | SelectAll
+                if matches!(self.focus, Focus::Terminal | Focus::Console) =>
+            {
+                match cmd {
+                    Copy => self.on_copy(false),
+                    Cut => self.on_copy(true),
+                    Paste => {
+                        let t = self.clipboard_text();
+                        if self.focus == Focus::Terminal {
+                            if let Some(term) = self.current_terminal_mut() {
+                                term.paste(&t);
+                            }
+                        } else {
+                            self.on_paste(&t);
+                        }
+                    }
+                    _ => {
+                        if self.focus == Focus::Console {
+                            self.console_select_all();
+                        }
+                    }
+                }
+            }
+            CopyFilePath => {
+                let p = self.context_path();
+                if let Some(p) = p {
+                    self.msg(format!("Copied {}", p.display()));
+                    self.pending_copy = Some(p.display().to_string());
+                }
+            }
+            RevealInFileManager => {
+                if let Some(p) = self.context_path() {
+                    reveal_in_file_manager(&p);
+                }
+            }
+            OpenTerminalHere => {
+                let dir = if self.focus == Focus::Sidebar {
+                    self.tree.target_dir()
+                } else {
+                    self.buf()
+                        .and_then(|b| b.path.as_ref())
+                        .and_then(|p| p.parent())
+                        .map(Path::to_path_buf)
+                        .unwrap_or_else(|| self.base_dir())
+                };
+                self.new_terminal_in(&dir);
+            }
+            CloseOtherTabs | CloseTabsToRight => {
+                let keep = self.cur;
+                let ids: Vec<usize> = self
+                    .buffers
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        if cmd == CloseOtherTabs {
+                            *i != keep
+                        } else {
+                            *i > keep
+                        }
+                    })
+                    .map(|(_, b)| b.id)
+                    .collect();
+                let mut skipped = 0;
+                for id in ids {
+                    let Some(i) = self.buf_index(id) else {
+                        continue;
+                    };
+                    if self.buffers[i].modified && !self.config.editor.hot_exit {
+                        skipped += 1;
+                        continue;
+                    }
+                    if self.buffers[i].modified {
+                        // Hot exit would lose these on close; keep them open instead.
+                        skipped += 1;
+                        continue;
+                    }
+                    self.close_buffer_at(i);
+                }
+                if let Some(i) = self.buffers.iter().position(|b| {
+                    Some(b.id)
+                        == self
+                            .buffers
+                            .get(keep.min(self.buffers.len().saturating_sub(1)))
+                            .map(|b| b.id)
+                }) {
+                    self.cur = i;
+                }
+                if skipped > 0 {
+                    self.msg(format!("Kept {skipped} tab(s) with unsaved changes"));
+                }
+            }
+            ClearTerminal => {
+                if let Some(t) = self.current_terminal_mut() {
+                    t.write(b"\x0c");
+                }
+            }
+            ConsoleClear => crate::log::clear(),
+            ConsoleToggleWrap => {
+                self.console.wrap = !self.console.wrap;
+                self.console.hscroll = 0.0;
+            }
+            ToggleConsole => {
+                if self.console_shown() && self.focus == Focus::Console {
+                    self.panel.visible = false;
+                    self.focus = Focus::Editor;
+                } else {
+                    self.panel.visible = true;
+                    self.panel.tab = PanelTab::Console;
+                    self.console.scroll = 0;
+                    self.focus = Focus::Console;
+                }
+            }
+            ToggleTerminal => {
+                let showing = self.panel.visible && matches!(self.panel.tab, PanelTab::Terminal(_));
+                if showing && self.focus == Focus::Terminal {
+                    self.panel.visible = false;
+                    self.focus = Focus::Editor;
+                } else {
+                    let id = match self.panel.tab {
+                        PanelTab::Terminal(id) if self.terminals.iter().any(|t| t.id == id) => {
+                            Some(id)
+                        }
+                        _ => self.terminals.last().map(|t| t.id),
+                    };
+                    match id {
+                        Some(id) => self.show_terminal(id),
+                        None => self.new_terminal(),
+                    }
+                }
+            }
+            NewTerminal => self.new_terminal(),
+            CloseTerminal => {
+                if let PanelTab::Terminal(id) = self.panel.tab {
+                    self.close_terminal(id);
+                }
+            }
+            LspInfo => {
+                self.completion = None;
+                self.hover = None;
+                self.modal = Some(Modal::LspInfo(LspInfoView { scroll: 0 }));
             }
             ManageServers => {
                 self.completion = None;
@@ -2731,7 +4719,11 @@ impl App {
                 self.lsp_position_request(
                     "textDocument/hover",
                     json!({}),
-                    Pending::Hover { buf: id, pos },
+                    Pending::Hover {
+                        buf: id,
+                        pos,
+                        mouse: false,
+                    },
                     "hoverProvider",
                 );
                 return;
@@ -2884,11 +4876,12 @@ impl App {
                 return;
             }
             let n = c.shown.len() as isize;
-            c.sel = if d.abs() == 1 {
-                (c.sel as isize + d).rem_euclid(n) as usize
-            } else {
-                (c.sel as isize + d).clamp(0, n - 1) as usize
-            };
+            c.sel = Some(match c.sel {
+                None if d > 0 => 0,
+                None => (n - 1) as usize,
+                Some(s) if d.abs() == 1 => (s as isize + d).rem_euclid(n) as usize,
+                Some(s) => (s as isize + d).clamp(0, n - 1) as usize,
+            });
         }
     }
 
@@ -2925,7 +4918,7 @@ impl App {
                 .then_with(|| c.items[a.1].sort.cmp(&c.items[b.1].sort))
         });
         c.shown = scored.into_iter().map(|s| s.1).collect();
-        c.sel = 0;
+        c.sel = None;
         if c.shown.is_empty() {
             self.completion = None;
         }
@@ -2935,7 +4928,12 @@ impl App {
         let Some(c) = self.completion.take() else {
             return;
         };
-        let Some(item) = c.shown.get(c.sel).and_then(|&i| c.items.get(i)).cloned() else {
+        let Some(item) = c
+            .sel
+            .and_then(|s| c.shown.get(s))
+            .and_then(|&i| c.items.get(i))
+            .cloned()
+        else {
             return;
         };
         let Some(b) = self.buf_mut() else { return };
@@ -2993,7 +4991,11 @@ impl App {
                 let installable: Vec<String> = cfg
                     .servers
                     .iter()
-                    .filter(|n| self.config.server(n).is_some_and(|s| s.install.is_some()))
+                    .filter(|n| {
+                        self.config
+                            .server(n)
+                            .is_some_and(|s| s.install.as_ref().is_some_and(|i| i.supported_here()))
+                    })
                     .cloned()
                     .collect();
                 if installable.is_empty() {
@@ -3016,7 +5018,17 @@ impl App {
             }
             return;
         };
-        match self.lsp.client_for(&cfg, &server, &bin, &path) {
+        // Managed installs expose their folder as ${install_dir} to the server config.
+        let install_dir = self
+            .config
+            .data_dir
+            .as_deref()
+            .filter(|d| installer::installed_bin(d, &server).as_ref() == Some(&bin))
+            .map(|d| installer::server_dir(d, &server.name));
+        match self
+            .lsp
+            .client_for(&cfg, &server, &bin, install_dir.as_deref(), &path)
+        {
             Ok(cid) => {
                 let b = &mut self.buffers[i];
                 b.lsp_client = Some(cid);
@@ -3078,19 +5090,40 @@ impl App {
     }
 
     fn lsp_position_request(&mut self, method: &str, extra: Value, p: Pending, cap: &str) -> bool {
+        let Some(at) = self.buf().map(|b| b.cursor) else {
+            return false;
+        };
+        self.lsp_request_at(method, extra, p, cap, at, true)
+    }
+
+    /// Like `lsp_position_request` at an explicit position; `loud` reports missing servers.
+    fn lsp_request_at(
+        &mut self,
+        method: &str,
+        extra: Value,
+        p: Pending,
+        cap: &str,
+        at: Pos,
+        loud: bool,
+    ) -> bool {
         self.sync_lsp();
         let Some(b) = self.buf() else { return false };
         let (Some(cid), Some(path)) = (b.lsp_client, b.path.clone()) else {
-            self.msg("No language server for this file");
+            if loud {
+                self.msg("No language server for this file");
+            }
             return false;
         };
-        let pos = to_lsp(&b.lines[b.cursor.line], b.cursor);
+        let at = b.clamp(at);
+        let pos = to_lsp(&b.lines[at.line], at);
         let Some(c) = self.lsp.clients.get_mut(&cid) else {
             return false;
         };
         if c.ready && !c.has_cap(cap) {
-            let name = c.cmd.clone();
-            self.msg(format!("{name} does not support {method}"));
+            if loud {
+                let name = c.cmd.clone();
+                self.msg(format!("{name} does not support {method}"));
+            }
             return false;
         }
         let mut params = json!({"textDocument": {"uri": path_to_uri(&path)}, "position": pos});
@@ -3186,6 +5219,22 @@ impl App {
                         .get("message")
                         .and_then(|m| m.as_str())
                         .unwrap_or("error");
+                    if matches!(pending, Pending::Initialize) {
+                        // The server refused to start: mark it failed instead of "starting…" forever.
+                        let m = m.to_string();
+                        if let Some(c) = self.lsp.clients.get_mut(&cid) {
+                            c.init_error = Some(m.clone());
+                            let name = c.server.clone();
+                            c.shutdown();
+                            crate::log::error(
+                                &format!("lsp:{name}"),
+                                format!("initialize failed: {m}"),
+                            );
+                            self.msg(format!("{name} failed to start: {m}"));
+                        }
+                        return;
+                    }
+                    crate::log::warn("lsp", format!("request failed: {m}"));
                     if !matches!(
                         pending,
                         Pending::Completion { .. } | Pending::WorkspaceSymbols
@@ -3273,11 +5322,26 @@ impl App {
                     .collect();
                 self.diagnostics.insert(path, ds);
             }
-            "window/showMessage" => {
+            "window/showMessage" | "window/logMessage" => {
                 if let Some(m) = params.get("message").and_then(|m| m.as_str()) {
                     let t = params.get("type").and_then(|t| t.as_i64()).unwrap_or(3);
-                    if t <= 2 {
-                        self.msg(format!("LSP: {m}"));
+                    let src = format!(
+                        "lsp:{}",
+                        self.lsp
+                            .clients
+                            .get(&cid)
+                            .map(|c| c.server.as_str())
+                            .unwrap_or("?")
+                    );
+                    let level = match t {
+                        1 => crate::log::Level::Error,
+                        2 => crate::log::Level::Warn,
+                        3 => crate::log::Level::Info,
+                        _ => crate::log::Level::Debug,
+                    };
+                    crate::log::push(level, &src, m);
+                    if method == "window/showMessage" && t <= 2 {
+                        self.status = Some((format!("LSP: {m}"), Instant::now()));
                     }
                 }
             }
@@ -3390,18 +5454,40 @@ impl App {
                     start,
                     items,
                     shown: vec![],
-                    sel: 0,
+                    sel: None,
                 });
                 self.comp_refilter();
             }
-            Pending::Hover { buf, pos } => {
+            Pending::Hover { buf, pos, mouse } => {
                 let Some(bi) = self.buf_index(buf) else {
                     return;
                 };
-                if bi != self.cur || self.buffers[bi].cursor != pos {
+                if mouse {
+                    // Only if the pointer is still on the same word.
+                    let still = self.hover_track.as_ref().is_some_and(|t| {
+                        t.buf == buf && t.pos >= t.word.0 && pos >= t.word.0 && pos <= t.word.1
+                    });
+                    if bi != self.cur || !still {
+                        return;
+                    }
+                } else if bi != self.cur || self.buffers[bi].cursor != pos {
                     return;
                 }
-                let Ok(Some(h)) = serde_json::from_value::<Option<lt::Hover>>(result) else {
+                let diags = self.diagnostics_at(pos);
+                let h = serde_json::from_value::<Option<lt::Hover>>(result)
+                    .ok()
+                    .flatten();
+                let Some(h) = h else {
+                    if mouse {
+                        if !diags.is_empty() {
+                            self.hover = Some(Hover {
+                                lines: vec![],
+                                diagnostics: diags,
+                                anchor: Some(pos),
+                            });
+                        }
+                        return;
+                    }
                     return self.msg("No hover info");
                 };
                 let ms = |m: lt::MarkedString| match m {
@@ -3416,10 +5502,17 @@ impl App {
                     lt::HoverContents::Markup(m) => m.value,
                 };
                 let lines = markdown_to_lines(&text);
-                if lines.is_empty() {
-                    return self.msg("No hover info");
+                if lines.is_empty() && diags.is_empty() {
+                    if !mouse {
+                        self.msg("No hover info");
+                    }
+                    return;
                 }
-                self.hover = Some(Hover { lines });
+                self.hover = Some(Hover {
+                    lines,
+                    diagnostics: diags,
+                    anchor: mouse.then_some(pos),
+                });
             }
             Pending::Definition | Pending::References => {
                 let locs = parse_locations(result);
@@ -3505,14 +5598,8 @@ impl App {
                                 let r = s.selection_range.start;
                                 out.push(Item {
                                     label: format!("{}{}", "  ".repeat(depth), s.name),
-                                    detail: format!(
-                                        "{} {}",
-                                        kind_name(kind_num(&s.kind)),
-                                        s.detail.unwrap_or_default()
-                                    )
-                                    .chars()
-                                    .take(60)
-                                    .collect(),
+                                    // Only the name and its kind, like Sublime (no signature).
+                                    detail: kind_name(kind_num(&s.kind)).to_string(),
                                     action: Action::Goto(from_lsp(lines, r.line, r.character)),
                                 });
                                 if let Some(ch) = s.children {
@@ -3661,11 +5748,7 @@ impl App {
     }
 
     fn rel_path(&self, path: &Path) -> String {
-        let root = self.file_root();
-        path.strip_prefix(&root)
-            .unwrap_or(path)
-            .display()
-            .to_string()
+        self.rel(path)
     }
 
     fn apply_workspace_edit(&mut self, edit: lt::WorkspaceEdit) -> (usize, usize) {
@@ -3821,7 +5904,7 @@ fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
         if md {
             if t.starts_with('#') {
                 out.push(Item {
-                    label: t.to_string(),
+                    label: t.trim_start_matches('#').trim().to_string(),
                     detail: String::new(),
                     action: Action::Goto(Pos::new(i, 0)),
                 });
@@ -3835,21 +5918,49 @@ fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
                 None => break,
             }
         }
-        if KEYWORDS.iter().any(|k| s.starts_with(k)) {
-            let label: String = t
-                .trim_end_matches(['{', ' ', ':'])
-                .chars()
-                .take(90)
-                .collect();
+        if let Some(k) = KEYWORDS.iter().find(|k| s.starts_with(*k)) {
             let indent = line.len() - t.len();
+            let Some(name) = symbol_title(k, &s[k.len()..]) else {
+                continue;
+            };
             out.push(Item {
-                label: format!("{}{}", " ".repeat(indent.min(8)), label),
-                detail: format!("{}", i + 1),
+                label: format!("{}{}", " ".repeat(indent.min(8)), name),
+                detail: k.trim_end_matches([' ', '<', '!']).to_string(),
                 action: Action::Goto(Pos::new(i, indent)),
             });
         }
     }
     out
+}
+
+/// The title Goto Symbol shows for a declaration: just the name (`add`, `Point`), or
+/// for an impl block its subject (`impl Display for Point`), never the signature.
+fn symbol_title(keyword: &str, rest: &str) -> Option<String> {
+    if keyword.starts_with("impl") {
+        let mut r = rest;
+        if keyword == "impl<" {
+            // Skip the generic parameter list: impl<T: Clone> Foo<T>
+            let mut depth = 1;
+            let cut = r.char_indices().find(|&(_, c)| {
+                match c {
+                    '<' => depth += 1,
+                    '>' => depth -= 1,
+                    _ => {}
+                }
+                depth == 0
+            })?;
+            r = r[cut.0 + 1..].trim_start();
+        }
+        let end = r.find(" where").or_else(|| r.find('{')).unwrap_or(r.len());
+        let subject = r[..end].trim();
+        return (!subject.is_empty()).then(|| format!("impl {subject}"));
+    }
+    let name: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '$'))
+        .collect();
+    (!name.is_empty()).then_some(name)
 }
 
 fn first_enabled(app: &App, menu: usize) -> usize {
@@ -3861,6 +5972,30 @@ fn first_enabled(app: &App, menu: usize) -> usize {
                 .position(|c| c.as_ref().is_some_and(|c| app.enabled(c.cmd)))
         })
         .unwrap_or(0)
+}
+
+/// Show a file or folder in the OS file manager (selecting it where supported).
+fn reveal_in_file_manager(p: &Path) {
+    let mut cmd = if cfg!(target_os = "macos") {
+        let mut c = std::process::Command::new("open");
+        c.arg("-R").arg(p);
+        c
+    } else if cfg!(windows) {
+        let mut c = std::process::Command::new("explorer");
+        c.arg(format!("/select,{}", p.display()));
+        c
+    } else {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(if p.is_dir() {
+            p
+        } else {
+            p.parent().unwrap_or(p)
+        });
+        c
+    };
+    if let Err(e) = cmd.spawn() {
+        crate::log::warn("app", format!("couldn't open the file manager: {e}"));
+    }
 }
 
 /// Shell-style Tab completion for path prompts.
