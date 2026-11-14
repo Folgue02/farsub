@@ -8,11 +8,30 @@ impl App {
     pub fn run(&mut self, cmd: Command) {
         use Command::*;
         let page = self.page;
+        // With an input focused (find, palette, console line…), text commands edit it, from
+        // keys, menus and the palette alike.
+        if crate::lineedit::accepts(cmd) && self.has_input() {
+            if !self.input_command(cmd) && cmd == SelectAll && self.modal.is_none() {
+                // Select All with an empty console line selects the log.
+                self.console_select_all();
+            }
+            return;
+        }
         // Editing commands need a file in the focused group (it may be an empty column).
         if needs_buffer(cmd) && self.buf().is_none() {
             return;
         }
         match cmd {
+            ToggleWordWrap => {
+                let default = self.config.editor.word_wrap;
+                if let Some(b) = self.buf_mut() {
+                    let on = !b.word_wrap.unwrap_or(default);
+                    b.word_wrap = Some(on);
+                    b.scroll_x = 0;
+                    b.scroll_row = 0;
+                    self.msg(if on { "Word wrap on" } else { "Word wrap off" });
+                }
+            }
             LayoutSingle => self.set_layout(1),
             LayoutColumns2 => self.set_layout(2),
             LayoutColumns3 => self.set_layout(3),
@@ -431,7 +450,7 @@ impl App {
                 self.completion = None;
                 self.hover = None;
                 self.modal = Some(Modal::Keymap(KeymapView {
-                    query: String::new(),
+                    query: LineEdit::default(),
                     sel: 0,
                     scroll: 0,
                 }));

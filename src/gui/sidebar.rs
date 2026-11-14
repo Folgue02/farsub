@@ -46,8 +46,10 @@ impl Gui {
         if self.last_tree_sel != Some(t.sel) {
             if t.sel < t.scroll {
                 t.scroll = t.sel;
+                self.side_px = 0.0;
             } else if t.sel >= t.scroll + rows {
                 t.scroll = t.sel + 1 - rows;
+                self.side_px = 0.0;
             }
             self.last_tree_sel = Some(t.sel);
         }
@@ -55,9 +57,22 @@ impl Gui {
         if resp.hovered() {
             let dy = ui.ctx().input(|i| i.smooth_scroll_delta.y);
             if dy != 0.0 {
-                let n = t.nodes.len().saturating_sub(rows) as f32;
-                let s = (t.scroll as f32 - dy / ROW_H).clamp(0.0, n);
-                t.scroll = s.round() as usize;
+                // Smooth: pixels, with whole rows carried into the row position.
+                let max = t.nodes.len().saturating_sub(rows);
+                let mut px = self.side_px - dy;
+                while px >= ROW_H && t.scroll < max {
+                    t.scroll += 1;
+                    px -= ROW_H;
+                }
+                while px < 0.0 && t.scroll > 0 {
+                    t.scroll -= 1;
+                    px += ROW_H;
+                }
+                self.side_px = if t.scroll >= max {
+                    0.0
+                } else {
+                    px.clamp(0.0, ROW_H - 0.01)
+                };
             }
         }
         let hover_pos = resp.hover_pos();
@@ -73,7 +88,7 @@ impl Gui {
         let t = &self.app.tree;
         let clip = p.with_clip_rect(list);
         // Rows have animated heights while a folder opens/closes.
-        let mut y = list.top();
+        let mut y = list.top() - self.side_px;
         let mut hits: Vec<(usize, Rect)> = vec![];
         let mut i = t.scroll;
         while y < list.bottom() {

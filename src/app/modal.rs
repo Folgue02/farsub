@@ -10,8 +10,7 @@ impl App {
         self.hover = None;
         self.modal = Some(Modal::Prompt(Prompt {
             title: title.to_string(),
-            input: def.to_string(),
-            cursor: char_len(def),
+            input: LineEdit::new(def),
             kind,
         }));
     }
@@ -98,72 +97,30 @@ impl App {
             }
             KeyCode::Enter if is_find => {
                 // Sublime: Enter = next match, Shift+Enter = previous; the panel stays open.
-                self.search = Some(p.input.clone());
+                self.search = Some(p.input.text().to_string());
                 self.find_next(!k.shift);
             }
             KeyCode::Enter => return self.prompt_accept(p),
-            KeyCode::Backspace => {
-                if p.cursor > 0 {
-                    let n = if k.ctrl || k.alt {
-                        // Delete back to the previous path separator / word.
-                        let chars: Vec<char> = p.input.chars().take(p.cursor).collect();
-                        let mut i = p.cursor - 1;
-                        while i > 0 && !matches!(chars[i - 1], '/' | ' ') {
-                            i -= 1;
-                        }
-                        p.cursor - i
-                    } else {
-                        1
-                    };
-                    for _ in 0..n {
-                        let b = crate::editor::byte_idx(&p.input, p.cursor - 1);
-                        p.input.remove(b);
-                        p.cursor -= 1;
-                    }
-                }
-            }
-            KeyCode::Delete => {
-                if p.cursor < char_len(&p.input) {
-                    let b = crate::editor::byte_idx(&p.input, p.cursor);
-                    p.input.remove(b);
-                }
-            }
-            KeyCode::Left => p.cursor = p.cursor.saturating_sub(1),
-            KeyCode::Right => p.cursor = (p.cursor + 1).min(char_len(&p.input)),
-            KeyCode::Home => p.cursor = 0,
-            KeyCode::End => p.cursor = char_len(&p.input),
-            KeyCode::Char('a') if k.ctrl => p.cursor = 0,
-            KeyCode::Char('u') if k.ctrl => {
-                p.input.clear();
-                p.cursor = 0;
-            }
             KeyCode::Tab if p.kind.is_path() => {
                 let base = match &p.kind {
                     PromptKind::NewFile(d) | PromptKind::NewFolder(d) => d.clone(),
                     PromptKind::RenameMove(_, base) => base.clone(),
                     _ => self.base_dir(),
                 };
-                p.input = complete_path(&base, &p.input);
-                p.cursor = char_len(&p.input);
+                let done = complete_path(&base, p.input.text());
+                p.input.set(&done);
             }
             KeyCode::F(3) | KeyCode::Down if is_find => {
-                self.search = Some(p.input.clone());
+                self.search = Some(p.input.text().to_string());
                 self.find_next(!k.shift);
             }
             KeyCode::Up if is_find => {
-                self.search = Some(p.input.clone());
+                self.search = Some(p.input.text().to_string());
                 self.find_next(false);
             }
             _ => {}
         }
-        let changed = matches!(
-            k.code,
-            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char('u')
-        );
         self.modal = Some(Modal::Prompt(p));
-        if changed {
-            self.prompt_changed();
-        }
     }
 
     /// Incremental find while typing in the find panel.
@@ -174,7 +131,7 @@ impl App {
         let PromptKind::Find { origin } = p.kind else {
             return;
         };
-        let q = p.input.clone();
+        let q = p.input.text().to_string();
         self.search = Some(q.clone());
         let pg = self.page;
         if let Some(b) = self.buf_mut() {
@@ -191,7 +148,7 @@ impl App {
     }
 
     pub(super) fn prompt_accept(&mut self, p: Prompt) {
-        let input = p.input.trim().to_string();
+        let input = p.input.text().trim().to_string();
         match p.kind {
             PromptKind::NewFile(dir) | PromptKind::NewFolder(dir) if input.is_empty() => {
                 let _ = dir;
@@ -280,7 +237,7 @@ impl App {
             PromptKind::Find { .. } => {}
             PromptKind::ReplaceFind => {
                 if !input.is_empty() {
-                    let f = p.input.clone();
+                    let f = p.input.text().to_string();
                     self.prompt(
                         &format!("Replace '{f}' with"),
                         "",
@@ -291,7 +248,7 @@ impl App {
             PromptKind::ReplaceWith(f) => {
                 let n = self
                     .buf_mut()
-                    .map(|b| b.replace_all(&f, &p.input))
+                    .map(|b| b.replace_all(&f, p.input.text()))
                     .unwrap_or(0);
                 self.msg(format!("Replaced {n} occurrence(s)"));
             }

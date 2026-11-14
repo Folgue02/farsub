@@ -143,11 +143,12 @@ impl App {
                 self.prompt(&title, &rel, PromptKind::RenameMove(src, base));
                 // Put the cursor before the extension, like Sublime/VS Code.
                 if let Some(Modal::Prompt(p)) = &mut self.modal
-                    && let Some(dot) = p.input.rfind('.')
-                    && p.input.rfind('/').is_none_or(|s| s < dot)
+                    && let Some(dot) = p.input.text().rfind('.')
+                    && p.input.text().rfind('/').is_none_or(|s| s < dot)
                     && dot > 0
                 {
-                    p.cursor = char_len(&p.input[..dot]);
+                    let col = char_len(&p.input.text()[..dot]);
+                    p.input.set_cursor(col);
                 }
             }
             SidebarDelete => {

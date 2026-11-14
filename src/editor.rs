@@ -1,5 +1,6 @@
 //! Text buffer with Sublime-style editing operations and grouped undo/redo.
 
+use crate::commands::Command;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -161,6 +162,15 @@ pub struct Buffer {
     pub syntax_override: bool,
     /// Editor group (pane column) the buffer's tab lives in.
     pub group: usize,
+    /// Word wrap chosen for this file (View: Toggle Word Wrap); None = the setting.
+    pub word_wrap: Option<bool>,
+    /// With word wrap: which visual row of the `scroll_y` line is at the top.
+    pub scroll_row: usize,
+    /// Pixels the top row is scrolled past (smooth scrolling between whole rows).
+    pub scroll_px: f32,
+    /// Visual column kept across Up/Down in wrapped text, valid while the cursor is still
+    /// at the position it was set for.
+    want_vx: Option<(Pos, usize)>,
     undo: Vec<Group>,
     redo: Vec<Group>,
     pending: Vec<Edit>,
@@ -216,6 +226,10 @@ impl Buffer {
             indent_override: false,
             syntax_override: false,
             group: 0,
+            word_wrap: None,
+            scroll_row: 0,
+            scroll_px: 0.0,
+            want_vx: None,
             undo: vec![],
             redo: vec![],
             pending: vec![],
@@ -1001,6 +1015,100 @@ impl Buffer {
         } else {
             self.want_col = self.cursor.col;
         }
+    }
+
+    /// Apply a cursor-movement / selection / deletion command (the editing keys from
+    /// keymap.toml). `page` is the page height in rows, `wrap` the wrap width if wrapping.
+    /// Returns false for commands that aren't motions.
+    pub fn apply_motion(&mut self, cmd: Command, page: usize, wrap: Option<usize>) -> bool {
+        use Command::*;
+        let page = page.max(1);
+        let vert = |b: &mut Buffer, d: isize, sel: bool| match wrap {
+            Some(w) => b.move_visual(d, sel, w),
+            None => b.move_vert(d, sel),
+        };
+        match cmd {
+            MoveLeft | SelectLeft => self.move_left(cmd == SelectLeft, false),
+            MoveRight | SelectRight => self.move_right(cmd == SelectRight, false),
+            MoveWordLeft | SelectWordLeft => self.move_left(cmd == SelectWordLeft, true),
+            MoveWordRight | SelectWordRight => self.move_right(cmd == SelectWordRight, true),
+            MoveLineStart | SelectToLineStart => self.move_home(cmd == SelectToLineStart),
+            MoveLineEnd | SelectToLineEnd => self.move_end(cmd == SelectToLineEnd),
+            MoveDocStart | SelectToDocStart => self.move_doc(false, cmd == SelectToDocStart),
+            MoveDocEnd | SelectToDocEnd => self.move_doc(true, cmd == SelectToDocEnd),
+            MoveUp | SelectUp => vert(self, -1, cmd == SelectUp),
+            MoveDown | SelectDown => vert(self, 1, cmd == SelectDown),
+            MovePageUp | SelectPageUp => {
+                self.move_vert(-(page as isize), cmd == SelectPageUp);
+                self.scroll_y = self.scroll_y.saturating_sub(page);
+            }
+            MovePageDown | SelectPageDown => {
+                self.move_vert(page as isize, cmd == SelectPageDown);
+                self.scroll_y = (self.scroll_y + page).min(self.lines.len().saturating_sub(1));
+            }
+            DeleteLeft => self.backspace(),
+            DeleteRight => self.delete_forward(),
+            DeleteWordLeft => self.delete_word(false),
+            DeleteWordRight => self.delete_word(true),
+            DeleteToLineStart => self.delete_to_line_start(),
+            ScrollLineUp => self.scroll_y = self.scroll_y.saturating_sub(1),
+            ScrollLineDown => {
+                self.scroll_y = (self.scroll_y + 1).min(self.lines.len().saturating_sub(1))
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Up/Down by visual rows when lines wrap at `width` columns (like Sublime).
+    pub fn move_visual(&mut self, delta: isize, select: bool, width: usize) {
+        use crate::wrap::{col_in_seg, dcol, seg_of, segments};
+        let tab = self.tab_size;
+        let c = self.cursor;
+        let segs = segments(&self.lines[c.line], tab, width);
+        let d = dcol(&self.lines[c.line], c.col, tab);
+        let i = seg_of(&segs, d);
+        // Keep the visual column across consecutive moves.
+        let vx = match self.want_vx {
+            Some((p, vx)) if p == c => vx,
+            _ => d - segs[i].start + segs[i].indent,
+        };
+        let (mut line, mut seg) = (c.line, i);
+        let mut at_edge = None;
+        for _ in 0..delta.unsigned_abs() {
+            if delta > 0 {
+                let n = segments(&self.lines[line], tab, width).len();
+                if seg + 1 < n {
+                    seg += 1;
+                } else if line + 1 < self.lines.len() {
+                    line += 1;
+                    seg = 0;
+                } else {
+                    at_edge = Some(self.last_pos());
+                    break;
+                }
+            } else if seg > 0 {
+                seg -= 1;
+            } else if line > 0 {
+                line -= 1;
+                seg = segments(&self.lines[line], tab, width).len() - 1;
+            } else {
+                at_edge = Some(Pos::new(0, 0));
+                break;
+            }
+        }
+        let p = at_edge.unwrap_or_else(|| {
+            let segs = segments(&self.lines[line], tab, width);
+            let g = segs[seg];
+            let target = g.start as f32 + vx.saturating_sub(g.indent) as f32;
+            Pos::new(
+                line,
+                col_in_seg(&self.lines[line], tab, &g, target, seg + 1 == segs.len()),
+            )
+        });
+        self.set_cursor(p, select);
+        self.want_col = self.cursor.col;
+        self.want_vx = at_edge.is_none().then_some((self.cursor, vx));
     }
 
     pub fn move_home(&mut self, select: bool) {

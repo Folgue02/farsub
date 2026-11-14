@@ -63,7 +63,7 @@ pub struct Palette {
     /// Modes that cannot be switched by typing a prefix (buffers, references list).
     pub fixed: bool,
     pub title: String,
-    pub query: String,
+    pub query: crate::lineedit::LineEdit,
     pub items: Vec<Item>,
     pub shown: Vec<(usize, Vec<usize>)>,
     pub sel: usize,
@@ -94,7 +94,7 @@ impl Palette {
                     | Mode::Indentation
             ),
             title: String::new(),
-            query: query.to_string(),
+            query: crate::lineedit::LineEdit::new(query),
             items: vec![],
             shown: vec![],
             sel: 0,
@@ -121,7 +121,7 @@ impl Palette {
         if self.fixed {
             return self.mode;
         }
-        match self.query.chars().next() {
+        match self.query.text().chars().next() {
             Some('>') => Mode::Commands,
             Some('@') => Mode::Symbols,
             Some(':') => Mode::Line,
@@ -134,9 +134,12 @@ impl Palette {
     pub fn needle(&self) -> &str {
         let p = Self::prefix(self.mode);
         let q = if !self.fixed && !p.is_empty() {
-            self.query.strip_prefix(p).unwrap_or(&self.query)
+            self.query
+                .text()
+                .strip_prefix(p)
+                .unwrap_or(self.query.text())
         } else {
-            &self.query
+            self.query.text()
         };
         let q = q.trim_start();
         if self.mode == Mode::Files
@@ -153,7 +156,7 @@ impl Palette {
         if self.mode != Mode::Files {
             return None;
         }
-        let (_, l) = self.query.rsplit_once(':')?;
+        let (_, l) = self.query.text().rsplit_once(':')?;
         l.parse::<usize>().ok().filter(|n| *n > 0)
     }
 

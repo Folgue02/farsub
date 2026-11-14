@@ -155,6 +155,7 @@ pub fn default_label(cmd: Command) -> String {
         MoveToGroup3 => Some("Move File to Group 3"),
         MoveToGroup4 => Some("Move File to Group 4"),
         FocusNextGroup => Some("Focus Next Group"),
+        ToggleWordWrap => Some("Word Wrap"),
         _ => None,
     };
     if let Some(s) = special {

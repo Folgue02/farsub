@@ -35,6 +35,8 @@ fn test_config(root: &Path) -> Config {
         animations: false,
         // A plain shell, so tests don't depend on the user's shell setup.
         terminal_shell: Some("/bin/sh".into()),
+        // Most tests check columns on unwrapped lines; wrapping has its own tests.
+        word_wrap: false,
         ..EditorConfig::default()
     };
     // Never touch the user's real config or data folders.
@@ -58,7 +60,12 @@ fn steps(h: &mut Harness<'static, Gui>, n: usize) {
     }
 }
 
-const CMD: Modifiers = Modifiers::COMMAND;
+/// The platform's command key as a real keyboard sends it (Command on macOS, Ctrl elsewhere).
+const CMD: Modifiers = if cfg!(target_os = "macos") {
+    Modifiers::MAC_CMD.plus(Modifiers::COMMAND)
+} else {
+    Modifiers::COMMAND
+};
 
 fn press(h: &mut Harness<'static, Gui>, m: Modifiers, k: Key) {
     h.key_press_modifiers(m, k);
@@ -137,9 +144,8 @@ fn sidebar_file_operations_by_keyboard() {
         Some(d.join("docs/notes/todo.txt").as_path())
     );
     typ(&mut h, "r");
-    press(&mut h, CMD, Key::A); // Ctrl/Cmd+A: cursor to start (path prompt)
-    // Replace the whole input: clear with Cmd+U, type new path.
-    press(&mut h, CMD, Key::U);
+    // Replace the whole input: Select All, then type (as in any text field).
+    press(&mut h, CMD, Key::A);
     typ(&mut h, "docs/todo.md");
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert!(!d.join("docs/notes/todo.txt").exists());
@@ -270,7 +276,7 @@ fn goto_anything_commands_and_editing() {
     assert_eq!(h.state().app.buf().unwrap().cursor.line, 4);
 
     // Command palette → Duplicate Line, Cmd+Z undoes.
-    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    press(&mut h, CMD | Modifiers::SHIFT, Key::P);
     typ(&mut h, "duplicate line");
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().app.buf().unwrap().lines[5], "fn hello() {}");
@@ -302,7 +308,7 @@ fn goto_anything_commands_and_editing() {
     press(&mut h, CMD, Key::S);
     press(&mut h, CMD, Key::W);
     assert!(h.state().app.buffers.is_empty());
-    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    press(&mut h, CMD | Modifiers::SHIFT, Key::T);
     assert_eq!(h.state().app.buf().unwrap().name(), "main.rs");
 
     // Mouse: clicking a line in the editor moves the cursor there.
@@ -597,7 +603,7 @@ fn keymap_viewer_search_and_run() {
     let mut h = harness(&d);
     h.state_mut().app.open_file(&d.join("a.txt"), true);
     steps(&mut h, 2);
-    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Slash);
+    press(&mut h, CMD | Modifiers::SHIFT, Key::Slash);
     assert!(matches!(h.state().app.modal, Some(Modal::Keymap(_))));
     // Every bound command and the sidebar keys are listed.
     let all = crate::app::keymap_rows(&h.state().app.keymap, "");
@@ -662,7 +668,7 @@ fn server_manager_install_and_uninstall() {
         "{msg}"
     );
 
-    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::L);
+    press(&mut h, CMD | Modifiers::ALT, Key::L);
     assert!(matches!(h.state().app.modal, Some(Modal::Servers(_))));
     // The current file's servers are listed first.
     assert_eq!(h.state().app.server_rows()[0].name, "fake_ls");
@@ -974,7 +980,7 @@ fn switch_save_and_edit_projects() {
     );
     h.state_mut().app.open_file(&d.join("two/y.txt"), true);
     // Switch Project palette lists recent folder sets; picking "one" brings back x.txt.
-    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::P);
+    press(&mut h, CMD | Modifiers::ALT, Key::P);
     assert!(matches!(&h.state().app.modal, Some(Modal::Palette(p)) if p.items.len() >= 2));
     typ(&mut h, "one");
     shot(&mut h, "switch_project");
@@ -985,7 +991,7 @@ fn switch_save_and_edit_projects() {
     h.state_mut()
         .app
         .run(crate::commands::Command::SaveProjectAs);
-    press(&mut h, CMD, Key::U);
+    press(&mut h, CMD, Key::A); // select the input; typing replaces it
     typ(&mut h, &d.join("one/One").display().to_string());
     press(&mut h, Modifiers::NONE, Key::Enter);
     let file = d.join("one/One.farsub-project");
@@ -997,7 +1003,7 @@ fn switch_save_and_edit_projects() {
     );
     assert!(d.join("one/One.farsub-workspace").is_file());
     h.state_mut().app.run(crate::commands::Command::AddFolder);
-    press(&mut h, CMD, Key::U);
+    press(&mut h, CMD, Key::A); // select the input; typing replaces it
     typ(&mut h, &d.join("extra").display().to_string());
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().app.project.folders.len(), 2);
@@ -1142,7 +1148,7 @@ fn lsp_info_shows_status_and_installs() {
     );
     h.state_mut().app.open_file(&d.join("a.fake"), true);
     steps(&mut h, 2);
-    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::I);
+    press(&mut h, CMD | Modifiers::ALT, Key::I);
     assert!(matches!(h.state().app.modal, Some(Modal::LspInfo(_))));
     let text: Vec<String> = h.state().app.lsp_info().into_iter().map(|l| l.1).collect();
     let all = text.join("\n");
@@ -1209,7 +1215,7 @@ fn console_panel_logs_and_runs_commands() {
     steps(&mut h, 2);
     h.state_mut().app.msg("hello from the status bar");
     // The console opens from the command palette (Ctrl+` is the terminal).
-    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    press(&mut h, CMD | Modifiers::SHIFT, Key::P);
     typ(&mut h, "show console");
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert!(h.state().app.console_shown());
@@ -1235,8 +1241,8 @@ fn console_panel_logs_and_runs_commands() {
     );
     // History.
     press(&mut h, Modifiers::NONE, Key::ArrowUp);
-    assert_eq!(h.state().app.console.input, "no_such_thing");
-    press(&mut h, CMD, Key::U);
+    assert_eq!(h.state().app.console.input.text(), "no_such_thing");
+    press(&mut h, CMD, Key::A); // select the input; typing replaces it
     typ(&mut h, "filter sidebar");
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().app.console.filter, "sidebar");
@@ -2197,4 +2203,210 @@ fn bench_frame_cost() {
         h.state().app.config.servers.len(),
         t.elapsed().as_secs_f64() * 1000.0 / 20.0
     );
+}
+
+#[test]
+fn word_wrap_rows_movement_and_toggle() {
+    let long = format!(
+        "    {}\nshort\n",
+        (0..60)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let d = project("wrap", &[("a.txt", long.as_str())]);
+    let mut cfg = test_config(&d);
+    cfg.editor.word_wrap = true;
+    let mut h = project_harness(crate::project::Project::from_folders(vec![d.clone()]), cfg);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    let rows = h.state().rows_for_test();
+    let line0: Vec<_> = rows.iter().filter(|r| r.0 == 0).collect();
+    assert!(line0.len() >= 3, "long line wraps into rows: {rows:?}");
+    assert_eq!(rows.iter().filter(|r| r.0 == 1).count(), 1);
+    let width = h.state().app.wrap_cols.expect("wrapping");
+    assert!(
+        line0.iter().all(|r| r.2 - r.1 <= width),
+        "{line0:?} width {width}"
+    );
+    shot(&mut h, "word_wrap");
+    // Down moves one visual row within the long line, then Up comes back.
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(0, 8));
+    steps(&mut h, 1);
+    press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    let c = h.state().app.buf().unwrap().cursor;
+    assert_eq!(c.line, 0, "still on the wrapped line");
+    assert!(
+        c.col > line0[1].1.saturating_sub(4) && c.col < line0[1].2,
+        "on its second row: {c:?} {line0:?}"
+    );
+    press(&mut h, Modifiers::NONE, Key::ArrowUp);
+    assert_eq!(
+        h.state().app.buf().unwrap().cursor,
+        crate::editor::Pos::new(0, 8)
+    );
+    // Clicking the second row puts the caret on that row.
+    let (_, start, end, y) = *line0[1];
+    let (cw, _, _) = h.state().text_metrics_for_test();
+    let ed = h.state().editor_rect_for_test();
+    let x = ed.left() + (ed.width() * 0.3).min(400.0);
+    h.event(egui::Event::PointerMoved(egui::Pos2::new(x, y + 5.0)));
+    h.event(egui::Event::PointerButton {
+        pos: egui::Pos2::new(x, y + 5.0),
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.event(egui::Event::PointerButton {
+        pos: egui::Pos2::new(x, y + 5.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    steps(&mut h, 2);
+    let c = h.state().app.buf().unwrap().cursor;
+    assert!(
+        c.line == 0 && c.col >= start && c.col < end,
+        "click on row 2 → {c:?} (row {start}..{end}, cw {cw})"
+    );
+    // Alt+Z turns wrapping off for this file: one row per line, horizontal scrolling back.
+    press(&mut h, Modifiers::ALT, Key::Z);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().word_wrap, Some(false));
+    assert!(h.state().app.wrap_cols.is_none());
+    assert_eq!(
+        h.state()
+            .rows_for_test()
+            .iter()
+            .filter(|r| r.0 == 0)
+            .count(),
+        1
+    );
+    // ...and it's remembered in the workspace.
+    let ws = h.state().app.capture_workspace();
+    assert_eq!(ws.buffers[0].word_wrap, Some(false));
+}
+
+#[test]
+fn input_boxes_edit_like_the_editor() {
+    let d = project("inputs", &[("a.txt", "some text\n")]);
+    let mut h = harness(&d);
+    // Word movement is Option on macOS, Ctrl elsewhere (as in the editor).
+    let word = if cfg!(target_os = "macos") {
+        Modifiers::ALT
+    } else {
+        Modifiers::CTRL
+    };
+    let prompt_text = |h: &Harness<'static, Gui>| match &h.state().app.modal {
+        Some(Modal::Prompt(p)) => p.input.text().to_string(),
+        Some(Modal::Palette(p)) => p.query.text().to_string(),
+        _ => panic!("no input open"),
+    };
+    // Goto Anything with no file open: Select All works (from the key and from the menu).
+    press(&mut h, CMD, Key::P);
+    typ(&mut h, "abc");
+    assert!(h.state().app.enabled(crate::commands::Command::SelectAll));
+    press(&mut h, CMD, Key::A);
+    typ(&mut h, "z");
+    assert_eq!(prompt_text(&h), "z");
+    h.state_mut().app.on_menu_command("select_all");
+    typ(&mut h, "q");
+    assert_eq!(
+        prompt_text(&h),
+        "q",
+        "the menu's Select All also targets the input"
+    );
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    // The find panel: word movement, delete word, select all, undo — editor bindings.
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    press(&mut h, CMD, Key::F);
+    typ(&mut h, "hello big world");
+    press(&mut h, word, Key::ArrowLeft);
+    match &h.state().app.modal {
+        Some(Modal::Prompt(p)) => assert_eq!(p.input.cursor(), 10),
+        _ => panic!("find panel"),
+    }
+    press(&mut h, word, Key::Backspace);
+    assert_eq!(prompt_text(&h), "hello world");
+    press(&mut h, Modifiers::SHIFT, Key::End);
+    press(&mut h, CMD, Key::C);
+    press(&mut h, CMD, Key::Z);
+    assert_eq!(prompt_text(&h), "hello big world", "undo in the input");
+    press(&mut h, CMD, Key::A);
+    typ(&mut h, "text");
+    assert_eq!(prompt_text(&h), "text");
+    // The editor's own text and selection weren't touched by any of this.
+    assert_eq!(h.state().app.buf().unwrap().lines[0], "some text");
+    shot(&mut h, "find_panel_input");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    // The console line too.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::ToggleConsole);
+    steps(&mut h, 2);
+    typ(&mut h, "filter one two");
+    press(&mut h, word, Key::Backspace);
+    assert_eq!(h.state().app.console.input.text(), "filter one ");
+}
+
+#[test]
+fn smooth_scrolling_by_pixels() {
+    let text: String = (0..200).map(|i| format!("line {i}\n")).collect();
+    let d = project("smooth", &[("a.txt", text.as_str())]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    let ed = h.state().editor_rect_for_test();
+    let over = egui::Pos2::new(ed.center().x, ed.center().y);
+    let wheel = |h: &mut Harness<'static, Gui>, dy: f32| {
+        h.event(egui::Event::PointerMoved(over));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::Vec2::new(0.0, dy),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+        });
+        for _ in 0..30 {
+            h.step();
+        }
+    };
+    let (_, lh, _) = h.state().text_metrics_for_test();
+    // A small trackpad nudge scrolls a few pixels, not a whole line.
+    wheel(&mut h, -6.0);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.scroll_y, 0);
+    assert!(
+        b.scroll_px > 0.5 && b.scroll_px < lh,
+        "px {} lh {lh}",
+        b.scroll_px
+    );
+    let first_row_y = h.state().rows_for_test()[0].3;
+    assert!(
+        first_row_y < ed.top(),
+        "rows shift by the pixel offset: {first_row_y} vs {}",
+        ed.top()
+    );
+    // A bigger scroll carries whole lines into the line position.
+    wheel(&mut h, -10.0 * lh);
+    let b = h.state().app.buf().unwrap();
+    assert!(b.scroll_y >= 8, "scrolled {} lines", b.scroll_y);
+    // Scrolling back up past the top stops cleanly at 0.
+    wheel(&mut h, 100.0 * lh);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!((b.scroll_y, b.scroll_px), (0, 0.0));
+    // Moving the cursor snaps to whole lines again.
+    wheel(&mut h, -5.0);
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(150, 0));
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().scroll_px, 0.0);
 }

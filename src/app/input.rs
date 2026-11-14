@@ -20,18 +20,10 @@ impl App {
             return true;
         }
         if self.modal.is_some() {
-            // Cmd+V into prompts/palettes even when a native menu swallowed the paste event.
-            if k.ctrl
-                && !k.shift
-                && !k.alt
-                && k.code == KeyCode::Char('v')
-                && matches!(self.modal, Some(Modal::Prompt(_) | Modal::Palette(_)))
-            {
-                let t = self.clipboard_text();
-                self.on_paste(&t);
-                return true;
+            // Editing keys edit the modal's input like the editor; the rest are the modal's.
+            if !self.input_key(k) {
+                self.modal_key(k);
             }
-            self.modal_key(k);
             return true;
         }
         // Completion navigation (literal Ctrl on macOS; on other platforms Ctrl+N/P only
@@ -55,7 +47,11 @@ impl App {
             return self.terminal_key(k);
         }
         if self.focus == Focus::Console && self.console_shown() {
-            if k.ctrl && !k.shift && !k.alt && k.code == KeyCode::Char('a') {
+            if self.input_key(k) {
+                return true;
+            }
+            // Select All with an empty input line selects the log text.
+            if self.text_key_command(k) == Some(Command::SelectAll) {
                 self.console_select_all();
                 return true;
             }
@@ -108,26 +104,17 @@ impl App {
                 self.menu_char(c);
                 continue;
             }
+            if let Some(input) = self.active_input() {
+                input.insert(c.encode_utf8(&mut [0u8; 4]));
+                self.input_changed();
+                continue;
+            }
             let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
-            let in_console = self.focus == Focus::Console && self.console_shown();
             match &mut self.modal {
-                Some(Modal::Keymap(v)) => {
-                    v.query.push(c);
-                    v.sel = 0;
-                    v.scroll = 0;
-                }
                 Some(Modal::Servers(_)) => self.servers_char(c),
                 Some(Modal::LspInfo(_)) => self.lsp_info_char(c),
-                Some(Modal::Palette(p)) => {
-                    p.query.push(c);
-                    self.palette_query_changed();
-                }
-                Some(Modal::Prompt(p)) => {
-                    let b = crate::editor::byte_idx(&p.input, p.cursor);
-                    p.input.insert(b, c);
-                    p.cursor += 1;
-                    self.prompt_changed();
-                }
+                // Modals with an input were handled above.
+                Some(Modal::Prompt(_) | Modal::Palette(_) | Modal::Keymap(_)) => {}
                 Some(Modal::Confirm(_)) => {
                     let Some(Modal::Confirm(cf)) = self.modal.take() else {
                         return;
@@ -153,11 +140,6 @@ impl App {
                         t.write(&bytes);
                     }
                 }
-                None if in_console => {
-                    let b = crate::editor::byte_idx(&self.console.input, self.console.cursor);
-                    self.console.input.insert(b, c);
-                    self.console.cursor += 1;
-                }
                 None if self.focus == Focus::Sidebar && self.sidebar_visible => self.tree_char(c),
                 None => self.editor_text(c),
             }
@@ -165,31 +147,18 @@ impl App {
     }
 
     pub fn on_paste(&mut self, s: &str) {
+        if let Some(input) = self.active_input() {
+            input.insert(s);
+            self.input_changed();
+            return;
+        }
         let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
-        let in_console = self.focus == Focus::Console && self.console_shown();
         match &mut self.modal {
-            Some(Modal::Prompt(p)) => {
-                let line = s.lines().next().unwrap_or("");
-                let b = crate::editor::byte_idx(&p.input, p.cursor);
-                p.input.insert_str(b, line);
-                p.cursor += char_len(line);
-                self.prompt_changed();
-            }
-            Some(Modal::Palette(p)) => {
-                p.query.push_str(s.lines().next().unwrap_or(""));
-                self.palette_query_changed();
-            }
             Some(_) => {}
             None if in_term => {
                 if let Some(t) = self.current_terminal_mut() {
                     t.paste(s);
                 }
-            }
-            None if in_console => {
-                let line = s.lines().next().unwrap_or("");
-                let b = crate::editor::byte_idx(&self.console.input, self.console.cursor);
-                self.console.input.insert_str(b, line);
-                self.console.cursor += char_len(line);
             }
             None if self.focus == Focus::Sidebar && self.sidebar_visible => {
                 self.run(Command::SidebarPaste)
@@ -199,6 +168,10 @@ impl App {
     }
 
     pub fn on_copy(&mut self, cut: bool) {
+        // A selection in a one-line input (find, palette, console line…) wins.
+        if self.input_clipboard(if cut { Command::Cut } else { Command::Copy }) {
+            return;
+        }
         if self.modal.is_some() {
             return;
         }
@@ -229,6 +202,111 @@ impl App {
             (false, true) => Command::Cut,
         };
         self.run(cmd);
+    }
+
+    /// The one-line input that has keyboard focus, if any (modal inputs, the console line).
+    pub(super) fn active_input(&mut self) -> Option<&mut LineEdit> {
+        let console = self.focus == Focus::Console && self.console_shown();
+        match &mut self.modal {
+            Some(Modal::Prompt(p)) => Some(&mut p.input),
+            Some(Modal::Palette(p)) => Some(&mut p.query),
+            Some(Modal::Keymap(v)) => Some(&mut v.query),
+            Some(_) => None,
+            None if console => Some(&mut self.console.input),
+            None => None,
+        }
+    }
+
+    /// The focused input's text changed: refresh what depends on it.
+    pub(super) fn input_changed(&mut self) {
+        match &mut self.modal {
+            Some(Modal::Prompt(_)) => self.prompt_changed(),
+            Some(Modal::Palette(_)) => self.palette_query_changed(),
+            Some(Modal::Keymap(v)) => {
+                v.sel = 0;
+                v.scroll = 0;
+            }
+            _ => {}
+        }
+    }
+
+    /// Copy / Cut the focused input's selection. False if there's no such selection.
+    fn input_clipboard(&mut self, cmd: Command) -> bool {
+        let Some(input) = self.active_input() else {
+            return false;
+        };
+        let t = match cmd {
+            Command::Cut => input.cut(),
+            _ => input.selected_text(),
+        };
+        let Some(t) = t else { return false };
+        self.clip = t.clone();
+        self.clip_line = false;
+        self.pending_copy = Some(t);
+        if cmd == Command::Cut {
+            self.input_changed();
+        }
+        true
+    }
+
+    /// The command a key runs when editing text: editor bindings first, then global ones
+    /// (Select All, Undo, Copy… are global), as in the editor itself.
+    fn text_key_command(&self, k: Key) -> Option<Command> {
+        self.keymap
+            .lookup(k, Ctx::Editor)
+            .or_else(|| self.keymap.lookup(k, Ctx::Global))
+    }
+
+    /// Editing keys in a one-line input: looked up in the editor's keymap and run by the
+    /// same code as in the editor (see lineedit.rs). Returns false if the key isn't an
+    /// editing command for the input, so its owner handles it (Enter, Esc, Up/Down…).
+    pub(super) fn input_key(&mut self, k: Key) -> bool {
+        match self.text_key_command(k) {
+            Some(cmd) => self.input_command(cmd),
+            None => false,
+        }
+    }
+
+    /// Whether a one-line input has keyboard focus (so text commands apply to it).
+    pub fn has_input(&self) -> bool {
+        match &self.modal {
+            Some(Modal::Prompt(_) | Modal::Palette(_) | Modal::Keymap(_)) => true,
+            Some(_) => false,
+            None => self.focus == Focus::Console && self.console_shown(),
+        }
+    }
+
+    /// Run a text-editing command on the focused input. False if there's no input, the
+    /// command isn't a text command, or it belongs to the input's owner right now.
+    pub(super) fn input_command(&mut self, cmd: Command) -> bool {
+        if !crate::lineedit::accepts(cmd) {
+            return false;
+        }
+        let empty = match self.active_input() {
+            Some(i) => i.is_empty(),
+            None => return false,
+        };
+        match cmd {
+            // In an empty input these belong to the owner: Backspace leaves a palette
+            // mode, Select All in the console selects the log.
+            Command::DeleteLeft | Command::SelectAll if empty => false,
+            Command::Copy | Command::Cut => self.input_clipboard(cmd),
+            Command::Paste => {
+                let t = self.clipboard_text();
+                if let Some(i) = self.active_input() {
+                    i.insert(&t);
+                }
+                self.input_changed();
+                true
+            }
+            _ => {
+                let changed = self.active_input().and_then(|i| i.command(cmd));
+                if changed == Some(true) {
+                    self.input_changed();
+                }
+                changed.is_some()
+            }
+        }
     }
 
     pub(super) fn paste_text(&mut self, text: String) {
@@ -270,7 +348,6 @@ impl App {
                 }
             }
             AppEvent::Install(name, ev) => self.on_install(name, ev),
-            AppEvent::Packages(l) => self.on_packages(*l),
             AppEvent::PackageInstalled(res) => match res {
                 Ok(name) => {
                     self.msg(format!("Installed package {name} — loading syntaxes…"));
@@ -278,6 +355,7 @@ impl App {
                 }
                 Err(e) => self.msg(format!("Package install failed: {e}")),
             },
+            AppEvent::Packages(l) => self.on_packages(*l),
             AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Files(root, list) => {
                 self.indexing.remove(&root);

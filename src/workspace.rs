@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 pub struct BufferState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
+    /// Word wrap toggled by hand for this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub word_wrap: Option<bool>,
     /// Editor group (layout column) the tab is in.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub group: usize,
@@ -117,6 +120,7 @@ mod tests {
                     syntax: Some("Rust".into()),
                     indent: Some((false, 2)),
                     group: 1,
+                    word_wrap: Some(false),
                 },
                 BufferState {
                     path: None,

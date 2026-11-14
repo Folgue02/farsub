@@ -141,8 +141,14 @@ impl Keymap {
     }
 }
 
+/// Whether two bindings name the same key (a later one replaces an earlier one). On
+/// macOS Cmd+X and Ctrl+X are different keys.
 fn same_key(a: &Spec, b: &Spec) -> bool {
-    a.code == b.code && a.ctrl == b.ctrl && a.shift == b.shift && a.alt == b.alt
+    a.code == b.code
+        && a.ctrl == b.ctrl
+        && a.shift == b.shift
+        && a.alt == b.alt
+        && (!cfg!(target_os = "macos") || a.literal_ctrl == b.literal_ctrl)
 }
 
 pub fn parse(spec: &str) -> Option<Spec> {
@@ -211,8 +217,9 @@ pub fn display(spec: &str) -> String {
 }
 
 fn matches(s: &Spec, k: &Key) -> bool {
-    // On macOS a binding written "Ctrl" means the Control key, never Command.
-    if cfg!(target_os = "macos") && s.literal_ctrl && k.sup {
+    // On macOS Command and Control are different keys: "Cmd" bindings need Command and
+    // "Ctrl" bindings need Control (elsewhere both mean Control).
+    if cfg!(target_os = "macos") && s.ctrl && s.literal_ctrl == k.sup {
         return false;
     }
     same_key(
@@ -220,7 +227,8 @@ fn matches(s: &Spec, k: &Key) -> bool {
         &Spec {
             code: k.code,
             ctrl: k.ctrl,
-            literal_ctrl: false,
+            // The Command/Control distinction was checked above.
+            literal_ctrl: s.literal_ctrl,
             shift: k.shift,
             alt: k.alt,
         },
@@ -267,8 +275,10 @@ mod tests {
                 continue;
             }
             let s = parse(&kb.keys).unwrap();
+            // On macOS, Cmd+X and Ctrl+X are different keys.
+            let lit = cfg!(target_os = "macos") && s.literal_ctrl;
             let key = (
-                format!("{:?}{}{}{}", s.code, s.ctrl, s.shift, s.alt),
+                format!("{:?}{}{}{}{}", s.code, s.ctrl, s.shift, s.alt, lit),
                 kb.context.clone(),
             );
             assert!(seen.insert(key), "{} bound twice", kb.keys);
@@ -324,7 +334,8 @@ mod tests {
             ctrl: true,
             alt: false,
             shift: false,
-            sup: false,
+            // The Command key on macOS.
+            sup: cfg!(target_os = "macos"),
         };
         assert_eq!(km.lookup(k, Ctx::Global), Some(ShowKeymap));
         assert_eq!(km.lookup(Key::new(KeyCode::F(12)), Ctx::Editor), None);

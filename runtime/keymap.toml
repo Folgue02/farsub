@@ -452,45 +452,17 @@ command = "open_context_menu"
 
 # ---- built-in keys that are not commands (listed in the keymap viewer)
 [[docs]]
-section = "Editor"
-keys = "Alt+Left / Alt+Right"
-description = "Move by word (Ctrl+Left/Right too)"
-[[docs]]
-section = "Editor"
-keys = "Cmd+Left / Cmd+Right"
-description = "Line start / end (macOS)"
-[[docs]]
-section = "Editor"
-keys = "Home / End"
-description = "Smart line start / end"
-[[docs]]
-section = "Editor"
-keys = "Cmd+Up / Cmd+Down"
-description = "Document start / end (Ctrl+Home/End too)"
-[[docs]]
-section = "Editor"
-keys = "Shift + any motion"
-description = "Extend the selection"
-[[docs]]
-section = "Editor"
-keys = "Alt+Backspace / Alt+Delete"
-description = "Delete word left / right"
-[[docs]]
-section = "Editor"
-keys = "Cmd+Backspace"
-description = "Delete to line start"
+section = "Inputs"
+keys = "Editing keys"
+description = "Find, prompts, palettes and the console input edit like the editor (same bindings)"
 [[docs]]
 section = "Editor"
 keys = "Tab / Shift+Tab"
 description = "Indent / unindent (selection or line)"
 [[docs]]
 section = "Editor"
-keys = "Ctrl+Up / Ctrl+Down"
-description = "Scroll without moving the cursor"
-[[docs]]
-section = "Editor"
 keys = "Cmd+1 … Cmd+9"
-description = "Go to tab 1–9"
+description = "Go to tab 1–9 of the group (Alt+1…9 on Windows/Linux)"
 [[docs]]
 section = "Editor"
 keys = "Esc"
@@ -531,10 +503,6 @@ description = "Close and return to where you started"
 section = "Prompts"
 keys = "Tab"
 description = "Complete a path"
-[[docs]]
-section = "Prompts"
-keys = "Cmd+U"
-description = "Clear the input"
 [[docs]]
 section = "Menu bar"
 keys = "F10"
@@ -606,3 +574,277 @@ command = "focus_group4"
 [[keys]]
 keys = "Ctrl+Shift+4"
 command = "move_to_group4"
+
+# Word wrap per file (VS Code's key; Sublime has none by default).
+[[keys]]
+keys = "Alt+Z"
+command = "toggle_word_wrap"
+context = "editor"
+
+# ---- Cursor movement, selection and deletion. The editor and every one-line input (find,
+# prompts, palettes, console) use these same bindings; rebind or unbind them here.
+
+[[keys]]
+keys = "Left"
+command = "move_left"
+context = "editor"
+
+[[keys]]
+keys = "Right"
+command = "move_right"
+context = "editor"
+
+[[keys]]
+keys = "Up"
+command = "move_up"
+context = "editor"
+
+[[keys]]
+keys = "Down"
+command = "move_down"
+context = "editor"
+
+[[keys]]
+keys = "PageUp"
+command = "move_page_up"
+context = "editor"
+
+[[keys]]
+keys = "PageDown"
+command = "move_page_down"
+context = "editor"
+
+[[keys]]
+keys = "Home"
+command = "move_line_start"
+context = "editor"
+
+[[keys]]
+keys = "End"
+command = "move_line_end"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Left"
+command = "select_left"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Right"
+command = "select_right"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Up"
+command = "select_up"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Down"
+command = "select_down"
+context = "editor"
+
+[[keys]]
+keys = "Shift+PageUp"
+command = "select_page_up"
+context = "editor"
+
+[[keys]]
+keys = "Shift+PageDown"
+command = "select_page_down"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Home"
+command = "select_to_line_start"
+context = "editor"
+
+[[keys]]
+keys = "Shift+End"
+command = "select_to_line_end"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Left"
+command = "move_word_left"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Right"
+command = "move_word_right"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Shift+Left"
+command = "select_word_left"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Shift+Right"
+command = "select_word_right"
+context = "editor"
+
+[[keys]]
+keys = "Backspace"
+command = "delete_left"
+context = "editor"
+
+[[keys]]
+keys = "Shift+Backspace"
+command = "delete_left"
+context = "editor"
+
+[[keys]]
+keys = "Delete"
+command = "delete_right"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Backspace"
+command = "delete_word_left"
+context = "editor"
+
+[[keys]]
+keys = "Alt+Delete"
+command = "delete_word_right"
+context = "editor"
+
+[[keys]]
+keys = "Ctrl+Up"
+command = "scroll_line_up"
+context = "editor"
+
+[[keys]]
+keys = "Ctrl+Down"
+command = "scroll_line_down"
+context = "editor"
+
+# macOS: Cmd = line / document, Ctrl+A / Ctrl+E like every macOS text field.
+
+[[keys]]
+keys = "Cmd+Left"
+command = "move_line_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Right"
+command = "move_line_end"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Shift+Left"
+command = "select_to_line_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Shift+Right"
+command = "select_to_line_end"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Up"
+command = "move_doc_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Down"
+command = "move_doc_end"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Shift+Up"
+command = "select_to_doc_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Shift+Down"
+command = "select_to_doc_end"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Cmd+Backspace"
+command = "delete_to_line_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Ctrl+A"
+command = "move_line_start"
+context = "editor"
+platforms = ["macos"]
+
+[[keys]]
+keys = "Ctrl+E"
+command = "move_line_end"
+context = "editor"
+platforms = ["macos"]
+
+# Windows / Linux: Ctrl = word, Ctrl+Home / Ctrl+End = document.
+
+[[keys]]
+keys = "Ctrl+Left"
+command = "move_word_left"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Right"
+command = "move_word_right"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Shift+Left"
+command = "select_word_left"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Shift+Right"
+command = "select_word_right"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Home"
+command = "move_doc_start"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+End"
+command = "move_doc_end"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Shift+Home"
+command = "select_to_doc_start"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Shift+End"
+command = "select_to_doc_end"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Backspace"
+command = "delete_word_left"
+context = "editor"
+platforms = ["windows", "linux"]
+
+[[keys]]
+keys = "Ctrl+Delete"
+command = "delete_word_right"
+context = "editor"
+platforms = ["windows", "linux"]

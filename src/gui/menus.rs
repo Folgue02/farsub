@@ -202,7 +202,7 @@ impl Gui {
         let Some(Modal::Keymap(v)) = &self.app.modal else {
             return;
         };
-        let rows = crate::app::keymap_rows(&self.app.keymap, &v.query);
+        let rows = crate::app::keymap_rows(&self.app.keymap, v.query.text());
         p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
         let r = Rect::from_center_size(
             full.center(),
@@ -238,26 +238,15 @@ impl Gui {
             Vec2::new(r.width() - 28.0, 30.0),
         );
         p.rect_filled(input, 4.0, c.bg);
-        let tr = p.text(
-            Pos2::new(input.left() + 10.0, input.center().y),
-            Align2::LEFT_CENTER,
-            if v.query.is_empty() {
-                "Search shortcuts or actions…"
-            } else {
-                &v.query
-            },
+        draw_line_edit(
+            p,
+            input.shrink(2.0),
+            input.left() + 10.0,
+            &v.query,
             FontId::proportional(14.0),
-            if v.query.is_empty() { c.dim } else { c.fg },
-        );
-        let cx = if v.query.is_empty() {
-            input.left() + 10.0
-        } else {
-            tr.right() + 1.0
-        };
-        p.rect_filled(
-            Rect::from_min_size(Pos2::new(cx, input.top() + 6.0), Vec2::new(2.0, 18.0)),
-            0.0,
-            c.accent,
+            c,
+            true,
+            "Search shortcuts or actions…",
         );
 
         // Flatten into lines: section headers + rows.

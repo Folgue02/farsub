@@ -65,27 +65,13 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                let line = std::mem::take(&mut c.input);
-                c.cursor = 0;
+                let line = c.input.take();
                 c.hist_pos = None;
                 if !line.trim().is_empty() && c.history.last() != Some(&line) {
                     c.history.push(line.clone());
                 }
                 self.console_exec(line.trim());
             }
-            KeyCode::Backspace if c.cursor > 0 => {
-                let b = crate::editor::byte_idx(&c.input, c.cursor - 1);
-                c.input.remove(b);
-                c.cursor -= 1;
-            }
-            KeyCode::Delete if c.cursor < char_len(&c.input) => {
-                let b = crate::editor::byte_idx(&c.input, c.cursor);
-                c.input.remove(b);
-            }
-            KeyCode::Left => c.cursor = c.cursor.saturating_sub(1),
-            KeyCode::Right => c.cursor = (c.cursor + 1).min(char_len(&c.input)),
-            KeyCode::Home => c.cursor = 0,
-            KeyCode::End => c.cursor = char_len(&c.input),
             KeyCode::Up | KeyCode::Down if !c.history.is_empty() => {
                 let n = c.history.len();
                 let pos = match (c.hist_pos, k.code) {
@@ -95,15 +81,10 @@ impl App {
                     _ => None,
                 };
                 c.hist_pos = pos;
-                c.input = pos.map(|p| c.history[p].clone()).unwrap_or_default();
-                c.cursor = char_len(&c.input);
+                c.input = LineEdit::new(pos.map(|p| c.history[p].as_str()).unwrap_or(""));
             }
             KeyCode::PageUp => c.scroll += 10,
             KeyCode::PageDown => c.scroll = c.scroll.saturating_sub(10),
-            KeyCode::Char('u') if k.ctrl => {
-                c.input.clear();
-                c.cursor = 0;
-            }
             KeyCode::Char('l') if k.ctrl => crate::log::clear(),
             _ => {}
         }

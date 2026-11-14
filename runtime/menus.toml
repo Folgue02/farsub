@@ -28,7 +28,7 @@ items = ["focus_sidebar", "reveal_in_sidebar", "-", "sidebar_new_file", "sidebar
 
 [[menu]]
 title = "View"
-items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_columns2", "layout_columns3", "layout_columns4", "focus_next_group", "move_to_group1", "move_to_group2", "-", "set_syntax", "indentation", "-", "toggle_terminal", "new_terminal", "toggle_console", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
+items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_columns2", "layout_columns3", "layout_columns4", "focus_next_group", "move_to_group1", "move_to_group2", "-", "toggle_word_wrap", "set_syntax", "indentation", "-", "toggle_terminal", "new_terminal", "toggle_console", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
 
 [[menu]]
 title = "Tools"

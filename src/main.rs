@@ -12,6 +12,7 @@ mod highlight;
 mod installer;
 mod keymap;
 mod keys;
+mod lineedit;
 mod log;
 mod lsp;
 mod menu;
@@ -25,6 +26,7 @@ mod terminal;
 mod tests;
 mod tree;
 mod workspace;
+mod wrap;
 
 use std::io::Read;
 use std::process::ExitCode;

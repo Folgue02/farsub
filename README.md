@@ -326,6 +326,13 @@ different format and don't work as they are.
 Files matched by `.gitignore` are dimmed in the sidebar and left out of Goto Anything,
 even in folders that aren't git repositories.
 
+## Keys in input boxes
+
+The find panel, prompts, palettes and the console line edit exactly like the editor: same
+word movement, selection, delete-word, Select All, Undo and clipboard keys, because they
+use the same `keymap.toml` commands (`move_word_left`, `select_to_line_end`,
+`delete_word_left`, …). Rebind one and it changes everywhere.
+
 ## Split panes (editor groups)
 
 Like Sublime's View › Layout: up to 4 columns, each with its own tabs.
@@ -387,6 +394,9 @@ Guess Settings From Buffer, and Convert Indentation to Spaces / Tabs (one undo s
 Choices are remembered per file in the workspace. Indentation guides are drawn at each
 level, with the block around the cursor highlighted (`indent_guides = false` hides them). The current-line highlight is off by default;
 `highlight_current_line = true` turns it on.
+
+Long lines wrap by default (`word_wrap = true`), with wrapped rows indented like the line.
+View › Word Wrap (Alt+Z) toggles it for the current file.
 
 `ui_scale = 1.25` zooms the whole interface (fonts, sidebar, tabs, menus, panels) like
 browser zoom. Cmd+= / Cmd+- still change only the editor font size, as in Sublime.

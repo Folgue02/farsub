@@ -19,6 +19,7 @@ use crate::highlight::{HlCache, Syntax};
 use crate::installer::{self, InstallEvent};
 use crate::keymap::{self, Ctx, Keymap};
 use crate::keys::{Key, KeyCode};
+use crate::lineedit::LineEdit;
 use crate::lsp::{Manager, Pending, from_lsp, path_to_uri, to_lsp, uri_to_path};
 use crate::menu::{self, Menu, MenuState};
 use crate::packages;
@@ -123,8 +124,7 @@ pub type ConsolePos = (u64, usize);
 
 /// The console panel (View › Show Console, Ctrl+`): the app log plus a command line.
 pub struct Console {
-    pub input: String,
-    pub cursor: usize,
+    pub input: LineEdit,
     history: Vec<String>,
     hist_pos: Option<usize>,
     /// Lines scrolled up from the bottom (0 = follow new output).
@@ -141,8 +141,7 @@ pub struct Console {
 impl Default for Console {
     fn default() -> Self {
         Console {
-            input: String::new(),
-            cursor: 0,
+            input: LineEdit::default(),
             history: vec![],
             hist_pos: None,
             scroll: 0,
@@ -192,8 +191,7 @@ impl PromptKind {
 
 pub struct Prompt {
     pub title: String,
-    pub input: String,
-    pub cursor: usize,
+    pub input: LineEdit,
     pub kind: PromptKind,
 }
 
@@ -258,7 +256,7 @@ pub enum ServerStatus {
 
 /// The keyboard-shortcut reference (Help → Keyboard Shortcuts).
 pub struct KeymapView {
-    pub query: String,
+    pub query: LineEdit,
     pub sel: usize,
     pub scroll: usize,
 }
@@ -445,6 +443,9 @@ pub struct App {
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
     pub settings_view: Option<SettingsView>,
+    /// Columns the focused editor wraps at (set by the GUI each frame), None if not
+    /// wrapping: Up/Down then move by visual rows.
+    pub wrap_cols: Option<usize>,
     pub keymap: Keymap,
     pub menus: Vec<Menu>,
     /// Server name → install log (present while installing or after a failure).
@@ -516,6 +517,7 @@ impl App {
             group_active: [None; MAX_GROUPS],
             group_split: vec![1.0],
             settings_view: None,
+            wrap_cols: None,
             keymap: Keymap::default(),
             menus: vec![],
             install_log: HashMap::new(),

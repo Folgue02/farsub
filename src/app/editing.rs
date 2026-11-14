@@ -39,41 +39,11 @@ impl App {
             self.run(cmd);
             return;
         }
-        let page = self.page.max(1) as isize;
+        // Movement, selection and deletion keys are keymap commands (handled above via
+        // run → run_editor → Buffer::apply_motion). Only structural keys remain here.
         let Some(b) = self.buf_mut() else { return };
-        let sel = k.shift;
-        let word = k.alt || (k.ctrl && !k.sup);
         let typed: Option<char> = None;
         match k.code {
-            KeyCode::Left if k.sup => b.move_home(sel),
-            KeyCode::Right if k.sup => b.move_end(sel),
-            KeyCode::Up if k.sup => b.move_doc(false, sel),
-            KeyCode::Down if k.sup => b.move_doc(true, sel),
-            KeyCode::Left => b.move_left(sel, word),
-            KeyCode::Right => b.move_right(sel, word),
-            KeyCode::Up if k.ctrl => b.scroll_y = b.scroll_y.saturating_sub(1),
-            KeyCode::Down if k.ctrl => {
-                b.scroll_y = (b.scroll_y + 1).min(b.lines.len().saturating_sub(1))
-            }
-            KeyCode::Up => b.move_vert(-1, sel),
-            KeyCode::Down => b.move_vert(1, sel),
-            KeyCode::Home if k.ctrl => b.move_doc(false, sel),
-            KeyCode::End if k.ctrl => b.move_doc(true, sel),
-            KeyCode::Home => b.move_home(sel),
-            KeyCode::End => b.move_end(sel),
-            KeyCode::PageUp => {
-                b.move_vert(-page, sel);
-                b.scroll_y = b.scroll_y.saturating_sub(page as usize);
-            }
-            KeyCode::PageDown => {
-                b.move_vert(page, sel);
-                b.scroll_y += page as usize;
-            }
-            KeyCode::Backspace if k.sup => b.delete_to_line_start(),
-            KeyCode::Backspace if k.ctrl || k.alt => b.delete_word(false),
-            KeyCode::Backspace => b.backspace(),
-            KeyCode::Delete if k.ctrl || k.alt => b.delete_word(true),
-            KeyCode::Delete => b.delete_forward(),
             KeyCode::Enter => b.newline(),
             KeyCode::Tab if k.shift => b.outdent(),
             KeyCode::Tab => {
@@ -188,6 +158,12 @@ impl App {
             return;
         }
         let page = self.page;
+        let wrap = self.wrap_cols;
+        if let Some(b) = self.buf_mut()
+            && b.apply_motion(cmd, page, wrap)
+        {
+            return self.after_editor_key(None);
+        }
         match cmd {
             Save => return self.save_current(),
             SaveAs => {

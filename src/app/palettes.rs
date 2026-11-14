@@ -385,16 +385,6 @@ impl App {
                 p.move_sel(10);
                 self.palette_preview();
             }
-            KeyCode::Backspace if !k.ctrl => {
-                if p.query.pop().is_none() && p.fixed {
-                    return;
-                }
-                self.palette_query_changed();
-            }
-            KeyCode::Backspace if k.ctrl => {
-                p.query.clear();
-                self.palette_query_changed();
-            }
             _ => {}
         }
     }

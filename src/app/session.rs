@@ -109,6 +109,7 @@ impl App {
             .filter(|b| b.path.is_some() || (hot && b.modified))
             .map(|b| BufferState {
                 group: b.group,
+                word_wrap: b.word_wrap,
                 path: b.path.clone(),
                 cursor: (b.cursor.line, b.cursor.col),
                 anchor: b.anchor.map(|a| (a.line, a.col)),
@@ -204,6 +205,7 @@ impl App {
             if let Some(i) = i {
                 let b = &mut self.buffers[i];
                 b.group = bs.group.min(self.layout - 1);
+                b.word_wrap = bs.word_wrap;
                 b.cursor = b.clamp(Pos::new(bs.cursor.0, bs.cursor.1));
                 b.anchor = bs.anchor.map(|a| b.clamp(Pos::new(a.0, a.1)));
                 b.want_col = b.cursor.col;

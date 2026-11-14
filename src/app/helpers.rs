@@ -265,6 +265,38 @@ pub(super) fn needs_buffer(cmd: Command) -> bool {
             | Indentation
             | CloseOtherTabs
             | CloseTabsToRight
+            | ToggleWordWrap
+            | MoveLeft
+            | MoveRight
+            | MoveWordLeft
+            | MoveWordRight
+            | MoveLineStart
+            | MoveLineEnd
+            | MoveDocStart
+            | MoveDocEnd
+            | MoveUp
+            | MoveDown
+            | MovePageUp
+            | MovePageDown
+            | SelectLeft
+            | SelectRight
+            | SelectWordLeft
+            | SelectWordRight
+            | SelectToLineStart
+            | SelectToLineEnd
+            | SelectToDocStart
+            | SelectToDocEnd
+            | SelectUp
+            | SelectDown
+            | SelectPageUp
+            | SelectPageDown
+            | DeleteLeft
+            | DeleteRight
+            | DeleteWordLeft
+            | DeleteWordRight
+            | DeleteToLineStart
+            | ScrollLineUp
+            | ScrollLineDown
     )
 }
 

@@ -43,27 +43,15 @@ impl Gui {
         );
         p.rect_filled(field, 3.0, c.bg);
         p.rect_stroke(field, 3.0, Stroke::new(1.0, c.accent), StrokeKind::Inside);
-        let font = FontId::monospace(UI_SIZE);
-        let clip = p.with_clip_rect(field.shrink(2.0));
-        let tx = clip.text(
-            Pos2::new(field.left() + 8.0, field.center().y),
-            Align2::LEFT_CENTER,
+        draw_line_edit(
+            p,
+            field.shrink(2.0),
+            field.left() + 8.0,
             &pr.input,
-            font.clone(),
-            c.fg,
-        );
-        let before: String = pr.input.chars().take(pr.cursor).collect();
-        let bw = p
-            .ctx()
-            .fonts_mut(|f| f.layout_no_wrap(before, font.clone(), c.fg).size().x);
-        let cx = tx.left() + bw;
-        clip.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(cx, field.top() + 5.0),
-                Vec2::new(2.0, field.height() - 10.0),
-            ),
-            0.0,
-            c.accent,
+            FontId::monospace(UI_SIZE),
+            c,
+            true,
+            "",
         );
     }
 
@@ -94,22 +82,15 @@ impl Gui {
         let input = Rect::from_min_size(r.min + Vec2::new(10.0, 10.0), Vec2::new(w - 20.0, 32.0));
         p.rect_filled(input, 4.0, c.bg);
         let font = FontId::proportional(14.0);
-        let tr = p.text(
-            Pos2::new(input.left() + 10.0, input.center().y),
-            Align2::LEFT_CENTER,
+        draw_line_edit(
+            p,
+            input.shrink(2.0),
+            input.left() + 10.0,
             &pal.query,
             font.clone(),
-            c.fg,
-        );
-        let cx = if pal.query.is_empty() {
-            input.left() + 10.0
-        } else {
-            tr.right() + 1.0
-        };
-        p.rect_filled(
-            Rect::from_min_size(Pos2::new(cx, input.top() + 7.0), Vec2::new(2.0, 18.0)),
-            0.0,
-            c.accent,
+            c,
+            true,
+            "",
         );
         let sub = if pal.loading {
             format!("{} · loading…", pal.title)

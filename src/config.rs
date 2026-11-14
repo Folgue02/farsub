@@ -37,6 +37,8 @@ pub struct EditorConfig {
     pub indent_guides: bool,
     /// Highlight the line the cursor is on (off by default).
     pub highlight_current_line: bool,
+    /// Wrap long lines at the pane width (View: Toggle Word Wrap changes it per file).
+    pub word_wrap: bool,
     /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
     pub terminal_shell: Option<String>,
     /// File icons in the sidebar, tabs and Goto Anything.
@@ -72,6 +74,7 @@ impl Default for EditorConfig {
             animations: true,
             indent_guides: true,
             highlight_current_line: false,
+            word_wrap: true,
             terminal_shell: None,
             file_icons: true,
             icon_theme: None,
@@ -716,6 +719,8 @@ show_sidebar = true
 animations = true
 indent_guides = true
 highlight_current_line = false
+# Wrap long lines at the pane width; View › Word Wrap (Alt+Z) toggles it per file.
+word_wrap = true
 # Shell for the terminal panel (default: $SHELL).
 # terminal_shell = "/bin/zsh"
 # File icons in the sidebar, tabs and Goto Anything; mapping in icons.toml.

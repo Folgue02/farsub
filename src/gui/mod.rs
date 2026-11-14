@@ -101,7 +101,11 @@ pub struct Gui {
     pub app: App,
     rx: Receiver<AppEvent>,
     suppress_text: bool,
-    scroll_acc: f32,
+    /// (buffer id, scroll line, scroll row) the editor last left the view at: if the app
+    /// moves the view elsewhere, the smooth-scroll pixel offset is dropped.
+    scroll_mark: HashMap<usize, (usize, usize)>,
+    /// Sidebar: pixels the top row is scrolled past.
+    side_px: f32,
     term_scroll_acc: f32,
     last_cursor: Option<(usize, Pos, i32)>,
     /// Caret position/version and when it last changed: the blink phase restarts there so
@@ -118,6 +122,8 @@ pub struct Gui {
     widest_cache: HashMap<usize, (i32, usize, Instant)>,
     /// The focused group's editor rect (tests, popups).
     editor_rect: Rect,
+    /// The focused editor's visible rows last frame: (line, start col, end col, y).
+    last_rows: Vec<(usize, usize, usize, f32)>,
     /// (char width, text left edge, first line top, line height) of the last frame.
     text_geom: (f32, f32, f32, f32),
     last_tree_sel: Option<usize>,
@@ -182,7 +188,8 @@ impl Gui {
             app,
             rx,
             suppress_text: false,
-            scroll_acc: 0.0,
+            scroll_mark: HashMap::new(),
+            side_px: 0.0,
             term_scroll_acc: 0.0,
             last_cursor: None,
             caret_mark: (None, Instant::now()),
@@ -191,6 +198,7 @@ impl Gui {
             icon_tex: HashMap::new(),
             widest_cache: HashMap::new(),
             editor_rect: Rect::NOTHING,
+            last_rows: vec![],
             text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
             last_title: String::new(),
@@ -226,7 +234,14 @@ impl Gui {
     }
 
     #[cfg(test)]
+    /// The focused editor's visible rows: (line, first display column, end column, y).
+    #[cfg(test)]
+    pub fn rows_for_test(&self) -> Vec<(usize, usize, usize, f32)> {
+        self.last_rows.clone()
+    }
+
     /// The focused group's editor area last frame.
+    #[cfg(test)]
     pub fn editor_rect_for_test(&self) -> Rect {
         self.editor_rect
     }
@@ -525,7 +540,7 @@ impl Gui {
             return;
         }
         let Some(b) = self.app.buf() else { return };
-        let key = (p.input.clone(), b.version);
+        let key = (p.input.text().to_string(), b.version);
         if self
             .find_count
             .as_ref()
@@ -789,4 +804,78 @@ fn is_digit_key(k: egui::Key) -> bool {
         k,
         Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9
     )
+}
+
+/// Draw a one-line input (find, prompts, palettes, console line, keymap search): its
+/// selection, text and caret, left-aligned at `left` inside `field` and vertically
+/// centred. Long text scrolls sideways so the caret stays visible. Shows `placeholder`
+/// (dimmed) when empty.
+#[allow(clippy::too_many_arguments)]
+fn draw_line_edit(
+    p: &Painter,
+    field: Rect,
+    left: f32,
+    e: &crate::lineedit::LineEdit,
+    font: FontId,
+    c: &Palette,
+    caret: bool,
+    placeholder: &str,
+) {
+    let clip = p.with_clip_rect(field);
+    let width = |s: &str| {
+        p.ctx()
+            .fonts_mut(|f| f.layout_no_wrap(s.to_string(), font.clone(), c.fg).size().x)
+    };
+    let text = e.text();
+    let x_of = |col: usize| -> f32 {
+        let b = text
+            .char_indices()
+            .nth(col)
+            .map(|(b, _)| b)
+            .unwrap_or(text.len());
+        width(&text[..b])
+    };
+    let room = (field.right() - left - 6.0).max(10.0);
+    let cx = x_of(e.cursor());
+    let shift = (cx - room).max(0.0);
+    let x0 = left - shift;
+    let h = font.size + 6.0;
+    let y = field.center().y;
+    if let Some((a, b)) = e.selection() {
+        clip.rect_filled(
+            Rect::from_min_max(
+                Pos2::new(x0 + x_of(a), y - h / 2.0),
+                Pos2::new(x0 + x_of(b), y + h / 2.0),
+            ),
+            2.0,
+            c.sel,
+        );
+    }
+    if text.is_empty() {
+        clip.text(
+            Pos2::new(left, y),
+            Align2::LEFT_CENTER,
+            placeholder,
+            font.clone(),
+            c.dim,
+        );
+    } else {
+        clip.text(
+            Pos2::new(x0, y),
+            Align2::LEFT_CENTER,
+            text,
+            font.clone(),
+            c.fg,
+        );
+    }
+    if caret {
+        clip.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(x0 + cx, y - h / 2.0 + 1.0),
+                Vec2::new(2.0, h - 2.0),
+            ),
+            0.0,
+            c.accent,
+        );
+    }
 }

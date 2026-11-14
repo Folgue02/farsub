@@ -104,6 +104,15 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
   is shown dimmed on the right; signatures never appear. Nested symbols are indented.
   Results come from the language server when one is attached, otherwise from a built-in
   scan of declaration keywords.
+- **Word wrap** (`word_wrap`, default **on**): long lines wrap at the pane width, breaking
+  after spaces when possible (mid-word otherwise). Continuation rows are indented like
+  the line (Sublime's `indent_subsequent_lines`); the line number and diagnostic dot show
+  on the first row only; indent guides run through all rows. Up/Down move by visual
+  rows, keeping the visual column; Home/End and Page Up/Down still work on whole lines.
+  Clicking past the end of a wrapped row puts the caret at that row's end. No horizontal
+  scrolling while wrapping. View › Word Wrap / "View: Toggle Word Wrap" (Alt+Z) toggles
+  it per file, remembered in the workspace. **Differs from Sublime**, whose default
+  `"auto"` wraps only prose (Markdown, plain text); here the default is on everywhere.
 - Current-line highlight is **off by default** (`highlight_current_line = true` turns it
   on).
 - Mouse hover (LSP): resting the pointer on a symbol for 500 ms shows the server's hover
@@ -133,7 +142,11 @@ Windows/Linux; "Ctrl" means the Control key on every platform.
 - Every editor pane has a vertical scrollbar on the right: thin, wider on hover (Sublime
   style). Drag the thumb, or click the track to jump there. Errors/warnings are marked
   along it in their colors. The text area leaves room for it.
-- A horizontal scrollbar appears under the text when a line is wider than the pane.
+- A horizontal scrollbar appears under the text when a line is wider than the pane (only
+  with word wrap off). The vertical scrollbar works in whole lines.
+- **Smooth scrolling:** the mouse wheel and trackpad scroll the editor and the sidebar by
+  pixels (rows can be partly visible at the top), and the scrollbar thumb moves
+  continuously. Moving the cursor, Goto and Page Up/Down still snap to whole lines.
 - Scrollbars only scroll; the cursor doesn't move. The mouse wheel scrolls anywhere over
   the pane, including over the scrollbars.
 
@@ -290,11 +303,31 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
 - A server that fails `initialize` is shown as failed with its reason (never stuck on
   "starting").
 
+## 10a. Text input boxes
+
+- Every one-line input (find, replace, prompts, Goto Anything and the other palettes, the
+  console line, the keymap search) is a one-line editor buffer: it edits exactly like the
+  editor, through the same keymap commands and the same code. Word movement, line
+  start/end, selection (Shift+…), delete word / to line start, Select All, Undo/Redo and
+  Cut/Copy/Paste all work, and rebinding them in `keymap.toml` changes them everywhere.
+- Text commands go to the focused input from every path: keys, the macOS menu bar, the
+  command palette. Keys that aren't text commands (Enter, Esc, Up/Down, Tab completion)
+  belong to the box's owner.
+- In an empty input, Backspace and Select All fall through to the owner (Select All with
+  an empty console line selects the log text).
+- Dropped: the old Ctrl+U "clear input" shortcut; use Select All and type.
+
 ## 11. Menus and keys
 
 - macOS: native menu bar. Native shortcuts only come from global/editor bindings and each
   key combination is registered once (a sidebar-only binding must never capture a key
   while typing — e.g. Cmd+X always cuts text in the editor).
 - Windows/Linux: in-window menu bar; F10 opens the in-window menus everywhere.
+- Cursor movement, selection and deletion are keymap commands (`move_word_left`,
+  `select_to_line_end`, `delete_word_left`, … in `keymap.toml`) with platform defaults:
+  macOS Option = word, Cmd = line/document, Ctrl+A/E = line start/end; Windows/Linux
+  Ctrl = word, Ctrl+Home/End = document. Nothing about them is hard-coded.
+- On macOS, Cmd and Ctrl are different keys in bindings (`Cmd+A` ≠ `Ctrl+A`); on
+  Windows/Linux both mean Ctrl.
 - Keymap viewer: Cmd+Shift+/ lists all bindings; user overrides in `keymap.toml`
   (`command = ""` unbinds, `platforms` limits).

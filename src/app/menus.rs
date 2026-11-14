@@ -12,6 +12,8 @@ impl App {
         let lsp = self.buf().is_some_and(|b| b.lsp_client.is_some());
         let in_panel = matches!(self.focus, Focus::Terminal | Focus::Console);
         match cmd {
+            // Text commands edit the focused input (find, palette, console line…).
+            c if crate::lineedit::accepts(c) && self.has_input() => true,
             Copy | Paste | SelectAll if in_panel => true,
             CloseOtherTabs => has_buf && self.group_tabs(self.group).len() > 1,
             CloseTabsToRight => {
@@ -148,11 +150,11 @@ impl App {
     }
 
     pub(super) fn keymap_key(&mut self, k: Key, mut v: KeymapView) {
-        let n = keymap_rows(&self.keymap, &v.query).len();
+        let n = keymap_rows(&self.keymap, v.query.text()).len();
         match k.code {
             KeyCode::Esc => return,
             KeyCode::Enter => {
-                if let Some(cmd) = keymap_rows(&self.keymap, &v.query)
+                if let Some(cmd) = keymap_rows(&self.keymap, v.query.text())
                     .get(v.sel)
                     .and_then(|r| r.cmd)
                 {
@@ -166,14 +168,6 @@ impl App {
             KeyCode::PageDown => v.sel = (v.sel + 15).min(n.saturating_sub(1)),
             KeyCode::Home => v.sel = 0,
             KeyCode::End => v.sel = n.saturating_sub(1),
-            KeyCode::Backspace => {
-                if k.ctrl {
-                    v.query.clear();
-                } else {
-                    v.query.pop();
-                }
-                v.sel = 0;
-            }
             _ => {}
         }
         self.modal = Some(Modal::Keymap(v));

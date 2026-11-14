@@ -1,6 +1,153 @@
 //! GUI: the editor pane (text, gutter, caret, scrollbars, mouse).
 
 use super::*;
+use crate::wrap::{Seg, char_width, col_in_seg, seg_of, segments};
+
+/// One visible editor row: a slice of a buffer line (the whole line unless wrapping).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Row {
+    pub line: usize,
+    pub seg: Seg,
+    /// First / last visual row of its line.
+    pub first: bool,
+    pub last: bool,
+    pub y: f32,
+    /// Screen x of display column 0 for this row (accounts for scroll and wrap indent).
+    pub x0: f32,
+}
+
+/// The rows of line `ln`: wrapped at `wrap` columns, or the whole line as one row.
+fn line_segs(b: &Buffer, ln: usize, wrap: Option<usize>) -> Vec<Seg> {
+    match wrap {
+        Some(w) => segments(&b.lines[ln], b.tab_size, w),
+        None => vec![Seg {
+            start: 0,
+            end: usize::MAX / 2,
+            start_col: 0,
+            end_col: b.lines[ln].chars().count(),
+            indent: 0,
+        }],
+    }
+}
+
+/// Move a (line, row) scroll position by `n` visual rows, staying inside the document.
+fn advance(
+    b: &Buffer,
+    wrap: Option<usize>,
+    (mut ln, mut si): (usize, usize),
+    n: isize,
+) -> (usize, usize) {
+    if wrap.is_none() {
+        let l = (ln as isize + n).clamp(0, b.lines.len().saturating_sub(1) as isize);
+        return (l as usize, 0);
+    }
+    for _ in 0..n.unsigned_abs() {
+        if n > 0 {
+            if si + 1 < line_segs(b, ln, wrap).len() {
+                si += 1;
+            } else if ln + 1 < b.lines.len() {
+                ln += 1;
+                si = 0;
+            } else {
+                break;
+            }
+        } else if si > 0 {
+            si -= 1;
+        } else if ln > 0 {
+            ln -= 1;
+            si = line_segs(b, ln, wrap).len() - 1;
+        } else {
+            break;
+        }
+    }
+    (ln, si)
+}
+
+/// Visual rows from `from` down to `to` (None if `to` is above), counting at most `limit`.
+fn rows_between(
+    b: &Buffer,
+    wrap: Option<usize>,
+    from: (usize, usize),
+    to: (usize, usize),
+    limit: usize,
+) -> Option<usize> {
+    if to < from {
+        return None;
+    }
+    if wrap.is_none() {
+        return Some((to.0 - from.0).min(limit));
+    }
+    let (mut pos, mut n) = (from, 0);
+    while pos < to && n < limit {
+        pos = advance(b, wrap, pos, 1);
+        n += 1;
+    }
+    Some(n)
+}
+
+/// The rows visible from scroll position `top`, at most `n`.
+#[allow(clippy::too_many_arguments)]
+fn build_rows(
+    b: &Buffer,
+    wrap: Option<usize>,
+    top: (usize, usize),
+    n: usize,
+    top_y: f32,
+    lh: f32,
+    text_left: f32,
+    cw: f32,
+) -> Vec<Row> {
+    let mut rows = Vec::with_capacity(n);
+    let (mut ln, mut skip) = top;
+    let sx = if wrap.is_some() {
+        0.0
+    } else {
+        b.scroll_x as f32
+    };
+    while rows.len() < n && ln < b.lines.len() {
+        let segs = line_segs(b, ln, wrap);
+        let count = segs.len();
+        for (k, sg) in segs.into_iter().enumerate().skip(skip) {
+            if rows.len() >= n {
+                break;
+            }
+            rows.push(Row {
+                line: ln,
+                seg: sg,
+                first: k == 0,
+                last: k + 1 == count,
+                y: top_y + rows.len() as f32 * lh,
+                x0: text_left + (sg.indent as f32 - sg.start as f32 - sx) * cw,
+            });
+        }
+        ln += 1;
+        skip = 0;
+    }
+    rows
+}
+
+/// The row showing display column `d` of line `ln`, if visible.
+fn row_for(rows: &[Row], ln: usize, d: usize) -> Option<&Row> {
+    rows.iter()
+        .find(|r| r.line == ln && d >= r.seg.start && (d < r.seg.end || r.last))
+}
+
+/// The char whose cell contains display column `target` on `row` (not a caret position).
+fn cell_at(line: &str, tab: usize, row: &Row, target: f32) -> Option<(usize, char)> {
+    let mut d = 0usize;
+    for (col, ch) in line.chars().enumerate() {
+        let w = char_width(ch, d, tab);
+        if col >= row.seg.start_col
+            && col < row.seg.end_col
+            && target >= d as f32
+            && target < (d + w) as f32
+        {
+            return Some((col, ch));
+        }
+        d += w;
+    }
+    None
+}
 
 impl Gui {
     // ================================================================= editor
@@ -40,6 +187,9 @@ impl Gui {
             .as_ref()
             .and_then(|p| self.app.diagnostics.get(p))
             .unwrap_or(&empty);
+        let wrap_on = self.app.buffers[cur]
+            .word_wrap
+            .unwrap_or(self.app.config.editor.word_wrap);
         let b: &mut Buffer = &mut self.app.buffers[cur];
         TAB.with(|t| t.set(b.tab_size));
         let guides = self.app.config.editor.indent_guides;
@@ -55,24 +205,49 @@ impl Gui {
         }
         // Leave room for the vertical scrollbar on the right.
         let text_cols = (((r.width() - gutter_w - SCROLLBAR_W) / cw).floor() as usize).max(1);
+        // Word wrap: rows one column narrower than the text area, so the caret at a row's
+        // end stays visible.
+        let wrap = wrap_on.then(|| text_cols.saturating_sub(1).max(8));
+        if wrap.is_some() {
+            b.scroll_x = 0;
+        }
+        b.scroll_y = b.scroll_y.min(b.lines.len().saturating_sub(1));
+        b.scroll_row = b
+            .scroll_row
+            .min(line_segs(b, b.scroll_y, wrap).len().saturating_sub(1));
+        let tab = b.tab_size;
+        // Something else moved the view (Goto, Page Down…): drop the sub-row offset.
+        if self.scroll_mark.get(&b.id) != Some(&(b.scroll_y, b.scroll_row)) {
+            b.scroll_px = 0.0;
+        }
+        b.scroll_px = b.scroll_px.clamp(0.0, lh - 0.01);
+        // Rows as they are before this frame's scrolling, for hit-testing the mouse.
+        let hit_rows = build_rows(
+            b,
+            wrap,
+            (b.scroll_y, b.scroll_row),
+            visible + 1,
+            r.top() - b.scroll_px,
+            lh,
+            text_left,
+            cw,
+        );
+        let row_at = |pt: Pos2| -> Option<&Row> {
+            hit_rows
+                .iter()
+                .find(|row| pt.y >= row.y && pt.y < row.y + lh)
+        };
 
         // Mouse: click, drag, wheel.
         let resp = ui.interact(r, Id::unique(("editor-pane", g)), Sense::click_and_drag());
         let to_pos = |b: &Buffer, pt: Pos2| -> Pos {
-            let line = (b.scroll_y as f32 + ((pt.y - r.top()) / lh).floor().max(0.0)) as usize;
-            let line = line.min(b.lines.len() - 1);
-            let target = ((pt.x - text_left) / cw + b.scroll_x as f32).max(0.0);
-            let mut dcol = 0.0;
-            let mut col = 0;
-            for ch in b.lines[line].chars() {
-                let w = char_w(ch, dcol as usize) as f32;
-                if dcol + w / 2.0 > target {
-                    break;
-                }
-                dcol += w;
-                col += 1;
-            }
-            Pos::new(line, col)
+            // Below the text: the last row.
+            let Some(row) = row_at(pt).or(hit_rows.last()) else {
+                return Pos::new(0, 0);
+            };
+            let target = ((pt.x - row.x0) / cw).max(row.seg.start as f32);
+            let col = col_in_seg(&b.lines[row.line], tab, &row.seg, target, row.last);
+            Pos::new(row.line, col)
         };
         // Pointer: I-beam over text, but the normal arrow over selected text (like Sublime).
         // Uses the character cell under the pointer, not the nearest caret position.
@@ -80,38 +255,23 @@ impl Gui {
             let Some((a, z)) = b.selection() else {
                 return false;
             };
-            let line = b.scroll_y + ((pt.y - r.top()) / lh).floor().max(0.0) as usize;
-            if line >= b.lines.len() {
+            let Some(row) = row_at(pt) else {
                 return false;
-            }
-            let target = (pt.x - text_left) / cw + b.scroll_x as f32;
-            let mut dcol = 0.0;
-            for (col, ch) in b.lines[line].chars().enumerate() {
-                let w = char_w(ch, dcol as usize) as f32;
-                if target >= dcol && target < dcol + w {
-                    let p = Pos::new(line, col);
-                    return a <= p && p < z;
-                }
-                dcol += w;
-            }
-            false
+            };
+            cell_at(&b.lines[row.line], tab, row, (pt.x - row.x0) / cw).is_some_and(|(col, _)| {
+                let p = Pos::new(row.line, col);
+                a <= p && p < z
+            })
         };
         // The character cell under the pointer, for mouse hover (LSP info / diagnostics).
         let char_under = |b: &Buffer, pt: Pos2| -> Option<Pos> {
-            let line = b.scroll_y + ((pt.y - r.top()) / lh).floor().max(0.0) as usize;
-            if line >= b.lines.len() || pt.x < text_left {
+            if pt.x < text_left {
                 return None;
             }
-            let target = (pt.x - text_left) / cw + b.scroll_x as f32;
-            let mut dcol = 0.0;
-            for (col, ch) in b.lines[line].chars().enumerate() {
-                let w = char_w(ch, dcol as usize) as f32;
-                if target >= dcol && target < dcol + w {
-                    return (!ch.is_whitespace()).then_some(Pos::new(line, col));
-                }
-                dcol += w;
-            }
-            None
+            let row = row_at(pt)?;
+            cell_at(&b.lines[row.line], tab, row, (pt.x - row.x0) / cw)
+                .filter(|(_, ch)| !ch.is_whitespace())
+                .map(|(col, _)| Pos::new(row.line, col))
         };
         let hover_at = if !active_group || resp.dragged() || resp.is_pointer_button_down_on() {
             None
@@ -151,13 +311,31 @@ impl Gui {
         if resp.contains_pointer() {
             let d = ui.ctx().input(|i| i.smooth_scroll_delta);
             if d.y != 0.0 {
-                self.scroll_acc -= d.y / lh;
-                let n = self.scroll_acc.trunc();
-                self.scroll_acc -= n;
-                let max = b.lines.len().saturating_sub(1) as f32;
-                b.scroll_y = (b.scroll_y as f32 + n).clamp(0.0, max) as usize;
+                // Smooth: scroll by pixels; whole rows carry into the line position.
+                let mut px = b.scroll_px - d.y;
+                let mut top = (b.scroll_y, b.scroll_row);
+                while px >= lh {
+                    let next = advance(b, wrap, top, 1);
+                    if next == top {
+                        px = 0.0;
+                        break;
+                    }
+                    top = next;
+                    px -= lh;
+                }
+                while px < 0.0 {
+                    let prev = advance(b, wrap, top, -1);
+                    if prev == top {
+                        px = 0.0;
+                        break;
+                    }
+                    top = prev;
+                    px += lh;
+                }
+                (b.scroll_y, b.scroll_row) = top;
+                b.scroll_px = px;
             }
-            if d.x != 0.0 {
+            if d.x != 0.0 && wrap.is_none() {
                 b.scroll_x = (b.scroll_x as f32 - d.x / cw).max(0.0) as usize;
             }
         }
@@ -165,14 +343,32 @@ impl Gui {
         // Keep the cursor visible when it moved (not when the user scrolled).
         let key = (b.id, b.cursor, b.version);
         let cur_dcol = display_col(&b.lines[b.cursor.line], b.cursor.col);
+        let cur_row = (
+            b.cursor.line,
+            seg_of(&line_segs(b, b.cursor.line, wrap), cur_dcol),
+        );
         if active_group && self.last_cursor != Some(key) {
-            let margin = 2.min(self.app.page / 3);
-            if b.cursor.line < b.scroll_y + margin {
-                b.scroll_y = b.cursor.line.saturating_sub(margin);
-            } else if b.cursor.line + margin >= b.scroll_y + self.app.page {
-                b.scroll_y = (b.cursor.line + margin + 1).saturating_sub(self.app.page);
+            let pg = self.app.page;
+            let margin = 2.min(pg / 3);
+            let top = (b.scroll_y, b.scroll_row);
+            let new_top = match rows_between(b, wrap, top, cur_row, pg + 1) {
+                None => Some(advance(b, wrap, cur_row, -(margin as isize))),
+                Some(d) if d < margin => Some(advance(b, wrap, cur_row, -(margin as isize))),
+                Some(d) if d + margin >= pg => Some(advance(
+                    b,
+                    wrap,
+                    cur_row,
+                    -(pg.saturating_sub(margin + 1) as isize),
+                )),
+                _ => None,
+            };
+            if let Some(t) = new_top {
+                (b.scroll_y, b.scroll_row) = t;
+                b.scroll_px = 0.0;
             }
-            if cur_dcol < b.scroll_x {
+            if wrap.is_some() {
+                // Wrapped text never scrolls sideways.
+            } else if cur_dcol < b.scroll_x {
                 b.scroll_x = cur_dcol.saturating_sub(4);
             } else if cur_dcol + 2 >= b.scroll_x + text_cols {
                 b.scroll_x = cur_dcol + 4 - text_cols.min(cur_dcol + 4);
@@ -180,6 +376,16 @@ impl Gui {
             self.last_cursor = Some(key);
         }
         b.scroll_y = b.scroll_y.min(b.lines.len().saturating_sub(1));
+        let rows = build_rows(
+            b,
+            wrap,
+            (b.scroll_y, b.scroll_row),
+            visible + 1,
+            r.top() - b.scroll_px,
+            lh,
+            text_left,
+            cw,
+        );
 
         let deadline = Instant::now() + Duration::from_millis(12);
         let hl_done =
@@ -191,6 +397,7 @@ impl Gui {
             Pos2::new(text_left - 2.0, r.top()),
             r.max,
         ));
+        // Indent guides sit at absolute columns (continuation rows are indented to match).
         let x0 = text_left - b.scroll_x as f32 * cw;
         // Indent guides: one line per indentation level; the guide of the block around the
         // cursor is highlighted (Sublime's "active" guide).
@@ -236,24 +443,27 @@ impl Gui {
         } else {
             None
         };
-        for row in 0..visible {
-            let ln = b.scroll_y + row;
-            if ln >= b.lines.len() {
-                break;
-            }
-            let y = r.top() + row as f32 * lh;
+        for row in &rows {
+            let ln = row.line;
+            let y = row.y;
             let line = &b.lines[ln];
+            // Display columns this row shows; the last row also covers the line break.
+            let (rs, re) = (
+                row.seg.start,
+                if row.last { usize::MAX } else { row.seg.end },
+            );
+            let xr = |d: usize| row.x0 + d as f32 * cw;
             let lr = Rect::from_min_size(Pos2::new(r.left(), y), Vec2::new(r.width(), lh));
             if line_highlight && ln == b.cursor.line && sel.is_none() {
                 clip.rect_filled(lr, 0.0, c.line);
             }
-            // Gutter.
+            // Gutter: only on a line's first row.
             let worst = diags
                 .iter()
                 .filter(|d| d.start.line <= ln && d.end.line >= ln)
                 .map(|d| d.severity)
                 .min();
-            if let Some(s) = worst {
+            if let Some(s) = worst.filter(|_| row.first) {
                 let col = match s {
                     1 => c.err,
                     2 => c.warn,
@@ -261,13 +471,15 @@ impl Gui {
                 };
                 clip.circle_filled(Pos2::new(r.left() + cw * 0.8, y + lh / 2.0), 3.0, col);
             }
-            clip.text(
-                Pos2::new(text_left - cw * 1.5, y + lh / 2.0),
-                Align2::RIGHT_CENTER,
-                (ln + 1).to_string(),
-                font.clone(),
-                if ln == b.cursor.line { c.fg } else { c.gutter },
-            );
+            if row.first {
+                clip.text(
+                    Pos2::new(text_left - cw * 1.5, y + lh / 2.0),
+                    Align2::RIGHT_CENTER,
+                    (ln + 1).to_string(),
+                    font.clone(),
+                    if ln == b.cursor.line { c.fg } else { c.gutter },
+                );
+            }
             // Selection.
             if let Some((a, z)) = sel
                 && a.line <= ln
@@ -286,24 +498,27 @@ impl Gui {
                 if e == s && z.line != ln {
                     e = s + 1;
                 }
-                text_clip.rect_filled(
-                    Rect::from_min_max(
-                        Pos2::new(x0 + s as f32 * cw, y),
-                        Pos2::new(x0 + e as f32 * cw, y + lh),
-                    ),
-                    2.0,
-                    c.sel,
-                );
+                let (s, e) = (s.max(rs), e.min(re));
+                if e > s {
+                    text_clip.rect_filled(
+                        Rect::from_min_max(Pos2::new(xr(s), y), Pos2::new(xr(e), y + lh)),
+                        2.0,
+                        c.sel,
+                    );
+                }
             }
             // Search matches.
             if let Some(q) = &search {
                 for (s, e) in Buffer::matches_in_line(line, q) {
-                    let sc = display_col(line, line[..s].chars().count());
-                    let ec = display_col(line, line[..e].chars().count());
+                    let sc = display_col(line, line[..s].chars().count()).max(rs);
+                    let ec = display_col(line, line[..e].chars().count()).min(re);
+                    if ec <= sc {
+                        continue;
+                    }
                     text_clip.rect_stroke(
                         Rect::from_min_max(
-                            Pos2::new(x0 + sc as f32 * cw, y + 1.0),
-                            Pos2::new(x0 + ec as f32 * cw, y + lh - 1.0),
+                            Pos2::new(xr(sc), y + 1.0),
+                            Pos2::new(xr(ec), y + lh - 1.0),
                         ),
                         2.0,
                         Stroke::new(1.0, c.accent),
@@ -334,14 +549,25 @@ impl Gui {
             }
             // Text.
             let spans = b.hl.lines.get(ln);
-            let job = line_job(line, spans, &font, c.fg, b.scroll_x, text_cols + 2);
-            let galley = p.layout_job(job);
-            let skipped = skipped_cols(line, b.scroll_x);
-            text_clip.galley(
-                Pos2::new(text_left + skipped as f32 * cw, y + (lh - rh) / 2.0),
-                galley,
-                c.fg,
-            );
+            if wrap.is_some() {
+                let n = row.seg.end - row.seg.start;
+                if n > 0 {
+                    let job = line_job(line, spans, &font, c.fg, row.seg.start, n - 1);
+                    text_clip.galley(
+                        Pos2::new(xr(row.seg.start), y + (lh - rh) / 2.0),
+                        p.layout_job(job),
+                        c.fg,
+                    );
+                }
+            } else {
+                let job = line_job(line, spans, &font, c.fg, b.scroll_x, text_cols + 2);
+                let skipped = skipped_cols(line, b.scroll_x);
+                text_clip.galley(
+                    Pos2::new(text_left + skipped as f32 * cw, y + (lh - rh) / 2.0),
+                    p.layout_job(job),
+                    c.fg,
+                );
+            }
             // Diagnostics underline (squiggle).
             for d in diags
                 .iter()
@@ -360,25 +586,24 @@ impl Gui {
                 if e <= s {
                     e = s + 1;
                 }
+                let (s, e) = (s.max(rs), e.min(re));
+                if e <= s {
+                    continue;
+                }
                 let col = match d.severity {
                     1 => c.err,
                     2 => c.warn,
                     _ => c.info,
                 };
-                squiggle(
-                    &text_clip,
-                    x0 + s as f32 * cw,
-                    x0 + e as f32 * cw,
-                    y + lh - 2.5,
-                    col,
-                );
+                squiggle(&text_clip, xr(s), xr(e), y + lh - 2.5, col);
             }
         }
         // Cursor.
-        let cx = x0 + cur_dcol as f32 * cw;
-        let cy = r.top() + (b.cursor.line as f32 - b.scroll_y as f32) * lh;
-        let cursor_px = (cy >= r.top() && cy < r.bottom()).then_some(Pos2::new(cx, cy));
-        if focused && cursor_px.is_some() {
+        let cursor_px = row_for(&rows, b.cursor.line, cur_dcol)
+            .map(|row| Pos2::new(row.x0 + cur_dcol as f32 * cw, row.y))
+            .filter(|p| p.y < r.bottom());
+        if focused && let Some(cp) = cursor_px {
+            let (cx, cy) = (cp.x, cp.y);
             let ed = &self.app.config.editor;
             let mark = Some((b.id, b.cursor, b.version));
             if self.caret_mark.0 != mark {
@@ -409,7 +634,7 @@ impl Gui {
                 );
             }
         }
-        if b.scroll_y > 0 {
+        if b.scroll_y > 0 || b.scroll_row > 0 || b.scroll_px > 0.0 {
             // Subtle shadow under the tab bar when scrolled, like Sublime.
             for k in 0..6 {
                 let a = 40 - k * 6;
@@ -433,7 +658,9 @@ impl Gui {
             let total = (max_scroll + page) as f32;
             let thumb_h = (track.height() * page as f32 / total).clamp(24.0, track.height());
             let span = (track.height() - thumb_h).max(1.0);
-            let thumb_y = |sy: usize| track.top() + span * sy as f32 / max_scroll as f32;
+            // Continuous: the sub-row offset moves the thumb too.
+            let pos = (b.scroll_y as f32 + b.scroll_px / lh).min(max_scroll as f32);
+            let thumb_y = |sy: f32| track.top() + span * sy / max_scroll as f32;
             for d in diags.iter() {
                 let y = track.top() + track.height() * d.start.line as f32 / b.lines.len() as f32;
                 let col = match d.severity {
@@ -448,7 +675,7 @@ impl Gui {
                 );
             }
             if let Some(pt) = sresp.interact_pointer_pos() {
-                let at = thumb_y(b.scroll_y);
+                let at = thumb_y(pos);
                 if sresp.drag_started()
                     || (sresp.is_pointer_button_down_on() && self.vscroll_grab.is_none())
                 {
@@ -458,7 +685,14 @@ impl Gui {
                 }
                 let grab = self.vscroll_grab.unwrap_or(thumb_h / 2.0);
                 let f = ((pt.y - grab - track.top()) / span).clamp(0.0, 1.0);
-                b.scroll_y = (f * max_scroll as f32).round() as usize;
+                let target = f * max_scroll as f32;
+                b.scroll_y = target.floor() as usize;
+                b.scroll_row = 0;
+                b.scroll_px = if b.scroll_y < max_scroll {
+                    target.fract() * lh
+                } else {
+                    0.0
+                };
             }
             if !sresp.is_pointer_button_down_on() {
                 self.vscroll_grab = None;
@@ -467,7 +701,7 @@ impl Gui {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Default);
             }
             let tw = if wide { 8.0 } else { 5.0 };
-            let ty = thumb_y(b.scroll_y);
+            let ty = thumb_y((b.scroll_y as f32 + b.scroll_px / lh).min(max_scroll as f32));
             clip.rect_filled(
                 Rect::from_min_size(
                     Pos2::new(track.right() - tw - 2.0, ty),
@@ -481,7 +715,9 @@ impl Gui {
         // Widest line, cached: scanning a big file every frame (or keystroke) is slow. After
         // an edit only the visible lines can have grown, so they update the cached width;
         // a full rescan (which also notices shrinking) runs at most once a second.
-        let widest = {
+        let widest = if wrap.is_some() {
+            0
+        } else {
             let cols = |ls: &[String]| {
                 ls.iter()
                     .map(|l| display_col(l, usize::MAX))
@@ -504,7 +740,7 @@ impl Gui {
                 }
             }
         };
-        if widest + 2 > text_cols || b.scroll_x > 0 {
+        if wrap.is_none() && (widest + 2 > text_cols || b.scroll_x > 0) {
             let track = Rect::from_min_max(
                 Pos2::new(text_left, r.bottom() - SCROLLBAR_W),
                 Pos2::new(r.right() - SCROLLBAR_W, r.bottom()),
@@ -548,6 +784,14 @@ impl Gui {
             );
         }
         self.app.hl_pending |= !hl_done;
+        self.scroll_mark.insert(b.id, (b.scroll_y, b.scroll_row));
+        if active_group {
+            self.app.wrap_cols = wrap;
+            self.last_rows = rows
+                .iter()
+                .map(|r| (r.line, r.seg.start, r.seg.end, r.y))
+                .collect();
+        }
         if !active_group {
             // A click in another group focuses it first, then acts there.
             if click.is_some() || right_click.is_some() {
@@ -567,12 +811,9 @@ impl Gui {
             .and_then(|h| h.anchor)
             .and_then(|a| {
                 let b = self.app.buf()?;
-                let line = b.lines.get(a.line)?;
-                let row = a.line.checked_sub(b.scroll_y)?;
-                Some(Pos2::new(
-                    x0 + display_col(line, a.col) as f32 * cw,
-                    r.top() + row as f32 * lh,
-                ))
+                let d = display_col(b.lines.get(a.line)?, a.col);
+                let row = row_for(&rows, a.line, d)?;
+                Some(Pos2::new(row.x0 + d as f32 * cw, row.y))
             });
         self.keyboard_spot = cursor_px.map(|p| p + Vec2::new(0.0, lh));
         if let Some((pos, n, ext)) = click {

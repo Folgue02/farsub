@@ -598,28 +598,16 @@ impl Gui {
             mono.clone(),
             c.accent,
         );
-        let it = &self.app.console.input;
-        let tr = p.text(
-            Pos2::new(pr.right() + 8.0, input.center().y),
-            Align2::LEFT_CENTER,
-            it,
+        draw_line_edit(
+            p,
+            input,
+            pr.right() + 8.0,
+            &self.app.console.input,
             mono.clone(),
-            c.fg,
+            c,
+            focused,
+            "",
         );
-        if focused {
-            let before: String = it.chars().take(self.app.console.cursor).collect();
-            let bw = p
-                .ctx()
-                .fonts_mut(|f| f.layout_no_wrap(before, mono.clone(), c.fg).size().x);
-            p.rect_filled(
-                Rect::from_min_size(
-                    Pos2::new(tr.left() + bw, input.top() + 5.0),
-                    Vec2::new(2.0, input.height() - 10.0),
-                ),
-                0.0,
-                c.accent,
-            );
-        }
         let ir = ui.interact(input, Id::unique("console-input"), Sense::click());
         if ir.clicked() {
             self.app.focus = Focus::Console;
