@@ -45,7 +45,8 @@
 - Caret animation `caret_style`: `"smooth"` (default, as in Sublime: fades out and back in
   once per second), `"blink"` (hard on/off, 0.5 s each) or `"solid"`. It stays solid for
   0.5 s after every move or edit, and only animates while the window has focus (no
-  background repaints).
+  background repaints). The smooth fade redraws at ~30 fps (it used to ask for 60), which
+  halves idle redraws while the window is focused.
 - Goto Symbol (Cmd+R) lists symbol **names only**, as in Sublime: `add`, `Point`,
   `impl Debug for Point<T>`, Markdown headings without `#`. The kind (fn, struct, class…)
   is shown dimmed on the right; signatures never appear. Nested symbols are indented.

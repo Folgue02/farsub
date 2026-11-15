@@ -65,12 +65,14 @@ impl Gui {
             );
             // Terminal tabs: × close button (shown on hover / when active), middle-click
             // closes, right-click opens the terminal's context menu.
+            let mut on_x = false;
             if let PanelTab::Terminal(id) = tab {
                 let xr = Rect::from_center_size(
                     Pos2::new(tr.right() - 12.0, tr.center().y),
                     Vec2::splat(14.0),
                 );
                 let over_x = resp.hover_pos().is_some_and(|hp| xr.contains(hp));
+                on_x = over_x;
                 if active || resp.hovered() {
                     if over_x {
                         p.rect_filled(xr, 3.0, mix(bg, c.fg, 0.12));
@@ -114,7 +116,8 @@ impl Gui {
                     c.accent,
                 );
             }
-            if resp.clicked() && close.is_none() {
+            // Switch on press; the × closes on release.
+            if pressed(ui, &resp) && !on_x {
                 clicked = Some(*tab);
             }
         }

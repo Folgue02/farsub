@@ -111,8 +111,11 @@ impl Gui {
                 clip.line_segment([o + Vec2::new(-k, -k), o + Vec2::new(k, k)], st);
                 clip.line_segment([o + Vec2::new(-k, k), o + Vec2::new(k, -k)], st);
             }
-            if resp.clicked() {
-                click = Some((i, hovered_close));
+            // The tab switches on press; its × closes on release (so it can be cancelled).
+            if pressed(ui, &resp) && !hovered_close {
+                click = Some((i, false));
+            } else if resp.clicked() && hovered_close {
+                click = Some((i, true));
             } else if resp.middle_clicked() {
                 click = Some((i, true));
             }

@@ -77,7 +77,9 @@ workspace.
   like the sidebar), `.git` itself, the project's folder/file exclude patterns, binary
   files (a NUL byte in the first 8 KB) and files over 32 MB. Hidden files are searched.
 - Open files with unsaved changes are searched as they are in the editor.
-- The search runs in the background; a new search cancels the previous one. Results go
+- The search runs in the background, reading and searching files on every CPU core in
+  batches (results still come in file-name order; about 1 s for 40,000 files / 1.4 GB);
+  a new search cancels the previous one. Results go
   into a read-only **"Find Results"** tab (reused by the next search). It starts with what
   was searched, then each file's path followed by its matching lines, numbered like
   `  12: text`. With context on there are 2 lines around each match (`  11  text`) and

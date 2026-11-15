@@ -45,7 +45,8 @@ impl Gui {
                     mix(c.fg, c.chrome, 0.15)
                 },
             );
-            if resp.clicked() {
+            // Menus open on press, like native menu bars.
+            if pressed(ui, &resp) {
                 action = Some(if open == Some(i) { None } else { Some(i) });
             } else if open.is_some() && open != Some(i) && resp.hovered() {
                 action = Some(Some(i));

@@ -321,21 +321,31 @@ pub const MAX_MATCHES: usize = 20_000;
 const MAX_FILE: u64 = 32 << 20;
 
 impl FileSearch {
-    /// Run on the calling thread, sending each file with matches as it's found.
+    /// Run on the calling thread, sending each file with matches as it's found (in file
+    /// name order). Files are read and searched in parallel, a batch at a time.
     pub fn run(self, cancel: &AtomicBool, send: &mut dyn FnMut(SearchEvent)) {
         let t0 = Instant::now();
         let (mut files, mut matches, mut truncated) = (0usize, 0usize, false);
         let mut seen = std::collections::HashSet::new();
+        let workers = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(16);
         'roots: for (root, folder) in &self.place.roots {
-            for path in self.walk(root, folder.as_ref()) {
+            let list: Vec<PathBuf> = self
+                .walk(root, folder.as_ref())
+                .into_iter()
+                .filter(|p| seen.insert(p.clone()))
+                .collect();
+            for batch in list.chunks(workers * 32) {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
-                if !seen.insert(path.clone()) {
-                    continue;
-                }
-                files += 1;
-                if let Some(h) = self.search_file(&path) {
+                files += batch.len();
+                for h in self
+                    .search_batch(batch, workers, cancel)
+                    .into_iter()
+                    .flatten()
+                {
                     matches += h.matches;
                     send(SearchEvent::File(h));
                     if matches >= MAX_MATCHES {
@@ -351,6 +361,33 @@ impl FileSearch {
             truncated,
             elapsed: t0.elapsed(),
         });
+    }
+
+    /// Search `batch` on `workers` threads; results in the batch's order.
+    fn search_batch(
+        &self,
+        batch: &[PathBuf],
+        workers: usize,
+        cancel: &AtomicBool,
+    ) -> Vec<Option<FileHits>> {
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let slots: Vec<std::sync::Mutex<Option<FileHits>>> =
+            batch.iter().map(|_| std::sync::Mutex::new(None)).collect();
+        std::thread::scope(|sc| {
+            for _ in 0..workers.min(batch.len()) {
+                sc.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= batch.len() || cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let hit = self.search_file(&batch[i]);
+                        *slots[i].lock().unwrap() = hit;
+                    }
+                });
+            }
+        });
+        slots.into_iter().map(|m| m.into_inner().unwrap()).collect()
     }
 
     /// Files under `root` that .gitignore, the project's excludes and the Where filters
@@ -683,6 +720,41 @@ mod tests {
         let (f, _) = run("open.rs", 0, open);
         assert_eq!(f[0].lines[0].text, "unsaved needle");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    #[ignore]
+    /// Find in Files speed on a big tree (cargo test --release -- --ignored bench_find_in_files --nocapture).
+    fn bench_find_in_files() {
+        let Some(root) = crate::paths::home_dir().map(|h| h.join(".cargo/registry/src")) else {
+            return;
+        };
+        let folders = vec![Folder::plain(root)];
+        for q in ["fn main", "zzqqxx_not_there"] {
+            let s = FileSearch {
+                matcher: m(q, |_| {}),
+                place: parse_where("", &folders, &[], None).unwrap(),
+                context: 2,
+                open: HashMap::new(),
+            };
+            let mut done = None;
+            s.run(&AtomicBool::new(false), &mut |e| {
+                if let SearchEvent::Done {
+                    files,
+                    matches,
+                    elapsed,
+                    ..
+                } = e
+                {
+                    done = Some((files, matches, elapsed));
+                }
+            });
+            let (files, matches, elapsed) = done.unwrap();
+            eprintln!(
+                "{q:?}: {files} files, {matches} matches, {:.0} ms",
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
     }
 
     #[test]

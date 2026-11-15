@@ -65,6 +65,12 @@ struct Palette {
     info: Color32,
 }
 
+/// The primary button went down on this widget this frame. Tabs, sidebar rows and the
+/// menu bar react to the press (like Sublime / VS Code); buttons keep acting on release.
+fn pressed(ui: &egui::Ui, resp: &egui::Response) -> bool {
+    resp.hovered() && ui.input(|i| i.pointer.primary_pressed())
+}
+
 fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
@@ -794,7 +800,8 @@ pub fn caret_alpha(style: CaretStyle, elapsed: Duration) -> (f32, Option<Duratio
             // Cosine fade: 1 → 0 → 1 over a period, eased so it lingers at both ends.
             let phase = ((t - HOLD) % PERIOD) / PERIOD;
             let alpha = 0.5 + 0.5 * (phase * std::f32::consts::TAU).cos();
-            (alpha, Some(Duration::from_millis(16)))
+            // ~30 fps: a one-second fade looks just as smooth, at half the idle redraws.
+            (alpha, Some(Duration::from_millis(33)))
         }
     }
 }

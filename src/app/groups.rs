@@ -165,6 +165,11 @@ impl App {
         self.buffers.iter().any(|b| b.modified)
     }
 
+    #[cfg(test)]
+    pub fn refresh_tree_for_test(&mut self) {
+        self.refresh_tree();
+    }
+
     pub(super) fn refresh_tree(&mut self) {
         self.tree.refresh();
         self.files.clear();

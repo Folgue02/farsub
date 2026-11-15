@@ -204,13 +204,19 @@ impl Gui {
                 );
             }
         }
-        if (resp.clicked() || resp.double_clicked())
-            && let Some(pos) = resp.interact_pointer_pos()
-            && let Some(&(i, _)) = hits.iter().find(|(_, r)| r.contains(pos))
+        // A row reacts on press (folders open/close, files get selected); a double-click
+        // opens a file (folders already toggled on each press).
+        let hit = |pos: Pos2| hits.iter().find(|(_, r)| r.contains(pos)).map(|h| h.0);
+        if pressed(ui, &resp)
+            && let Some(i) = resp.hover_pos().and_then(hit)
         {
-            let open =
-                resp.double_clicked() || self.app.tree.nodes.get(i).is_some_and(|n| n.is_dir);
-            self.app.tree_click(i, open);
+            let dir = self.app.tree.nodes.get(i).is_some_and(|n| n.is_dir);
+            self.app.tree_click(i, dir);
+        } else if resp.double_clicked()
+            && let Some(i) = resp.interact_pointer_pos().and_then(hit)
+            && self.app.tree.nodes.get(i).is_some_and(|n| !n.is_dir)
+        {
+            self.app.tree_click(i, true);
         }
         // Right-click selects the row (if any) and opens the sidebar menu.
         if resp.secondary_clicked()

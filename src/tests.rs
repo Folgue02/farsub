@@ -2172,7 +2172,27 @@ fn bench_frame_cost() {
         real += &std::fs::read_to_string(p).unwrap();
     }
     std::fs::write(d.join("app.rs"), real).unwrap();
+    let t = Instant::now();
     let mut h = harness(&d);
+    h.step();
+    eprintln!(
+        "startup (app + first frame): {:.1} ms",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
+    let t = Instant::now();
+    h.state_mut().app.open_file(&d.join("big.rs"), true);
+    eprintln!(
+        "open big.rs (200k lines): {:.1} ms",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
+    let t = Instant::now();
+    h.step();
+    eprintln!(
+        "  its first frame: {:.1} ms",
+        t.elapsed().as_secs_f64() * 1000.0
+    );
+    h.state_mut().app.run(crate::commands::Command::CloseBuffer);
+    h.step();
     for (name, f) in [
         ("app.rs (6.4k lines)", "app.rs"),
         ("big.rs (200k lines)", "big.rs"),
@@ -2210,6 +2230,81 @@ fn bench_frame_cost() {
             t.elapsed().as_secs_f64() * 1000.0 / n as f64
         );
     }
+    let time = |h: &mut Harness<'static, Gui>,
+                name: &str,
+                n: usize,
+                f: &dyn Fn(&mut Harness<'static, Gui>)| {
+        let t = Instant::now();
+        for _ in 0..n {
+            f(h);
+            h.step();
+        }
+        eprintln!(
+            "{name}: {:.2} ms",
+            t.elapsed().as_secs_f64() * 1000.0 / n as f64
+        );
+    };
+    // Word wrap on (the default) on the big file.
+    h.state_mut().app.buf_mut().unwrap().word_wrap = Some(true);
+    for _ in 0..10 {
+        h.step();
+    }
+    time(&mut h, "big.rs wrapped: idle frame", 100, &|_| {});
+    time(&mut h, "big.rs wrapped: typing frame", 100, &|h| {
+        h.event(egui::Event::Text("x".into()))
+    });
+    time(&mut h, "big.rs wrapped: page-down frame", 100, &|h| {
+        h.key_press(Key::PageDown)
+    });
+    // The find panel open, with matches on every line.
+    h.state_mut().app.run(crate::commands::Command::Find);
+    h.event(egui::Event::Text("value".into()));
+    for _ in 0..5 {
+        h.step();
+    }
+    time(&mut h, "find panel open: idle frame", 100, &|_| {});
+    time(&mut h, "find panel open: Enter (next match)", 100, &|h| {
+        h.key_press(Key::Enter)
+    });
+    h.key_press(Key::Escape);
+    h.state_mut().app.run(crate::commands::Command::Find);
+    h.step();
+    h.key_press(Key::Escape);
+    // Typing in the file while the panel stays open (matches recounted).
+    h.state_mut().app.run(crate::commands::Command::Find);
+    h.step();
+    h.state_mut().app.focus = crate::app::Focus::Editor;
+    time(&mut h, "typing with the find panel open", 50, &|h| {
+        h.event(egui::Event::Text("x".into()))
+    });
+    h.key_press(Key::Escape);
+    // A sidebar with thousands of files, all folders open.
+    let many = project("perfsidebar", &[]);
+    for a in 0..40 {
+        for b in 0..100 {
+            let f = many.join(format!("dir{a:02}/file{b:03}.rs"));
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, "").unwrap();
+        }
+    }
+    let mut hs = harness(&many);
+    for a in 0..40 {
+        hs.state_mut()
+            .app
+            .tree
+            .expanded
+            .insert(many.join(format!("dir{a:02}")));
+    }
+    hs.state_mut().app.refresh_tree_for_test();
+    for _ in 0..10 {
+        hs.step();
+    }
+    eprintln!("sidebar rows: {}", hs.state().app.tree.nodes.len());
+    time(&mut hs, "sidebar 4k files: idle frame", 100, &|_| {});
+    hs.state_mut().app.focus = crate::app::Focus::Sidebar;
+    time(&mut hs, "sidebar 4k files: arrow-down frame", 100, &|h| {
+        h.key_press(Key::ArrowDown)
+    });
     h.state_mut()
         .app
         .run(crate::commands::Command::ManageServers);
@@ -3156,4 +3251,63 @@ fn select_font_previews_and_keeps_it_in_the_settings() {
     steps(&mut h, 3);
     assert_eq!(h.state().app.config.editor.font_face, pick);
     shot(&mut h, "font_applied");
+}
+
+#[test]
+fn tabs_sidebar_rows_and_menus_react_on_press() {
+    let d = project("press", &[("src/a.txt", "a\n"), ("b.txt", "b\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("b.txt"), true);
+    h.state_mut().app.open_file(&d.join("src/a.txt"), true);
+    steps(&mut h, 3);
+    // Press only (no release yet): the first tab is already active.
+    let down = |h: &mut Harness<'static, Gui>, pos: egui::Pos2| {
+        h.event(Event::PointerMoved(pos));
+        steps(h, 1);
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        });
+        steps(h, 1);
+    };
+    let up = |h: &mut Harness<'static, Gui>, pos: egui::Pos2| {
+        h.event(Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        });
+        steps(h, 1);
+    };
+    let tab = egui::Pos2::new(250.0 + 40.0, 26.0 + 16.0);
+    down(&mut h, tab);
+    assert_eq!(
+        h.state().app.buf().unwrap().name(),
+        "b.txt",
+        "switched on press"
+    );
+    up(&mut h, tab);
+    assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
+    // A sidebar folder opens on press.
+    let src_row = egui::Pos2::new(60.0, 26.0 + 32.0 + 24.0 + 12.0);
+    let open_before = h.state().app.tree.expanded.contains(&d.join("src"));
+    down(&mut h, src_row);
+    assert_ne!(
+        h.state().app.tree.expanded.contains(&d.join("src")),
+        open_before,
+        "toggled on press"
+    );
+    up(&mut h, src_row);
+    // A menu-bar title opens its menu on press.
+    let title = h.state().menu_titles[0].center();
+    down(&mut h, title);
+    assert_eq!(h.state().app.menu.map(|m| m.menu), Some(0));
+    up(&mut h, title);
+    assert_eq!(
+        h.state().app.menu.map(|m| m.menu),
+        Some(0),
+        "still open after release"
+    );
 }
