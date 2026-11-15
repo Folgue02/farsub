@@ -11,9 +11,12 @@ pub enum Command {
     Save,
     SaveAs,
     SaveAll,
+    RevertFile,
+    ConvertToUtf8,
     CloseBuffer,
     ReopenClosed,
     NewFile,
+    NewWindow,
     OpenFolder,
     OpenSettings,
     SelectTheme,
@@ -45,6 +48,17 @@ pub enum Command {
     FindNext,
     FindPrev,
     Replace,
+    FindInFiles,
+    ReplaceNext,
+    ReplaceAll,
+    NextResult,
+    PrevResult,
+    ToggleFindRegex,
+    ToggleFindCase,
+    ToggleFindWord,
+    ToggleFindWrap,
+    ToggleFindInSelection,
+    ToggleFindContext,
     Completion,
     Hover,
     GotoDefinition,
@@ -186,9 +200,12 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (Save, "File: Save", true),
     (SaveAs, "File: Save As…", true),
     (SaveAll, "File: Save All", true),
+    (RevertFile, "File: Revert File", true),
+    (ConvertToUtf8, "File: Convert to UTF-8", true),
     (CloseBuffer, "File: Close", true),
     (ReopenClosed, "File: Reopen Closed File", true),
     (NewFile, "File: New File", true),
+    (NewWindow, "File: New Window", true),
     (OpenFolder, "File: Open Folder or File…", true),
     (OpenSettings, "Preferences: Settings & Languages", true),
     (SelectTheme, "Preferences: Select Color Theme", true),
@@ -219,7 +236,18 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (Find, "Find…", true),
     (FindNext, "Find Next", true),
     (FindPrev, "Find Previous", true),
-    (Replace, "Replace All…", true),
+    (Replace, "Replace…", true),
+    (FindInFiles, "Find in Files…", true),
+    (ReplaceNext, "Replace Next", true),
+    (ReplaceAll, "Replace All", true),
+    (NextResult, "Find: Next Result", true),
+    (PrevResult, "Find: Previous Result", true),
+    (ToggleFindRegex, "Find: Toggle Regular Expression", true),
+    (ToggleFindCase, "Find: Toggle Case Sensitive", true),
+    (ToggleFindWord, "Find: Toggle Whole Word", true),
+    (ToggleFindWrap, "Find: Toggle Wrap Around", true),
+    (ToggleFindInSelection, "Find: Toggle In Selection", true),
+    (ToggleFindContext, "Find: Toggle Show Context", true),
     (Completion, "LSP: Auto Complete", true),
     (Hover, "LSP: Show Hover Info", true),
     (GotoDefinition, "LSP: Goto Definition", true),
@@ -392,6 +420,28 @@ pub fn id(cmd: Command) -> String {
         }
     }
     out
+}
+
+/// The find panel's commands (they also work while it has focus).
+pub fn is_find_command(c: Command) -> bool {
+    use Command::*;
+    matches!(
+        c,
+        Find | Replace
+            | FindInFiles
+            | FindNext
+            | FindPrev
+            | ReplaceNext
+            | ReplaceAll
+            | NextResult
+            | PrevResult
+            | ToggleFindRegex
+            | ToggleFindCase
+            | ToggleFindWord
+            | ToggleFindWrap
+            | ToggleFindInSelection
+            | ToggleFindContext
+    )
 }
 
 pub fn from_id(s: &str) -> Option<Command> {

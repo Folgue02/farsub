@@ -61,6 +61,13 @@ pub struct Workspace {
     pub layout: usize,
     #[serde(default)]
     pub focused_group: usize,
+    /// The find panel's toggles and its Where / Replace texts.
+    #[serde(default)]
+    pub find_options: crate::search::FindOptions,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub find_where: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub find_replace: String,
 }
 
 fn one() -> usize {

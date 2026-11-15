@@ -221,6 +221,7 @@ impl App {
     /// Packages/, then the config folder (later ones override earlier ones).
     pub(super) fn reload_syntax(&mut self) {
         let mut syn = Syntax::load(&self.config.editor.theme);
+        syn.set_languages(&self.config.languages);
         if let Some(data) = &self.config.data_dir {
             syn.add_installed(data);
         }

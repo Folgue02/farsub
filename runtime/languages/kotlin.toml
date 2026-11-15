@@ -1,7 +1,5 @@
 name = "kotlin"
 title = "Kotlin"
-# No bundled tree-sitter grammar yet: shown as plain text.
-grammar = ""
 extensions = ["kt", "kts"]
 comment = "//"
 servers = ["kotlin_language_server"]

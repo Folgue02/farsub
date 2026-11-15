@@ -176,7 +176,15 @@ impl App {
             }
             CloseBuffer => {
                 let b = &self.buffers[self.cur];
-                if b.modified {
+                if b.deleted {
+                    self.modal = Some(Modal::Confirm(Confirm {
+                        message: format!(
+                            "{} no longer exists on disk. Close it and lose its contents? (Save recreates the file.)",
+                            b.name()
+                        ),
+                        kind: ConfirmKind::CloseBuffer(b.id),
+                    }));
+                } else if b.modified {
                     self.modal = Some(Modal::Confirm(Confirm {
                         message: format!("{} has unsaved changes. Close anyway?", b.name()),
                         kind: ConfirmKind::CloseBuffer(b.id),
@@ -208,26 +216,6 @@ impl App {
                 let t = self.clipboard_text();
                 return self.paste_text(t);
             }
-            Find => {
-                let b = &self.buffers[self.cur];
-                let def = b
-                    .selected_text()
-                    .filter(|t| !t.contains('\n'))
-                    .or_else(|| self.search.clone())
-                    .unwrap_or_default();
-                let origin = b.selection().map(|s| s.0).unwrap_or(b.cursor);
-                return self.prompt("Find", &def, PromptKind::Find { origin });
-            }
-            Replace => {
-                let def = self.buffers[self.cur]
-                    .selected_text()
-                    .filter(|t| !t.contains('\n'))
-                    .or_else(|| self.search.clone())
-                    .unwrap_or_default();
-                return self.prompt("Replace all — find", &def, PromptKind::ReplaceFind);
-            }
-            FindNext => return self.find_next(true),
-            FindPrev => return self.find_next(false),
             Completion => return self.request_completion(),
             Hover => {
                 let pos = self.buffers[self.cur].cursor;
@@ -333,29 +321,6 @@ impl App {
             _ => {}
         }
         let _ = page;
-    }
-
-    pub(super) fn find_next(&mut self, forward: bool) {
-        let Some(q) = self.search.clone().filter(|s| !s.is_empty()) else {
-            return self.msg("Nothing to find (Ctrl+F)");
-        };
-        let pg = self.page;
-        let Some(b) = self.buf_mut() else { return };
-        let from = match (b.selection(), forward) {
-            (Some((_, e)), true) => e,
-            (Some((s, _)), false) => s,
-            (None, _) => b.cursor,
-        };
-        match b.find(&q, from, forward, false) {
-            Some((s, e)) => {
-                b.anchor = Some(s);
-                b.cursor = e;
-                if b.cursor.line < b.scroll_y || b.cursor.line >= b.scroll_y + pg {
-                    center(b, pg);
-                }
-            }
-            None => self.msg(format!("'{q}' not found")),
-        }
     }
 
     pub(super) fn jump_diagnostic(&mut self, forward: bool) {

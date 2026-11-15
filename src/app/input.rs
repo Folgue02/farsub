@@ -46,6 +46,48 @@ impl App {
         if self.focus == Focus::Terminal && self.terminal_shown().is_some() {
             return self.terminal_key(k);
         }
+        if self.focus == Focus::Find && self.find.open {
+            // Editing keys edit the field; then the panel's own keys; then shortcuts (the
+            // find family's editor bindings, such as F3, work here too).
+            if self.input_key(k) || self.find_key(k) {
+                return true;
+            }
+            let cmd = self.keymap.lookup(k, Ctx::Global).or_else(|| {
+                self.keymap
+                    .lookup(k, Ctx::Editor)
+                    .filter(|c| crate::commands::is_find_command(*c))
+            });
+            if let Some(cmd) = cmd {
+                self.run(cmd);
+            }
+            return true;
+        }
+        if k.code == KeyCode::Esc
+            && self.find.open
+            && self.focus == Focus::Editor
+            && !k.shift
+            && !k.ctrl
+            && !k.alt
+            && !k.sup
+        {
+            // Esc in the file closes the find panel (Sublime's hide_panel).
+            self.close_find();
+            return true;
+        }
+        if k.code == KeyCode::Enter
+            && self.focus == Focus::Editor
+            && !k.shift
+            && !k.ctrl
+            && !k.alt
+            && !k.sup
+            && let Some(l) = self
+                .buf()
+                .filter(|b| b.results.is_some())
+                .map(|b| b.cursor.line)
+            && self.open_result_line(l)
+        {
+            return true;
+        }
         if self.focus == Focus::Console && self.console_shown() {
             if self.input_key(k) {
                 return true;
@@ -213,6 +255,10 @@ impl App {
             Some(Modal::Keymap(v)) => Some(&mut v.query),
             Some(_) => None,
             None if console => Some(&mut self.console.input),
+            None if self.focus == Focus::Find && self.find.open => {
+                let f = self.find.field;
+                Some(self.find.field_mut(f))
+            }
             None => None,
         }
     }
@@ -220,7 +266,7 @@ impl App {
     /// The focused input's text changed: refresh what depends on it.
     pub(super) fn input_changed(&mut self) {
         match &mut self.modal {
-            Some(Modal::Prompt(_)) => self.prompt_changed(),
+            None if self.focus == Focus::Find => self.find_changed(),
             Some(Modal::Palette(_)) => self.palette_query_changed(),
             Some(Modal::Keymap(v)) => {
                 v.sel = 0;
@@ -272,7 +318,10 @@ impl App {
         match &self.modal {
             Some(Modal::Prompt(_) | Modal::Palette(_) | Modal::Keymap(_)) => true,
             Some(_) => false,
-            None => self.focus == Focus::Console && self.console_shown(),
+            None => {
+                (self.focus == Focus::Console && self.console_shown())
+                    || (self.focus == Focus::Find && self.find.open)
+            }
         }
     }
 
@@ -356,6 +405,7 @@ impl App {
                 Err(e) => self.msg(format!("Package install failed: {e}")),
             },
             AppEvent::Grammar(name, ev) => self.on_grammar_event(name, ev),
+            AppEvent::Search(id, ev) => self.on_search_event(id, ev),
             AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Files(root, list) => {
                 self.indexing.remove(&root);

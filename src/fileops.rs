@@ -97,3 +97,127 @@ mod tests {
         assert!(d.join("b/deep/y.rs").is_file());
     }
 }
+
+/// Save `bytes` to `path` without ever leaving it half-written: write a temporary file next
+/// to it, flush it to disk, then rename it over the original (keeping its permissions).
+/// Falls back to writing in place where a rename would break something: a symlink (the link
+/// would be replaced) or a file with several hard links (they'd stop sharing it), or when
+/// the folder isn't writable. A failed write (disk full) leaves the original as it was.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let meta = fs::symlink_metadata(path).ok();
+    let in_place = meta.as_ref().is_some_and(|m| {
+        if m.file_type().is_symlink() {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            m.nlink() > 1
+        }
+        #[cfg(not(unix))]
+        false
+    });
+    if in_place {
+        return fs::write(path, bytes);
+    }
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.farsub-{}.tmp", std::process::id()));
+    let mut f = match fs::File::create(&tmp) {
+        Ok(f) => f,
+        // The folder isn't writable (the file may still be): write in place.
+        Err(_) => return fs::write(path, bytes),
+    };
+    let mut write = || -> io::Result<()> {
+        f.write_all(bytes)?;
+        if let Some(m) = &meta {
+            f.set_permissions(m.permissions())?;
+        }
+        f.sync_all()
+    };
+    // Closed before the rename (Windows can't rename an open file).
+    let written = write().and_then(|()| {
+        drop(f);
+        fs::rename(&tmp, path)
+    });
+    if written.is_err() {
+        // Disk full or similar: the original is untouched.
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// What a file looked like on disk (to notice it changing under an open buffer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiskStamp {
+    pub modified: Option<std::time::SystemTime>,
+    pub len: u64,
+}
+
+impl DiskStamp {
+    pub fn of(path: &Path) -> Option<DiskStamp> {
+        let m = fs::metadata(path).ok()?;
+        Some(DiskStamp {
+            modified: m.modified().ok(),
+            len: m.len(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+
+    #[test]
+    fn atomic_writes_keep_permissions_links_and_leave_no_temp_files() {
+        let d = std::env::temp_dir().join(format!("farsub-atomic-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        let f = d.join("a.sh");
+        fs::write(&f, "old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&f, fs::Permissions::from_mode(0o751)).unwrap();
+        }
+        write_atomic(&f, b"new").unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+                0o751
+            );
+            // A symlink stays a symlink; the file it points to gets the text.
+            let link = d.join("link");
+            std::os::unix::fs::symlink(&f, &link).unwrap();
+            write_atomic(&link, b"via link").unwrap();
+            assert!(
+                fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink()
+            );
+            assert_eq!(fs::read_to_string(&f).unwrap(), "via link");
+            // Hard links keep sharing the file.
+            let hard = d.join("hard");
+            fs::hard_link(&f, &hard).unwrap();
+            write_atomic(&f, b"shared").unwrap();
+            assert_eq!(fs::read_to_string(&hard).unwrap(), "shared");
+        }
+        // A new file works too, and no temporary files are left behind.
+        write_atomic(&d.join("fresh.txt"), b"hi").unwrap();
+        let names: Vec<String> = fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|n| n.ends_with(".tmp")), "{names:?}");
+        let _ = fs::remove_dir_all(&d);
+    }
+}

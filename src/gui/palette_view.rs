@@ -20,14 +20,7 @@ impl Gui {
             c.dim,
         );
         let mut extra = String::new();
-        if matches!(pr.kind, PromptKind::Find { .. }) {
-            extra = match &self.find_count {
-                Some((_, _, n)) if !pr.input.is_empty() => {
-                    format!("{n} matches    Enter next · Shift+Enter previous · Esc close")
-                }
-                _ => "Enter next · Shift+Enter previous · Esc close".into(),
-            };
-        } else if pr.kind_is_path() {
+        if pr.kind_is_path() {
             extra = "Tab completes · Enter confirms · Esc cancels".into();
         }
         let hint = p.text(

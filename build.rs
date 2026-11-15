@@ -1,6 +1,7 @@
 //! Embed every file under runtime/ (languages, servers, keymap, menus, themes, highlight
 //! queries) so the binary is self-contained; user files in the config folder and packages
-//! override them at runtime. (The tree-sitter grammars themselves are crates.)
+//! override them at runtime. (The tree-sitter grammars themselves are crates.) Also
+//! precompiles the fallback regex grammars.
 
 use std::fmt::Write;
 use std::path::Path;
@@ -41,9 +42,28 @@ fn main() {
     src.push_str("];\n");
     let out_dir = Path::new(&std::env::var("OUT_DIR").unwrap()).to_path_buf();
     std::fs::write(out_dir.join("runtime_files.rs"), src).unwrap();
+    bundle_syntaxes(&root.join("syntaxes"), &out_dir.join("syntaxes.packdump"));
     // The target triple, for compiling grammars at runtime (grammar_install.rs).
     println!(
         "cargo:rustc-env=FARSUB_TARGET={}",
         std::env::var("TARGET").unwrap()
     );
+}
+
+/// The fallback (regex) grammars: two-face's set (bat's) plus runtime/syntaxes, dumped once
+/// here so farsub only deserializes them, and only when a file first needs one.
+fn bundle_syntaxes(dir: &Path, out: &Path) {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    files.retain(|p: &std::path::PathBuf| p.extension().is_some_and(|x| x == "sublime-syntax"));
+    files.sort();
+    let mut b = two_face::syntax::extra_newlines().into_builder();
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        let def = syntect::parsing::SyntaxDefinition::load_from_str(&text, true, None)
+            .unwrap_or_else(|e| panic!("{}: {e}", f.display()));
+        b.add(def);
+    }
+    syntect::dumps::dump_to_uncompressed_file(&b.build(), out).unwrap();
 }

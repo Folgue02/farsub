@@ -4,7 +4,7 @@
 
 [[menu]]
 title = "File"
-items = ["new_file", "open_folder", "reopen_closed", "-", "save", "save_as", "save_all", "-", "close_buffer", "-", "open_settings", "select_theme", "-", "quit"]
+items = ["new_file", "new_window", "open_folder", "reopen_closed", "-", "save", "save_as", "save_all", "-", "close_buffer", "-", "open_settings", "select_theme", "-", "quit"]
 
 [[menu]]
 title = "Edit"
@@ -16,7 +16,7 @@ items = ["select_all", "select_line", "select_word"]
 
 [[menu]]
 title = "Find"
-items = ["find", "find_next", "find_prev", "-", "replace"]
+items = ["find", "find_next", "find_prev", "-", "replace", "replace_next", "replace_all", "-", "find_in_files", "next_result", "prev_result", "-", "toggle_find_regex", "toggle_find_case", "toggle_find_word", "toggle_find_wrap", "toggle_find_in_selection"]
 
 [[menu]]
 title = "Goto"

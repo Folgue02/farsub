@@ -156,6 +156,7 @@ pub fn default_label(cmd: Command) -> String {
         MoveToGroup4 => Some("Move File to Group 4"),
         FocusNextGroup => Some("Focus Next Group"),
         ToggleWordWrap => Some("Word Wrap"),
+        NewWindow => Some("New Window"),
         InstallGrammar => Some("Install Grammar…"),
         RemoveGrammar => Some("Remove Grammar…"),
         InstallGrammarFromFile => Some("Install Grammar from File…"),

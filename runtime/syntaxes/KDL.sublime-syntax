@@ -1,0 +1,69 @@
+%YAML 1.2
+---
+# Bundled with farsub. KDL document language (https://kdl.dev), v1 and v2.
+name: KDL
+file_extensions: [kdl]
+scope: source.kdl
+
+contexts:
+  main:
+    - include: comments
+    - match: '/-'
+      scope: comment.block.slashdash.kdl
+    - match: '\('
+      scope: punctuation.definition.annotation.begin.kdl
+      push: type-annotation
+    - match: '[{};]'
+      scope: punctuation.section.block.kdl
+    - include: strings
+    - match: '#?\b(true|false|null)\b|#(inf|-inf|nan)\b'
+      scope: constant.language.kdl
+    - match: '[-+]?\b(0x[0-9a-fA-F_]+|0o[0-7_]+|0b[01_]+|[0-9][0-9_]*(\.[0-9_]+)?([eE][-+]?[0-9_]+)?)\b'
+      scope: constant.numeric.kdl
+    # property: key=value
+    - match: '([^\s(){}\[\]<>;=,"\\/#]+)(=)'
+      captures:
+        1: entity.other.attribute-name.kdl
+        2: keyword.operator.assignment.kdl
+    # node name at the start of a line or after { / ;
+    - match: '(?:^\s*|(?<=[{;])\s*)([^\s(){}\[\]<>;=,"\\/#]+)(?=\s|$|[{;])'
+      captures:
+        1: entity.name.tag.kdl
+
+  type-annotation:
+    - meta_scope: storage.type.annotation.kdl
+    - match: '\)'
+      scope: punctuation.definition.annotation.end.kdl
+      pop: true
+
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.kdl
+    - match: '/\*'
+      push: block-comment
+
+  block-comment:
+    - meta_scope: comment.block.kdl
+    - match: '/\*'
+      push: block-comment
+    - match: '\*/'
+      pop: true
+
+  strings:
+    - match: '#*"""'
+      push:
+        - meta_scope: string.quoted.triple.kdl
+        - match: '"""#*'
+          pop: true
+    - match: '(r#*|#+)"'
+      push:
+        - meta_scope: string.quoted.raw.kdl
+        - match: '"#*'
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.kdl
+        - match: '\\(u\{[0-9a-fA-F]+\}|.)'
+          scope: constant.character.escape.kdl
+        - match: '"'
+          pop: true

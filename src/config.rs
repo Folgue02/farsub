@@ -302,6 +302,11 @@ pub struct LanguageConfig {
     /// Tree-sitter grammar for highlighting (defaults to `name`); see `grammars.rs`.
     #[serde(default)]
     pub grammar: Option<String>,
+    /// Sublime-style grammar (by name, e.g. "Bourne Again Shell") for the regex fallback
+    /// used while there's no tree-sitter grammar. Default: found by title, name or file
+    /// extension; `""` turns the fallback off.
+    #[serde(default)]
+    pub fallback_syntax: Option<String>,
     /// Server names, tried in order; the first installed one runs.
     #[serde(default)]
     pub servers: Vec<String>,

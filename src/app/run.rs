@@ -17,11 +17,15 @@ impl App {
             }
             return;
         }
+        if self.find_command(cmd) {
+            return;
+        }
         // Editing commands need a file in the focused group (it may be an empty column).
         if needs_buffer(cmd) && self.buf().is_none() {
             return;
         }
         match cmd {
+            NewWindow => self.open_new_window(),
             ToggleWordWrap => {
                 let default = self.config.editor.word_wrap;
                 if let Some(b) = self.buf_mut() {
@@ -513,6 +517,19 @@ impl App {
             RestartLsp => {
                 self.restart_lsp();
                 self.msg("Language servers restarted");
+            }
+            RevertFile => {
+                if let Some(id) = self.buf().filter(|b| b.path.is_some()).map(|b| b.id) {
+                    self.reload_buffer(id);
+                }
+            }
+            ConvertToUtf8 => {
+                if let Some(b) = self.buf_mut() {
+                    let from = b.encoding.label();
+                    b.encoding = Default::default();
+                    b.modified = true;
+                    self.msg(format!("Converted from {from}: saving writes UTF-8"));
+                }
             }
             SaveAll => {
                 let (cur, group) = (self.cur, self.group);

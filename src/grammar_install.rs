@@ -561,6 +561,54 @@ mod tests {
         }
     }
 
+    /// A crate's source in `FARSUB_GRAMMAR_SOURCES` (a folder of unpacked `<crate>-<version>`
+    /// folders) or the cargo registry.
+    fn any_source(krate: &str, version: &str) -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("FARSUB_GRAMMAR_SOURCES") {
+            let p = PathBuf::from(dir).join(format!("{krate}-{version}"));
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+        local_source(krate)
+    }
+
+    #[test]
+    fn bundled_queries_compile_against_their_grammars() {
+        // Every recipe whose source is on this machine: compile it, then check the bundled
+        // highlight query is accepted by that grammar (a bad node name fails here).
+        let c = crate::config::Config::builtin();
+        for r in &c.grammars {
+            let (Some(krate), Some(ver)) = (&r.krate, &r.version) else {
+                continue;
+            };
+            let Some(src) = any_source(krate, ver) else {
+                eprintln!("{krate} {ver}: source not on this machine; skipping");
+                continue;
+            };
+            let query = crate::config::RUNTIME_FILES
+                .iter()
+                .find(|(p, _)| *p == format!("queries/{}/highlights.scm", r.name))
+                .map(|(_, t)| *t)
+                .unwrap();
+            let data =
+                std::env::temp_dir().join(format!("farsub-q-{}-{}", r.name, std::process::id()));
+            let _ = std::fs::remove_dir_all(&data);
+            let local = GrammarRecipe {
+                source: Some(src.display().to_string()),
+                krate: None,
+                version: None,
+                ..r.clone()
+            };
+            let lib = run_install(&data, &local, &|_| {}).unwrap();
+            let lang = load(&lib, &local.symbol()).unwrap();
+            if let Err(e) = tree_sitter::Query::new(&lang, query) {
+                panic!("{}: bundled highlights.scm: {e}", r.name);
+            }
+            let _ = std::fs::remove_dir_all(&data);
+        }
+    }
+
     #[test]
     fn installs_from_an_archive_and_names_the_grammar() {
         let Some(src) = local_source("tree-sitter-prisma") else {

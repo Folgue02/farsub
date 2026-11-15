@@ -152,8 +152,9 @@ impl App {
         let root = self.project.name();
         match self.buf() {
             Some(b) => format!(
-                "{}{} — {root}",
+                "{}{}{} — {root}",
                 b.name(),
+                if b.deleted { " (deleted)" } else { "" },
                 if b.modified { " •" } else { "" }
             ),
             None => format!("{root} — farsub"),

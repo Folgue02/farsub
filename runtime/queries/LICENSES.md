@@ -5,6 +5,7 @@ bundles, under each crate's license:
 
 | Crate | Version | License |
 | --- | --- | --- |
+| dekobon-tree-sitter-groovy | 0.6.0 | Apache-2.0 OR MIT |
 | tree-sitter-bash | 0.25.1 | MIT |
 | tree-sitter-batch | 0.11.1 | MIT |
 | tree-sitter-c | 0.24.2 | MIT |
@@ -30,6 +31,7 @@ bundles, under each crate's license:
 | tree-sitter-json | 0.24.8 | MIT |
 | tree-sitter-julia | 0.23.1 | MIT |
 | tree-sitter-kdl | 2.0.0 | MIT |
+| tree-sitter-kotlin | 0.3.8 | MIT (query based on nvim-treesitter, Apache-2.0) |
 | tree-sitter-less | 1.0.0 | MIT |
 | tree-sitter-lua | 0.5.0 | MIT |
 | tree-sitter-make | 1.1.1 | MIT |

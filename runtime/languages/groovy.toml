@@ -1,7 +1,5 @@
 name = "groovy"
 title = "Groovy"
-# No bundled tree-sitter grammar yet: shown as plain text.
-grammar = ""
 extensions = ["groovy", "gvy", "gradle"]
 filenames = ["Jenkinsfile"]
 first_line = '^#!.*\bgroovy'

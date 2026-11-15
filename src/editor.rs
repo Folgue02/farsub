@@ -162,8 +162,18 @@ pub struct Buffer {
     pub syntax_override: bool,
     /// Editor group (pane column) the buffer's tab lives in.
     pub group: usize,
+    /// The file was deleted on disk while open (the buffer keeps its contents).
+    pub deleted: bool,
+    /// The file's encoding (saved back in it).
+    pub encoding: crate::encoding::TextEncoding,
+    /// The file on disk as last read or saved (a change means someone else wrote it).
+    pub disk: Option<crate::fileops::DiskStamp>,
     /// Word wrap chosen for this file (View: Toggle Word Wrap); None = the setting.
     pub word_wrap: Option<bool>,
+    /// Tab name for a buffer that isn't a file ("Find Results").
+    pub title: Option<String>,
+    /// Set on the Find Results buffer: what each of its lines points at.
+    pub results: Option<Box<crate::search::Results>>,
     /// With word wrap: which visual row of the `scroll_y` line is at the top.
     pub scroll_row: usize,
     /// Pixels the top row is scrolled past (smooth scrolling between whole rows).
@@ -226,7 +236,12 @@ impl Buffer {
             indent_override: false,
             syntax_override: false,
             group: 0,
+            deleted: false,
+            encoding: Default::default(),
+            disk: None,
             word_wrap: None,
+            title: None,
+            results: None,
             scroll_row: 0,
             scroll_px: 0.0,
             want_vx: None,
@@ -251,22 +266,89 @@ impl Buffer {
             .as_ref()
             .and_then(|p| p.file_name())
             .map(|s| s.to_string_lossy().into_owned())
+            .or_else(|| self.title.clone())
             .unwrap_or_else(|| "untitled".into())
+    }
+
+    /// Append text to a generated buffer (Find Results): no undo, not "modified".
+    pub fn append_generated(&mut self, text: &str) {
+        let l = self.lines.len() - 1;
+        let end = Pos::new(l, char_len(&self.lines[l]));
+        self.raw_insert(end, text);
+        self.lsp_changes.clear();
+        self.version += 1;
     }
 
     pub fn save(&mut self) -> anyhow::Result<()> {
         let Some(path) = &self.path else {
             anyhow::bail!("buffer has no path")
         };
-        std::fs::write(path, self.text())?;
+        let bytes = self
+            .encoding
+            .encode(&self.text())
+            .map_err(|e| anyhow::anyhow!(e))?;
+        crate::fileops::write_atomic(path, &bytes)?;
+        self.disk = crate::fileops::DiskStamp::of(path);
         self.modified = false;
         self.seal = true;
         Ok(())
     }
 
+    /// Replace the text with what's on disk now, as one undoable edit: only the part that
+    /// differs is replaced, so the cursor and view stay put where the text didn't change.
+    pub fn reload_from(&mut self, text: &str) {
+        let crlf = text.contains("\r\n");
+        let new = if crlf {
+            text.replace("\r\n", "\n")
+        } else {
+            text.to_string()
+        };
+        let old = self.lines.join("\n");
+        let pre = old
+            .char_indices()
+            .zip(new.chars())
+            .find(|((_, a), b)| a != b)
+            .map(|((i, _), _)| i)
+            .unwrap_or(old.len().min(new.len()));
+        let max_suf = (old.len() - pre).min(new.len() - pre);
+        let mut suf = old
+            .bytes()
+            .rev()
+            .zip(new.bytes().rev())
+            .take(max_suf)
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(old.len() - suf) || !new.is_char_boundary(new.len() - suf) {
+            suf -= 1;
+        }
+        let pos_of = |byte: usize| {
+            let line = old[..byte].matches('\n').count();
+            let start = old[..byte].rfind('\n').map_or(0, |i| i + 1);
+            Pos::new(line, old[start..byte].chars().count())
+        };
+        let (a, b) = (pos_of(pre), pos_of(old.len() - suf));
+        let before = self.begin();
+        self.seal = true;
+        self.delete(a, b);
+        self.insert(a, &new[pre..new.len() - suf]);
+        self.cursor = self.clamp(self.cursor);
+        self.anchor = self.anchor.map(|p| self.clamp(p));
+        self.commit(before, false);
+        self.seal = true;
+        self.crlf = crlf;
+        self.modified = false;
+        if let Some(p) = &self.path {
+            self.disk = crate::fileops::DiskStamp::of(p);
+        }
+    }
+
     pub fn set_path(&mut self, path: PathBuf) {
         self.comment = comment_token(Some(&path)).map(String::from);
         self.lang = None;
+        // A new file name (Save As): what was on disk under the old one no longer applies.
+        if self.path.as_ref() != Some(&path) {
+            self.disk = None;
+        }
         self.path = Some(path);
     }
 
@@ -578,6 +660,8 @@ impl Buffer {
                 (pos.line, col),
                 (pos.line + rows, end_col),
             );
+        } else {
+            self.hl.changed_line(pos.line);
         }
         self.record_lsp(pos, pos, text);
         let mut parts = text.split('\n');
@@ -611,6 +695,8 @@ impl Buffer {
                 (b.line, bcol),
                 (a.line, acol),
             );
+        } else {
+            self.hl.changed_line(a.line);
         }
         self.record_lsp(a, b, "");
         if a.line == b.line {
@@ -1560,27 +1646,146 @@ impl Buffer {
         None
     }
 
-    pub fn replace_all(&mut self, needle: &str, repl: &str) -> usize {
-        if self.read_only || needle.is_empty() {
+    // ---------- find panel (search.rs matcher) ----------
+
+    /// Matches in line `l` as (start, end) positions.
+    pub fn line_matches(&self, m: &crate::search::Matcher, l: usize) -> Vec<(Pos, Pos)> {
+        let line = &self.lines[l];
+        m.find_in(line)
+            .into_iter()
+            .map(|(s, e)| {
+                (
+                    Pos::new(l, char_len(&line[..s])),
+                    Pos::new(l, char_len(&line[..e])),
+                )
+            })
+            .collect()
+    }
+
+    /// Every match (inside `scope` if given), up to `limit`.
+    pub fn matches_with(
+        &self,
+        m: &crate::search::Matcher,
+        scope: Option<(Pos, Pos)>,
+        limit: usize,
+    ) -> Vec<(Pos, Pos)> {
+        let (first, last) = match scope {
+            Some((a, b)) => (a.line, b.line.min(self.lines.len() - 1)),
+            None => (0, self.lines.len() - 1),
+        };
+        let mut out = vec![];
+        for l in first..=last {
+            for r in self.line_matches(m, l) {
+                if scope.is_none_or(|(a, b)| r.0 >= a && r.1 <= b) {
+                    out.push(r);
+                    if out.len() >= limit {
+                        return out;
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The next (or previous) match from `from`, wrapping around the document if `wrap`.
+    pub fn find_with(
+        &self,
+        m: &crate::search::Matcher,
+        from: Pos,
+        forward: bool,
+        wrap: bool,
+        scope: Option<(Pos, Pos)>,
+    ) -> Option<(Pos, Pos)> {
+        let n = self.lines.len();
+        let ok = |r: &(Pos, Pos)| scope.is_none_or(|(a, b)| r.0 >= a && r.1 <= b);
+        let lines: Vec<usize> = if forward {
+            let mut v: Vec<usize> = (from.line..n).collect();
+            if wrap {
+                v.extend(0..=from.line);
+            }
+            v
+        } else {
+            let mut v: Vec<usize> = (0..=from.line).rev().collect();
+            if wrap {
+                v.extend((from.line..n).rev());
+            }
+            v
+        };
+        for (i, &l) in lines.iter().enumerate() {
+            let ms = self.line_matches(m, l);
+            let wrapped = i > 0 && l == from.line;
+            let hit = if forward {
+                ms.into_iter()
+                    .filter(ok)
+                    .find(|r| wrapped || l != from.line || r.0 >= from)
+            } else {
+                ms.into_iter()
+                    .rev()
+                    .filter(ok)
+                    .find(|r| wrapped || l != from.line || r.1 <= from)
+            };
+            if hit.is_some() {
+                return hit;
+            }
+        }
+        None
+    }
+
+    /// Replace one match (a range on one line) with the expanded template, as one undo
+    /// step. Returns where the replacement ends.
+    pub fn replace_match(
+        &mut self,
+        m: &crate::search::Matcher,
+        r: (Pos, Pos),
+        template: &str,
+    ) -> Option<Pos> {
+        if self.read_only || r.0.line != r.1.line || r.0.line >= self.lines.len() {
+            return None;
+        }
+        let line = &self.lines[r.0.line];
+        let range = (byte_idx(line, r.0.col), byte_idx(line, r.1.col));
+        let text = m.replacement(line, range, template);
+        let before = self.begin();
+        self.delete(r.0, r.1);
+        let end = self.insert(r.0, &text);
+        self.anchor = None;
+        self.cursor = end;
+        self.commit(before, false);
+        Some(end)
+    }
+
+    /// Replace every match (inside `scope` if given) as one undo step; the count.
+    pub fn replace_with(
+        &mut self,
+        m: &crate::search::Matcher,
+        template: &str,
+        scope: Option<(Pos, Pos)>,
+    ) -> usize {
+        if self.read_only {
             return 0;
         }
+        let all = self.matches_with(m, scope, usize::MAX);
+        if all.is_empty() {
+            return 0;
+        }
+        // Expanded against the original text, then applied from the end backwards.
+        let reps: Vec<((Pos, Pos), String)> = all
+            .into_iter()
+            .map(|r| {
+                let line = &self.lines[r.0.line];
+                let range = (byte_idx(line, r.0.col), byte_idx(line, r.1.col));
+                (r, m.replacement(line, range, template))
+            })
+            .collect();
         let before = self.begin();
-        let mut count = 0;
-        for l in 0..self.lines.len() {
-            let ms = Self::matches_in_line(&self.lines[l], needle);
-            for (s, e) in ms.into_iter().rev() {
-                let line = &self.lines[l];
-                let a = Pos::new(l, char_len(&line[..s]));
-                let b = Pos::new(l, char_len(&line[..e]));
-                self.delete(a, b);
-                self.insert(a, repl);
-                count += 1;
-            }
+        for ((a, b), t) in reps.iter().rev() {
+            self.delete(*a, *b);
+            self.insert(*a, t);
         }
         self.anchor = None;
         self.cursor = self.clamp(self.cursor);
         self.commit(before, false);
-        count
+        reps.len()
     }
 
     /// Apply a set of non-overlapping edits (e.g. from an LSP) as one undo step.
@@ -1713,8 +1918,83 @@ mod tests {
             b.find("foo", Pos::new(0, 0), false, false),
             Some((Pos::new(1, 0), Pos::new(1, 3)))
         );
-        assert_eq!(b.replace_all("foo", "x"), 3);
-        assert_eq!(b.text(), "x bar x\nx");
+    }
+
+    #[test]
+    fn find_panel_search_and_replace_in_a_buffer() {
+        use crate::search::{FindOptions, Matcher};
+        let m = |p: &str, regex: bool| {
+            Matcher::new(
+                p,
+                &FindOptions {
+                    regex,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        let mut b = buf("foo bar foo\nfoo é foo");
+        let f = m("foo", false);
+        // Forward from inside the first match, wrapping, and backward.
+        assert_eq!(
+            b.find_with(&f, Pos::new(0, 1), true, true, None),
+            Some((Pos::new(0, 8), Pos::new(0, 11)))
+        );
+        assert_eq!(
+            b.find_with(&f, Pos::new(1, 7), true, true, None),
+            Some((Pos::new(0, 0), Pos::new(0, 3))),
+            "wraps to the top"
+        );
+        assert_eq!(b.find_with(&f, Pos::new(1, 7), true, false, None), None);
+        assert_eq!(
+            b.find_with(&f, Pos::new(0, 0), false, true, None),
+            Some((Pos::new(1, 6), Pos::new(1, 9))),
+            "backward wraps to the bottom"
+        );
+        // Character columns, not bytes, after a multi-byte character.
+        assert_eq!(b.line_matches(&f, 1)[1], (Pos::new(1, 6), Pos::new(1, 9)));
+        // In a selection only.
+        let scope = Some((Pos::new(0, 4), Pos::new(1, 3)));
+        assert_eq!(b.matches_with(&f, scope, usize::MAX).len(), 2);
+        assert_eq!(b.replace_with(&f, "X", scope), 2);
+        assert_eq!(b.text(), "foo bar X\nX é foo");
+        b.undo();
+        assert_eq!(b.text(), "foo bar foo\nfoo é foo", "one undo step");
+        // Regex groups, one match at a time.
+        let r = m(r"(\w+) (\w+)", true);
+        let first = b.find_with(&r, Pos::new(0, 0), true, true, None).unwrap();
+        b.replace_match(&r, first, "$2 $1");
+        assert_eq!(b.lines[0], "bar foo foo");
+        assert_eq!(b.replace_with(&m("o", false), "0", None), 8);
+    }
+
+    #[test]
+    fn reload_replaces_only_what_changed_and_is_undoable() {
+        for (old, new) in [
+            ("a\nb\nc", "a\nB\nc"),
+            ("é", "ĩ"),         // same last byte, different characters
+            ("aé\nx", "aè\nx"), // multi-byte change mid-line
+            ("abc", "abcabc"),  // grown at the end
+            ("abcabc", "abc"),  // shrunk
+            ("", "new\ntext\n"),
+            ("x\r\ny", "x\r\ny\r\nz"),
+        ] {
+            let mut b = buf(old);
+            b.reload_from(new);
+            assert_eq!(b.text(), new, "{old:?} → {new:?}");
+            assert!(!b.modified);
+            b.undo();
+            assert_eq!(
+                b.lines.join("\n"),
+                old.replace("\r\n", "\n"),
+                "undo {old:?}"
+            );
+        }
+        // The cursor stays where the text didn't change.
+        let mut b = buf("one\ntwo\nthree");
+        b.goto(Pos::new(2, 4));
+        b.reload_from("ONE\ntwo\nthree");
+        assert_eq!(b.cursor, Pos::new(2, 4));
     }
 
     #[test]

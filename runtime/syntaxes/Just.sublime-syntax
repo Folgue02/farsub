@@ -1,0 +1,94 @@
+%YAML 1.2
+---
+# Bundled with farsub. Justfiles (https://just.systems).
+name: Just
+file_extensions: [just, justfile, Justfile, .justfile]
+scope: source.just
+
+contexts:
+  main:
+    - match: '^\s*(#!).*$'
+      scope: comment.line.shebang.just
+    - match: '#.*$'
+      scope: comment.line.number-sign.just
+    - match: '^(set|export|alias|import|mod)\b'
+      scope: keyword.control.just
+    - match: '\b(if|else|true|false)\b'
+      scope: keyword.control.just
+    - match: '^\s*(\[)([a-z-]+)(.*?)(\])'
+      captures:
+        1: punctuation.definition.annotation.just
+        2: entity.other.attribute-name.just
+        4: punctuation.definition.annotation.just
+    # variable assignment: name := value
+    - match: '^([A-Za-z_][A-Za-z0-9_-]*)\s*(:=)'
+      captures:
+        1: variable.other.just
+        2: keyword.operator.assignment.just
+    # recipe header: [@]name params: deps
+    - match: '^(@?)([A-Za-z_][A-Za-z0-9_-]*)(?=[^:\n]*:(?!=))'
+      captures:
+        1: keyword.operator.quiet.just
+        2: entity.name.function.just
+      push: recipe-header
+    - include: values
+    # recipe body lines are indented; highlight interpolations in them
+    - match: '\{\{'
+      scope: punctuation.section.interpolation.begin.just
+      push: interpolation
+
+  recipe-header:
+    - match: ':'
+      scope: punctuation.separator.just
+      set: recipe-deps
+    - match: '[+*$]?[A-Za-z_][A-Za-z0-9_-]*'
+      scope: variable.parameter.just
+    - include: values
+    - match: '$'
+      pop: true
+
+  recipe-deps:
+    - match: '[A-Za-z_][A-Za-z0-9_-]*'
+      scope: entity.name.function.just
+    - match: '#.*$'
+      scope: comment.line.number-sign.just
+      pop: true
+    - match: '$'
+      pop: true
+
+  values:
+    - match: "'''"
+      push:
+        - meta_scope: string.quoted.single.block.just
+        - match: "'''"
+          pop: true
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.just
+        - match: "'"
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.just
+        - match: '\\.'
+          scope: constant.character.escape.just
+        - match: '"'
+          pop: true
+    - match: '`'
+      push:
+        - meta_scope: string.interpolated.backtick.just
+        - match: '`'
+          pop: true
+    - match: '\b([a-z_][a-z0-9_]*)(?=\()'
+      scope: support.function.just
+    - match: '==|!=|=~|&&|\|\||\+|/'
+      scope: keyword.operator.just
+
+  interpolation:
+    - meta_scope: meta.interpolation.just
+    - match: '\}\}'
+      scope: punctuation.section.interpolation.end.just
+      pop: true
+    - include: values
+    - match: '[A-Za-z_][A-Za-z0-9_-]*'
+      scope: variable.other.just

@@ -9,6 +9,7 @@ use egui_kittest::Harness;
 
 use crate::app::{Focus, Modal};
 use crate::config::{Config, EditorConfig};
+use crate::editor::Pos;
 use crate::gui::Gui;
 
 fn tmpdir(name: &str) -> PathBuf {
@@ -567,10 +568,18 @@ fn menu_bar_keyboard_and_mouse() {
     press(&mut h, Modifiers::NONE, Key::Escape);
     assert!(h.state().app.menu.is_none());
 
-    // Typing a letter runs the item: File → "New File".
+    // Enter runs the selected item (File's first: "New File"). A letter shared by several
+    // items ("New File", "New Window") moves between them instead of running one.
     let n = h.state().app.buffers.len();
     press(&mut h, Modifiers::NONE, Key::F10);
     typ(&mut h, "n");
+    assert_eq!(
+        h.state().app.buffers.len(),
+        n,
+        "two items start with N: it selects, doesn't run"
+    );
+    typ(&mut h, "n");
+    press(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().app.buffers.len(), n + 1);
     assert!(h.state().app.menu.is_none());
 
@@ -2298,10 +2307,16 @@ fn input_boxes_edit_like_the_editor() {
     } else {
         Modifiers::CTRL
     };
-    let prompt_text = |h: &Harness<'static, Gui>| match &h.state().app.modal {
-        Some(Modal::Prompt(p)) => p.input.text().to_string(),
-        Some(Modal::Palette(p)) => p.query.text().to_string(),
-        _ => panic!("no input open"),
+    let prompt_text = |h: &Harness<'static, Gui>| {
+        let app = &h.state().app;
+        if app.find.open && app.focus == Focus::Find {
+            return app.find.find.text().to_string();
+        }
+        match &app.modal {
+            Some(Modal::Prompt(p)) => p.input.text().to_string(),
+            Some(Modal::Palette(p)) => p.query.text().to_string(),
+            _ => panic!("no input open"),
+        }
     };
     // Goto Anything with no file open: Select All works (from the key and from the menu).
     press(&mut h, CMD, Key::P);
@@ -2324,10 +2339,7 @@ fn input_boxes_edit_like_the_editor() {
     press(&mut h, CMD, Key::F);
     typ(&mut h, "hello big world");
     press(&mut h, word, Key::ArrowLeft);
-    match &h.state().app.modal {
-        Some(Modal::Prompt(p)) => assert_eq!(p.input.cursor(), 10),
-        _ => panic!("find panel"),
-    }
+    assert_eq!(h.state().app.find.find.cursor(), 10);
     press(&mut h, word, Key::Backspace);
     assert_eq!(prompt_text(&h), "hello world");
     press(&mut h, Modifiers::SHIFT, Key::End);
@@ -2397,6 +2409,16 @@ fn smooth_scrolling_by_pixels() {
     wheel(&mut h, 100.0 * lh);
     let b = h.state().app.buf().unwrap();
     assert_eq!((b.scroll_y, b.scroll_px), (0, 0.0));
+    // Past the bottom it stops at the last line, with no partial row to bounce back from.
+    wheel(&mut h, -300.0 * lh);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!((b.scroll_y, b.scroll_px), (b.lines.len() - 1, 0.0));
+    for _ in 0..3 {
+        wheel(&mut h, -0.4 * lh);
+        let b = h.state().app.buf().unwrap();
+        assert_eq!((b.scroll_y, b.scroll_px), (b.lines.len() - 1, 0.0));
+    }
+    wheel(&mut h, 100.0 * lh);
     // Moving the cursor snaps to whole lines again.
     wheel(&mut h, -5.0);
     h.state_mut()
@@ -2406,6 +2428,42 @@ fn smooth_scrolling_by_pixels() {
         .goto(crate::editor::Pos::new(150, 0));
     steps(&mut h, 2);
     assert_eq!(h.state().app.buf().unwrap().scroll_px, 0.0);
+}
+
+#[test]
+fn horizontal_wheel_scrolling_keeps_fractions_and_stops_at_the_widest_line() {
+    let text = format!("{}\nshort\n", "x".repeat(300));
+    let d = project("hwheel", &[("a.txt", text.as_str())]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    let ed = h.state().editor_rect_for_test();
+    let (cw, _, _) = h.state().text_metrics_for_test();
+    let wheel = |h: &mut Harness<'static, Gui>, dx: f32| {
+        h.event(egui::Event::PointerMoved(ed.center()));
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::Vec2::new(dx, 0.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Trackpad,
+        });
+        for _ in 0..30 {
+            h.step();
+        }
+    };
+    // Slow swipes (a fraction of a column per frame) still add up.
+    for _ in 0..8 {
+        wheel(&mut h, -0.5 * cw);
+    }
+    let sx = h.state().app.buf().unwrap().scroll_x;
+    assert!((2..=6).contains(&sx), "scrolled {sx} columns");
+    // A huge swipe stops with the end of the widest line in view.
+    wheel(&mut h, -1000.0 * cw);
+    let sx = h.state().app.buf().unwrap().scroll_x;
+    assert!(sx > 100 && sx < 300, "stopped at {sx}");
+    wheel(&mut h, -100.0 * cw);
+    assert_eq!(h.state().app.buf().unwrap().scroll_x, sx);
 }
 
 #[test]
@@ -2578,5 +2636,384 @@ fn install_a_grammar_from_a_folder() {
             .status
             .as_ref()
             .is_some_and(|s| s.0.contains("Installed the vue grammar"))
+    );
+}
+
+#[test]
+fn deleted_files_are_flagged_and_closing_warns() {
+    let d = project("deleted", &[("a.txt", "keep me\n"), ("b.txt", "other\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("b.txt"), true);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    std::fs::remove_file(d.join("a.txt")).unwrap();
+    assert!(
+        wait(&mut h, 5, |g| g.app.buf().is_some_and(|b| b.deleted)),
+        "noticed"
+    );
+    let app = &h.state().app;
+    let b = app.buf().unwrap();
+    assert!(b.modified, "counts as unsaved (hot exit keeps it)");
+    assert!(app.title().contains("a.txt (deleted)"), "{}", app.title());
+    assert_eq!(b.lines[0], "keep me", "contents kept");
+    assert!(
+        !app.tree.nodes.iter().any(|n| n.name == "a.txt"),
+        "the sidebar no longer lists it"
+    );
+    steps(&mut h, 2);
+    shot(&mut h, "deleted_file");
+    // Closing warns that the contents will be lost; "n" keeps it open.
+    h.state_mut().app.run(crate::commands::Command::CloseBuffer);
+    match &h.state().app.modal {
+        Some(Modal::Confirm(c)) => assert!(
+            c.message.contains("no longer exists") && c.message.contains("lose"),
+            "{}",
+            c.message
+        ),
+        _ => panic!("expected the close warning"),
+    }
+    typ(&mut h, "n");
+    assert_eq!(h.state().app.buffers.len(), 2);
+    // Saving recreates the file and clears the flag.
+    press(&mut h, CMD, Key::S);
+    assert_eq!(
+        std::fs::read_to_string(d.join("a.txt")).unwrap(),
+        "keep me\n"
+    );
+    assert!(!h.state().app.buf().unwrap().deleted);
+    // Delete again, close and confirm: gone.
+    std::fs::remove_file(d.join("a.txt")).unwrap();
+    assert!(wait(&mut h, 5, |g| g.app.buf().is_some_and(|b| b.deleted)));
+    h.state_mut().app.run(crate::commands::Command::CloseBuffer);
+    typ(&mut h, "y");
+    assert_eq!(h.state().app.buffers.len(), 1);
+    assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
+}
+
+#[test]
+fn files_changed_on_disk_reload_or_ask() {
+    let d = project("changed", &[("a.txt", "one\ntwo\nthree\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(2, 3));
+    steps(&mut h, 2);
+    // Unedited: reloads in place, the cursor stays, and undo brings the old text back.
+    std::fs::write(d.join("a.txt"), "one\nTWO, changed elsewhere\nthree\n").unwrap();
+    assert!(
+        wait(&mut h, 5, |g| g
+            .app
+            .buf()
+            .is_some_and(|b| b.lines[1].starts_with("TWO"))),
+        "reloaded"
+    );
+    let b = h.state().app.buf().unwrap();
+    assert!(!b.modified);
+    assert_eq!(b.cursor, crate::editor::Pos::new(2, 3), "cursor kept");
+    h.state_mut().app.buf_mut().unwrap().undo();
+    assert_eq!(h.state().app.buf().unwrap().lines[1], "two");
+    h.state_mut().app.buf_mut().unwrap().redo();
+    // Edited here too: asks first; "n" keeps our edits.
+    h.state_mut().app.buf_mut().unwrap().insert_text("mine ");
+    std::fs::write(d.join("a.txt"), "theirs\n").unwrap();
+    assert!(wait(&mut h, 5, |g| matches!(
+        g.app.modal,
+        Some(Modal::Confirm(_))
+    )));
+    match &h.state().app.modal {
+        Some(Modal::Confirm(c)) => assert!(c.message.contains("changed on disk"), "{}", c.message),
+        _ => unreachable!(),
+    }
+    typ(&mut h, "n");
+    steps(&mut h, 80);
+    assert!(h.state().app.modal.is_none(), "asked once per change");
+    assert!(h.state().app.buf().unwrap().lines[2].contains("mine "));
+    // Another outside change, then Save: asks before overwriting it.
+    std::fs::write(d.join("a.txt"), "theirs again, longer\n").unwrap();
+    press(&mut h, CMD, Key::S);
+    match &h.state().app.modal {
+        Some(Modal::Confirm(c)) => assert!(c.message.contains("Overwrite"), "{}", c.message),
+        _ => panic!("expected the overwrite question"),
+    }
+    typ(&mut h, "n");
+    assert_eq!(
+        std::fs::read_to_string(d.join("a.txt")).unwrap(),
+        "theirs again, longer\n",
+        "not overwritten"
+    );
+    // Revert File takes the disk version.
+    h.state_mut().app.run(crate::commands::Command::RevertFile);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.lines[0], "theirs again, longer");
+    assert!(!b.modified);
+    // Our own saves don't count as outside changes.
+    h.state_mut().app.buf_mut().unwrap().insert_text("x");
+    press(&mut h, CMD, Key::S);
+    assert!(h.state().app.modal.is_none());
+    steps(&mut h, 80);
+    assert!(h.state().app.modal.is_none());
+}
+
+#[test]
+fn legacy_encoded_files_keep_their_encoding() {
+    let d = tmpdir("latin1");
+    let raw = b"caf\xE9 cr\xE8me br\xFBl\xE9e, \xE0 la fran\xE7aise\n";
+    std::fs::write(d.join("menu.txt"), raw).unwrap();
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("menu.txt"), true);
+    steps(&mut h, 2);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.lines[0], "café crème brûlée, à la française");
+    assert!(!b.encoding.is_utf8());
+    // An edit the encoding can hold saves byte for byte in it.
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(0, 0));
+    typ(&mut h, "é");
+    press(&mut h, CMD, Key::S);
+    let mut want = b"\xE9".to_vec();
+    want.extend_from_slice(raw);
+    assert_eq!(std::fs::read(d.join("menu.txt")).unwrap(), want);
+    // One it can't hold is refused, and the file is left alone.
+    typ(&mut h, "Ω");
+    press(&mut h, CMD, Key::S);
+    assert_eq!(std::fs::read(d.join("menu.txt")).unwrap(), want);
+    let status = h.state().app.status.clone().unwrap().0;
+    assert!(status.contains("Convert to UTF-8"), "{status}");
+    assert!(h.state().app.buf().unwrap().modified);
+    // Converting saves it as UTF-8.
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::ConvertToUtf8);
+    press(&mut h, CMD, Key::S);
+    assert_eq!(
+        std::fs::read_to_string(d.join("menu.txt")).unwrap(),
+        "éΩcafé crème brûlée, à la française\n"
+    );
+}
+
+#[test]
+fn new_window_is_a_clean_window() {
+    let d = project("newwin", &[("a.txt", "x\n")]);
+    let h = harness(&d);
+    let args: Vec<String> = h
+        .state()
+        .app
+        .new_window_args()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(args[0], "--empty");
+    assert!(
+        args.windows(2).any(|w| w[0] == "--config"),
+        "same config as this window: {args:?}"
+    );
+    assert!(
+        h.state()
+            .app
+            .keymap
+            .keys_for(crate::commands::Command::NewWindow)
+            .iter()
+            .any(|k| k.contains('N'))
+    );
+    // What the new window looks like: no folder, no session.
+    let mut e = project_harness(
+        crate::project::Project::from_folders(vec![]),
+        test_config(&d),
+    );
+    steps(&mut e, 2);
+    assert!(e.state().app.project.folders.is_empty() && e.state().app.buffers.is_empty());
+    shot(&mut e, "empty_window");
+}
+
+#[test]
+fn find_panel_options_count_and_replace() {
+    use crate::commands::Command;
+    let d = project("findpanel", &[("a.txt", "foo Foo foo\nbar foo_x foo\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    press(&mut h, CMD, Key::F);
+    assert!(h.state().app.find.open);
+    assert_eq!(h.state().app.focus, Focus::Find);
+    typ(&mut h, "foo");
+    // Searching as you type selects the first match; "1 of 5" (case-insensitive).
+    let sel = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().selection();
+    assert_eq!(sel(&h), Some((Pos::new(0, 0), Pos::new(0, 3))));
+    assert_eq!(h.state_mut().app.find_count(), Some((Some(0), 5)));
+    h.state_mut().app.run(Command::ToggleFindCase);
+    assert_eq!(h.state_mut().app.find_count(), Some((Some(0), 4)));
+    h.state_mut().app.run(Command::ToggleFindWord);
+    assert_eq!(
+        h.state_mut().app.find_count(),
+        Some((Some(0), 3)),
+        "foo_x isn't a whole word"
+    );
+    // Enter / Shift+Enter step through the matches, wrapping around.
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(sel(&h), Some((Pos::new(0, 8), Pos::new(0, 11))));
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(sel(&h), Some((Pos::new(1, 10), Pos::new(1, 13))));
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(sel(&h), Some((Pos::new(0, 0), Pos::new(0, 3))), "wrapped");
+    press(&mut h, Modifiers::SHIFT, Key::Enter);
+    assert_eq!(sel(&h), Some((Pos::new(1, 10), Pos::new(1, 13))));
+    shot(&mut h, "find_panel");
+    // Replace: Tab to the Replace field, Enter replaces the selected match and moves on.
+    h.state_mut().app.run(Command::Replace);
+    steps(&mut h, 2);
+    press(&mut h, Modifiers::NONE, Key::Tab);
+    typ(&mut h, "X");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let lines = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().lines.clone();
+    assert_eq!(
+        lines(&h)[1],
+        "bar foo_x X",
+        "the selected match was replaced"
+    );
+    assert_eq!(
+        sel(&h),
+        Some((Pos::new(0, 0), Pos::new(0, 3))),
+        "and the next one selected"
+    );
+    h.state_mut().app.run(Command::ReplaceAll);
+    assert_eq!(lines(&h)[..2], ["X Foo X", "bar foo_x X"]);
+    steps(&mut h, 2);
+    shot(&mut h, "replace_panel");
+    // A bad regex is reported in the panel, not applied.
+    h.state_mut().app.run(Command::ToggleFindRegex);
+    press(&mut h, Modifiers::SHIFT, Key::Tab);
+    press(&mut h, Modifiers::NONE, Key::End);
+    typ(&mut h, "\\");
+    assert!(
+        h.state()
+            .app
+            .find
+            .error
+            .as_ref()
+            .is_some_and(|e| e.1.starts_with("Invalid regex")),
+        "{:?}",
+        h.state().app.find.error
+    );
+    // Esc closes the panel; the editor has focus again and nothing else changed.
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert!(!h.state().app.find.open);
+    assert_eq!(h.state().app.focus, Focus::Editor);
+    // The options are kept in the workspace.
+    let ws = h.state().app.capture_workspace();
+    assert!(ws.find_options.case && ws.find_options.word && ws.find_options.regex);
+    assert_eq!(ws.find_replace, "X");
+}
+
+#[test]
+fn find_in_files_results_open_and_replace() {
+    use crate::commands::Command;
+    let d = project(
+        "fif",
+        &[
+            ("src/a.rs", "fn needle() {}\n// a needle\n"),
+            ("src/b.txt", "nothing here\n"),
+            ("skip/c.rs", "needle\n"),
+            (".gitignore", "skip/\n"),
+        ],
+    );
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    // No file open: Find in Files still works.
+    press(&mut h, CMD.plus(Modifiers::SHIFT), Key::F);
+    assert_eq!(h.state().app.find.mode, crate::app::FindMode::Files);
+    typ(&mut h, "needle");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(wait(&mut h, 10, |g| g.app.find_in_files_done()));
+    steps(&mut h, 2);
+    let text = h.state().app.buf().unwrap().text();
+    assert_eq!(h.state().app.buf().unwrap().name(), "Find Results");
+    assert!(
+        text.contains(&format!("{}:", d.join("src/a.rs").display())),
+        "{text}"
+    );
+    assert!(!text.contains("c.rs"), "gitignored: {text}");
+    assert!(text.contains("2 matches across 1 file"), "{text}");
+    assert!(
+        !text.contains("\n\n\n"),
+        "one blank line between blocks: {text}"
+    );
+    assert!(
+        !h.state().app.buf().unwrap().modified,
+        "results aren't unsaved work"
+    );
+    shot(&mut h, "find_results");
+    // F4 opens the first match with it selected; Enter on a results line opens that one.
+    press(&mut h, Modifiers::NONE, Key::F4);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.path.as_deref(), Some(d.join("src/a.rs").as_path()));
+    assert_eq!(b.selection(), Some((Pos::new(0, 3), Pos::new(0, 9))));
+    let results = h
+        .state()
+        .app
+        .buffers
+        .iter()
+        .position(|b| b.results.is_some())
+        .unwrap();
+    h.state_mut().app.set_cur(results);
+    let line = h
+        .state()
+        .app
+        .buf()
+        .unwrap()
+        .lines
+        .iter()
+        .position(|l| l.contains("// a needle"))
+        .unwrap();
+    h.state_mut().app.buffers[results].goto(Pos::new(line, 0));
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().cursor.line, 1);
+    // Opening from a file-name line goes to its first match (what Enter and double-click
+    // on a results line do).
+    h.state_mut().app.set_cur(results);
+    let header = h
+        .state()
+        .app
+        .buf()
+        .unwrap()
+        .lines
+        .iter()
+        .position(|l| l.ends_with("a.rs:"))
+        .unwrap();
+    assert!(h.state_mut().app.open_result_line(header));
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.path.as_deref(), Some(d.join("src/a.rs").as_path()));
+    assert_eq!(b.cursor.line, 0);
+    // Replace in files: asks first, then leaves the files open with the changes unsaved.
+    h.state_mut().app.run(Command::FindInFiles);
+    steps(&mut h, 2);
+    press(&mut h, Modifiers::NONE, Key::Tab);
+    press(&mut h, Modifiers::NONE, Key::Tab);
+    assert_eq!(h.state().app.find.field, crate::app::FindField::Replace);
+    typ(&mut h, "pin");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(wait(&mut h, 10, |g| matches!(
+        g.app.modal,
+        Some(Modal::Confirm(_))
+    )));
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let a = h
+        .state()
+        .app
+        .buffers
+        .iter()
+        .find(|b| b.path.as_deref() == Some(d.join("src/a.rs").as_path()))
+        .unwrap();
+    assert_eq!(a.lines[..2], ["fn pin() {}", "// a pin"]);
+    assert!(a.modified);
+    assert_eq!(
+        std::fs::read_to_string(d.join("src/a.rs")).unwrap(),
+        "fn needle() {}\n// a needle\n",
+        "nothing written until saved"
     );
 }

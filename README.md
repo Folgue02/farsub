@@ -10,7 +10,7 @@ cargo install --path .     # puts `farsub` on your PATH
 farsub .                   # open the current folder (returns to the shell immediately)
 ```
 
-How it's supposed to behave is written down in [docs/SPEC.md](docs/SPEC.md).
+How it's supposed to behave is written down in [docs/SPEC.md](docs/SPEC.md) (an index of one page per area, in `docs/spec/`).
 
 ## Command line
 
@@ -59,7 +59,7 @@ extensions = ["lua"]
 - Every project folder is a top-level node in the sidebar; exclude patterns hide entries
   there and in Goto Anything (which searches all folders, prefixed with the folder name).
 - The workspace stores open files, cursors, selections, scroll positions, expanded
-  folders, the find text, recently closed files, and the contents of unsaved buffers
+  folders, the find text and the find panel's options, recently closed files, and the contents of unsaved buffers
   (**hot exit**: quitting never asks; changes come back next time). Turn that off with
   `hot_exit = false`. Folders opened without a project file get a workspace too (kept in
   the data folder), and the session is also autosaved every 30 seconds.
@@ -172,11 +172,31 @@ tabs and language-server state.
 
 Sublime defaults: Cmd+D (select word, then next occurrence), Cmd+L, Cmd+Shift+K,
 Cmd+Shift+D, Alt+↑/↓ (move line), Cmd+/ (comment), Cmd+] / Cmd+[, Cmd+Enter,
-Cmd+Shift+Enter, Cmd+J, F9 (sort lines). Also Cmd+F (find panel: Enter next,
-Shift+Enter previous), Cmd+Alt+F (replace all), Cmd+Z / Cmd+Shift+Z, Cmd+S,
+Cmd+Shift+Enter, Cmd+J, F9 (sort lines). Also Cmd+Z / Cmd+Shift+Z, Cmd+S,
 Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab and Cmd+1…9
 (switch tabs), Cmd+= / Cmd+- (zoom), Alt+- (jump back). Copying with nothing selected
 takes the whole line. Brackets and quotes auto-close, and Enter auto-indents.
+
+## Find, Replace and Find in Files
+
+One panel at the bottom of the window, as in Sublime:
+
+| Key | Action |
+|---|---|
+| Cmd+F | Find (searches as you type; Enter next, Shift+Enter previous, Esc closes) |
+| Cmd+Alt+F (Ctrl+H on Windows/Linux) | Replace: Tab to the Replace field; Enter replaces and finds the next |
+| Ctrl+Alt+Enter | Replace All (in the file, or the selection with "in selection" on) |
+| Cmd+Shift+F | Find in Files |
+| F3 / Shift+F3 (also Cmd+G / Cmd+Shift+G on macOS) | Find next / previous |
+| F4 / Shift+F4 | Next / previous Find in Files result |
+| Cmd+Alt+R / C / W (Alt+R / C / W on Windows/Linux) | Toggle regex / case sensitive / whole word |
+
+Matches are outlined while the panel is open, and it shows "3 of 12". With regex on,
+the replacement can use `$1` or `\1`. Find in Files takes a **Where** list such as
+`src, *.rs, -target/`; empty means the project folders. It skips `.gitignore`'d and
+binary files, and searches unsaved changes as they are in the editor. Results go to a
+"Find Results" tab: Enter or double-click on a line opens that match. Replacing in files
+asks first, then leaves the changed files open and unsaved; File › Save All writes them.
 
 ## Language servers (lspconfig + mason)
 
@@ -221,17 +241,21 @@ GraphQL, Protocol Buffers, PowerShell, Batch, Perl, Julia, Fish, AWK, Groovy / G
 Jenkinsfile, Crystal, F#, Vue, XML, INI / .editorconfig, .env, nginx, Solidity, GLSL,
 WGSL, Starlark / Bazel, Make, Just, KDL and Meson.
 
-Highlighting uses tree-sitter. 21 common grammars are compiled in; 35 more (C#, Swift,
-Haskell, SQL, Zig, Dockerfile, Vue, …) **install themselves** the first time you open such
-a file: farsub downloads the grammar's source and compiles it in the background with your
-C compiler (Xcode Command Line Tools, gcc/clang, or Visual Studio Build Tools). Language
-servers farsub can install are set up the same way. Turn this off with
-`auto_install = false`; then **Tools → Install Grammar…** / Language Servers install them.
+Highlighting uses tree-sitter. 21 common grammars are compiled in; 37 more (C#,
+Swift, Kotlin, Groovy / Gradle, Haskell, SQL, Zig, Dockerfile, Vue, …) **install
+themselves** the first time you open such a file: farsub downloads the grammar's source and
+compiles it in the background with your C compiler (Xcode Command Line Tools, gcc/clang,
+or Visual Studio Build Tools). Language servers farsub can install are set up the same way.
+Turn this off with `auto_install = false`; then **Tools → Install Grammar…** / Language Servers install them.
 Any other tree-sitter grammar installs from a source folder or archive on your computer:
 **Grammars: Install Grammar from File…/Folder…** or `farsub --install-grammar PATH`.
 `farsub --list-grammars` shows them all.
-AWK, BibTeX, Clojure, Crystal, .env, GraphQL, Groovy, Just, Kotlin, LaTeX, Meson, Nim,
-Perl, Terraform, Typst and WGSL have no grammar yet and show as plain text.
+Until a file's tree-sitter grammar is installed (or when it can't be compiled), and for
+the languages with no tree-sitter grammar yet (AWK, BibTeX, Clojure, Crystal, .env,
+GraphQL, Just, LaTeX, Meson, Nim, Perl, Terraform, Typst and WGSL), farsub highlights it
+with a bundled Sublime-style regex grammar instead, so nothing shows as plain text.
+Override the fallback with `fallback_syntax = "Grammar Name"` in a language file, and how
+its scopes map to theme colors with a `scopes.toml` in the config folder.
 
 **Tools → Language Servers** (Cmd+Alt+L) is a Mason-like manager: it lists every server
 with its status (installed, on PATH, not installed, failed), and `i` installs, `u` updates,
@@ -405,6 +429,16 @@ Guess Settings From Buffer, and Convert Indentation to Spaces / Tabs (one undo s
 Choices are remembered per file in the workspace. Indentation guides are drawn at each
 level, with the block around the cursor highlighted (`indent_guides = false` hides them). The current-line highlight is off by default;
 `highlight_current_line = true` turns it on.
+
+If an open file is deleted on disk, its tab and the window title say "(deleted)"; the
+contents stay (as unsaved changes) until you close the tab, which warns you first, or save
+to recreate the file. If another program changes an open file, farsub reloads it (undo
+gets your version back), or asks first when you have unsaved edits there; saving over an
+outside change asks too. Files keep their encoding: a Latin-1, Windows-1252, Shift_JIS or
+UTF-16 file saves back exactly as it was (the status bar shows the encoding; **File:
+Convert to UTF-8** switches it), and saving never leaves a half-written file behind.
+**File → New Window** (Cmd+Shift+N, or `farsub --empty`) opens a
+clean window with no folder or session.
 
 Long lines wrap by default (`word_wrap = true`), with wrapped rows indented like the line.
 View › Word Wrap (Alt+Z) toggles it for the current file.

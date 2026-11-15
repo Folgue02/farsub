@@ -49,6 +49,17 @@ impl App {
                     self.close_buffer_at(i);
                 }
             }
+            ConfirmKind::Reload(id) => self.reload_buffer(id),
+            ConfirmKind::Overwrite(id) => {
+                if let Some(i) = self.buf_index(id) {
+                    // Accept what's on disk now as seen, then save over it.
+                    let b = &mut self.buffers[i];
+                    b.disk = b.path.as_deref().and_then(crate::fileops::DiskStamp::of);
+                    self.set_cur(i);
+                    self.save_current();
+                }
+            }
+            ConfirmKind::ReplaceInFiles => self.replace_in_files(),
             ConfirmKind::Quit => self.quit = true,
             ConfirmKind::UninstallServer(name) => {
                 let Some(data) = self.config.data_dir.clone() else {
@@ -85,21 +96,8 @@ impl App {
     }
 
     pub(super) fn prompt_key(&mut self, k: Key, mut p: Prompt) {
-        let is_find = matches!(p.kind, PromptKind::Find { .. });
         match k.code {
-            KeyCode::Esc => {
-                if let PromptKind::Find { origin } = p.kind
-                    && let Some(b) = self.buf_mut()
-                {
-                    b.goto(origin);
-                }
-                return;
-            }
-            KeyCode::Enter if is_find => {
-                // Sublime: Enter = next match, Shift+Enter = previous; the panel stays open.
-                self.search = Some(p.input.text().to_string());
-                self.find_next(!k.shift);
-            }
+            KeyCode::Esc => return,
             KeyCode::Enter => return self.prompt_accept(p),
             KeyCode::Tab if p.kind.is_path() => {
                 let base = match &p.kind {
@@ -110,41 +108,9 @@ impl App {
                 let done = complete_path(&base, p.input.text());
                 p.input.set(&done);
             }
-            KeyCode::F(3) | KeyCode::Down if is_find => {
-                self.search = Some(p.input.text().to_string());
-                self.find_next(!k.shift);
-            }
-            KeyCode::Up if is_find => {
-                self.search = Some(p.input.text().to_string());
-                self.find_next(false);
-            }
             _ => {}
         }
         self.modal = Some(Modal::Prompt(p));
-    }
-
-    /// Incremental find while typing in the find panel.
-    pub(super) fn prompt_changed(&mut self) {
-        let Some(Modal::Prompt(p)) = &self.modal else {
-            return;
-        };
-        let PromptKind::Find { origin } = p.kind else {
-            return;
-        };
-        let q = p.input.text().to_string();
-        self.search = Some(q.clone());
-        let pg = self.page;
-        if let Some(b) = self.buf_mut() {
-            if let Some((s, e)) = b.find(&q, origin, true, false) {
-                b.anchor = Some(s);
-                b.cursor = e;
-                if b.cursor.line < b.scroll_y || b.cursor.line >= b.scroll_y + pg {
-                    center(b, pg);
-                }
-            } else {
-                b.goto(origin);
-            }
-        }
     }
 
     pub(super) fn prompt_accept(&mut self, p: Prompt) {
@@ -233,24 +199,6 @@ impl App {
                 } else {
                     self.msg(format!("No such file or folder: {input}"));
                 }
-            }
-            PromptKind::Find { .. } => {}
-            PromptKind::ReplaceFind => {
-                if !input.is_empty() {
-                    let f = p.input.text().to_string();
-                    self.prompt(
-                        &format!("Replace '{f}' with"),
-                        "",
-                        PromptKind::ReplaceWith(f),
-                    );
-                }
-            }
-            PromptKind::ReplaceWith(f) => {
-                let n = self
-                    .buf_mut()
-                    .map(|b| b.replace_all(&f, p.input.text()))
-                    .unwrap_or(0);
-                self.msg(format!("Replaced {n} occurrence(s)"));
             }
             PromptKind::OpenProject => {
                 if input.is_empty() {

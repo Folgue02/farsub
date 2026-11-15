@@ -180,7 +180,13 @@ impl Gui {
             self.app.page = ((r.height() / lh).floor() as usize).max(1);
         }
         let focused = active_group && self.app.focus == Focus::Editor && self.app.modal.is_none();
-        let search = self.app.search.clone().filter(|s| !s.is_empty() && active_group && matches!(&self.app.modal, Some(Modal::Prompt(p)) if matches!(p.kind, PromptKind::Find { .. })));
+        // The find panel's matches are outlined while it's open on this file.
+        let find_m = if active_group {
+            self.app.highlight_matcher()
+        } else {
+            None
+        };
+        let find_col = self.app.syn.find_highlight().unwrap_or(c.accent);
         let path = self.app.buffers[cur].path.clone();
         let empty = Vec::new();
         let diags = path
@@ -308,6 +314,7 @@ impl Gui {
                 drag = Some(to_pos(b, pt));
             }
         }
+        let mut hscrolled = false;
         if resp.contains_pointer() {
             let d = ui.ctx().input(|i| i.smooth_scroll_delta);
             if d.y != 0.0 {
@@ -332,11 +339,24 @@ impl Gui {
                     top = prev;
                     px += lh;
                 }
+                // The last row at the top is as far as it goes: no partial row past it
+                // (that snapped back once it reached a whole row, a rubber band).
+                if px > 0.0 && advance(b, wrap, top, 1) == top {
+                    px = 0.0;
+                }
                 (b.scroll_y, b.scroll_row) = top;
                 b.scroll_px = px;
             }
             if d.x != 0.0 && wrap.is_none() {
-                b.scroll_x = (b.scroll_x as f32 - d.x / cw).max(0.0) as usize;
+                // Whole columns; the remainder carries over so slow swipes still move.
+                let cols = self.hscroll_rem - d.x / cw;
+                let whole = cols.trunc();
+                self.hscroll_rem = cols - whole;
+                b.scroll_x = (b.scroll_x as isize + whole as isize).max(0) as usize;
+                if b.scroll_x == 0 && self.hscroll_rem < 0.0 {
+                    self.hscroll_rem = 0.0;
+                }
+                hscrolled = true;
             }
         }
 
@@ -513,8 +533,8 @@ impl Gui {
                 }
             }
             // Search matches.
-            if let Some(q) = &search {
-                for (s, e) in Buffer::matches_in_line(line, q) {
+            if let Some(m) = &find_m {
+                for (s, e) in m.find_in(line) {
                     let sc = display_col(line, line[..s].chars().count()).max(rs);
                     let ec = display_col(line, line[..e].chars().count()).min(re);
                     if ec <= sc {
@@ -526,9 +546,25 @@ impl Gui {
                             Pos2::new(xr(ec), y + lh - 1.0),
                         ),
                         2.0,
-                        Stroke::new(1.0, c.accent),
+                        Stroke::new(1.0, find_col),
                         StrokeKind::Inside,
                     );
+                }
+            }
+            // Find Results: the matches, filled.
+            if let Some(rl) = b.results.as_ref().and_then(|r| r.lines.get(ln)) {
+                for &(s, e) in &rl.spans {
+                    let sc = display_col(line, s).max(rs);
+                    let ec = display_col(line, e).min(re);
+                    if ec <= sc {
+                        continue;
+                    }
+                    let r = Rect::from_min_max(
+                        Pos2::new(xr(sc), y + 1.0),
+                        Pos2::new(xr(ec), y + lh - 1.0),
+                    );
+                    text_clip.rect_filled(r, 2.0, find_col.gamma_multiply(0.25));
+                    text_clip.rect_stroke(r, 2.0, Stroke::new(1.0, find_col), StrokeKind::Inside);
                 }
             }
             if guides {
@@ -553,7 +589,15 @@ impl Gui {
                 }
             }
             // Text.
-            let spans = b.hl.line(ln);
+            let result_spans = b
+                .results
+                .as_ref()
+                .and_then(|r| r.lines.get(ln))
+                .map(|rl| result_line_spans(line, rl.kind, &self.app.syn, c));
+            let spans = match &result_spans {
+                Some(sp) => Some(sp),
+                None => b.hl.line(ln),
+            };
             if wrap.is_some() {
                 let n = row.seg.end - row.seg.start;
                 if n > 0 {
@@ -745,6 +789,14 @@ impl Gui {
                 }
             }
         };
+        if hscrolled {
+            // The wheel stops where the widest line's end is in view.
+            let max_x = (widest + 4).saturating_sub(text_cols);
+            if b.scroll_x >= max_x {
+                b.scroll_x = max_x;
+                self.hscroll_rem = self.hscroll_rem.min(0.0);
+            }
+        }
         if wrap.is_none() && (widest + 2 > text_cols || b.scroll_x > 0) {
             let track = Rect::from_min_max(
                 Pos2::new(text_left, r.bottom() - SCROLLBAR_W),
@@ -823,6 +875,10 @@ impl Gui {
         self.keyboard_spot = cursor_px.map(|p| p + Vec2::new(0.0, lh));
         if let Some((pos, n, ext)) = click {
             self.app.editor_click(pos, n, ext);
+            // Double-click on a Find Results line opens its match.
+            if n == 2 && self.app.buf().is_some_and(|b| b.results.is_some()) {
+                self.app.open_result_line(pos.line);
+            }
         } else if let Some(pos) = drag {
             self.app.editor_drag(pos);
         }
@@ -874,5 +930,39 @@ impl Gui {
                 c.fg,
             );
         }
+    }
+}
+
+/// Colors for a Find Results line: file names like headings, line numbers dimmed.
+fn result_line_spans(
+    line: &str,
+    kind: crate::search::ResultKind,
+    syn: &crate::highlight::Syntax,
+    c: &Palette,
+) -> Vec<crate::highlight::Span> {
+    use crate::highlight::Style;
+    use crate::search::ResultKind;
+    let style = |cap: &str, fallback: Color32| {
+        syn.capture_style(cap).unwrap_or(Style {
+            fg: fallback,
+            bold: false,
+            italic: false,
+            underline: false,
+        })
+    };
+    match kind {
+        ResultKind::Header => vec![(0, line.len(), style("markup.heading", c.accent))],
+        ResultKind::Match | ResultKind::Context => {
+            let num = line
+                .find([':', ' '])
+                .map(|_| 7.min(line.len()))
+                .unwrap_or(0);
+            let mut v = vec![(0, num, style("comment", c.dim))];
+            if kind == ResultKind::Context {
+                v.push((num, line.len(), style("comment", c.dim)));
+            }
+            v
+        }
+        ResultKind::Text => vec![(0, line.len(), style("comment", c.dim))],
     }
 }

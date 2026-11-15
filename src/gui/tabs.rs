@@ -38,7 +38,7 @@ impl Gui {
             .map(|b| {
                 let w = ui
                     .ctx()
-                    .fonts_mut(|f| f.layout_no_wrap(b.name(), font.clone(), c.fg).size().x);
+                    .fonts_mut(|f| f.layout_no_wrap(tab_label(b), font.clone(), c.fg).size().x);
                 (w + 66.0).clamp(100.0, 280.0)
             })
             .collect();
@@ -79,13 +79,23 @@ impl Gui {
                 if active { 1.0 } else { 0.75 },
                 if active { c.bg } else { c.chrome },
             );
-            clip.text(
+            let label = clip.text(
                 Pos2::new(tr.left() + 32.0, tr.center().y),
                 Align2::LEFT_CENTER,
-                name,
+                &name,
                 font.clone(),
                 if active { c.fg } else { c.dim },
             );
+            if b.deleted {
+                // The file is gone from disk (Sublime-style hint).
+                clip.text(
+                    Pos2::new(label.right() + 4.0, tr.center().y),
+                    Align2::LEFT_CENTER,
+                    "(deleted)",
+                    font.clone(),
+                    c.err,
+                );
+            }
             let close = Rect::from_center_size(
                 Pos2::new(tr.right() - 16.0, tr.center().y),
                 Vec2::splat(16.0),
@@ -125,5 +135,14 @@ impl Gui {
                 self.app.run(crate::commands::Command::CloseBuffer);
             }
         }
+    }
+}
+
+/// What a tab shows (for sizing): the name, plus "(deleted)" if the file is gone.
+fn tab_label(b: &Buffer) -> String {
+    if b.deleted {
+        format!("{} (deleted)", b.name())
+    } else {
+        b.name()
     }
 }

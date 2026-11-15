@@ -12,13 +12,14 @@ use eframe::egui::{
 };
 use unicode_width::UnicodeWidthChar;
 
-use crate::app::{App, AppEvent, EventTx, Focus, Modal, PromptKind};
+use crate::app::{App, AppEvent, EventTx, Focus, Modal};
 use crate::config::{CaretStyle, Config};
 use crate::editor::{Buffer, Pos};
 use crate::highlight::Span;
 use crate::keys::Key;
 
 mod editor_view;
+mod find_view;
 mod icons;
 mod menus;
 mod modals;
@@ -115,6 +116,8 @@ pub struct Gui {
     /// start), for the editor's vertical / horizontal scrollbars.
     vscroll_grab: Option<f32>,
     hscroll_grab: Option<f32>,
+    /// Horizontal wheel scrolling not yet worth a whole column (trackpads send fractions).
+    hscroll_rem: f32,
     /// Decoded icon-package images (None: failed to load, don't retry every frame).
     icon_tex: IconTextures,
     /// Buffer id → (version, widest line in columns, last full scan), for the horizontal
@@ -128,7 +131,6 @@ pub struct Gui {
     text_geom: (f32, f32, f32, f32),
     last_tree_sel: Option<usize>,
     last_title: String,
-    find_count: Option<(String, i32, usize)>,
     pub menu_titles: Vec<Rect>,
     /// Clickable status-bar items of the last frame.
     pub status_hits: Vec<(crate::commands::Command, Rect)>,
@@ -195,6 +197,7 @@ impl Gui {
             caret_mark: (None, Instant::now()),
             vscroll_grab: None,
             hscroll_grab: None,
+            hscroll_rem: 0.0,
             icon_tex: HashMap::new(),
             widest_cache: HashMap::new(),
             editor_rect: Rect::NOTHING,
@@ -202,7 +205,6 @@ impl Gui {
             text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
             last_title: String::new(),
-            find_count: None,
             menu_titles: vec![],
             status_hits: vec![],
             hover_rect: None,
@@ -366,7 +368,6 @@ impl Gui {
             self.last_title = title;
         }
 
-        self.update_find_count();
         // The whole window, regardless of any margin on the Ui we were handed.
         let full = ctx.content_rect();
         let c = colors(&self.app);
@@ -384,6 +385,13 @@ impl Gui {
         rest.max.y = status.top();
         let panel = matches!(&self.app.modal, Some(Modal::Prompt(_))).then(|| {
             let r = Rect::from_min_max(Pos2::new(rest.left(), rest.bottom() - PANEL_H), rest.max);
+            rest.max.y = r.top();
+            r
+        });
+        // The find panel spans the window above the status bar, like Sublime's.
+        let find_h = self.find_panel_height();
+        let find_panel = (find_h > 0.0).then(|| {
+            let r = Rect::from_min_max(Pos2::new(rest.left(), rest.bottom() - find_h), rest.max);
             rest.max.y = r.top();
             r
         });
@@ -496,6 +504,9 @@ impl Gui {
         if let Some(r) = panel {
             self.draw_prompt(&painter, r, &c);
         }
+        if let Some(r) = find_panel {
+            self.draw_find_panel(ui, &painter, r, &c);
+        }
         if let Some(r) = bottom {
             self.draw_bottom_panel(ui, &painter, r, &c);
         }
@@ -530,31 +541,11 @@ impl Gui {
         if self.app.status.is_some() {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
+        // Check open files against the disk about once a second while the window is in use.
+        if ctx.input(|i| i.focused) {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
         self.app.tick();
-    }
-
-    fn update_find_count(&mut self) {
-        let Some(Modal::Prompt(p)) = &self.app.modal else {
-            return;
-        };
-        if !matches!(p.kind, PromptKind::Find { .. }) {
-            return;
-        }
-        let Some(b) = self.app.buf() else { return };
-        let key = (p.input.text().to_string(), b.version);
-        if self
-            .find_count
-            .as_ref()
-            .is_some_and(|f| f.0 == key.0 && f.1 == key.1)
-        {
-            return;
-        }
-        let n = b
-            .lines
-            .iter()
-            .map(|l| Buffer::matches_in_line(l, &key.0).len())
-            .sum();
-        self.find_count = Some((key.0, key.1, n));
     }
 
     // ================================================================= metrics
@@ -904,11 +895,15 @@ impl Gui {
             GrammarFolder => rfd::FileDialog::new()
                 .set_title("Install a tree-sitter grammar (source folder)")
                 .pick_folder(),
+            FindFolder => rfd::FileDialog::new()
+                .set_title("Search in folder")
+                .pick_folder(),
         };
         let Some(path) = picked else { return };
         match req {
             PackageFile | PackageFolder => self.app.install_package_from(path),
             GrammarFile | GrammarFolder => self.app.install_grammar_from(path),
+            FindFolder => self.app.add_find_folder(path),
         }
     }
 }

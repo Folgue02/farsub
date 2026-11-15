@@ -213,6 +213,65 @@ command = "replace"
 context = "editor"
 platforms = ["windows", "linux"]
 [[keys]]
+keys = "Cmd+G"
+command = "find_next"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Cmd+Shift+G"
+command = "find_prev"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Cmd+Alt+E"
+command = "replace_next"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Cmd+Shift+H"
+command = "replace_next"
+context = "editor"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+Alt+Enter"
+command = "replace_all"
+context = "editor"
+# Find in Files and its results work from anywhere.
+[[keys]]
+keys = "Cmd+Shift+F"
+command = "find_in_files"
+[[keys]]
+keys = "F4"
+command = "next_result"
+[[keys]]
+keys = "Shift+F4"
+command = "prev_result"
+# The find panel's toggles (Sublime: Cmd+Alt+… on macOS, Alt+… elsewhere).
+[[keys]]
+keys = "Cmd+Alt+R"
+command = "toggle_find_regex"
+platforms = ["macos"]
+[[keys]]
+keys = "Cmd+Alt+C"
+command = "toggle_find_case"
+platforms = ["macos"]
+[[keys]]
+keys = "Cmd+Alt+W"
+command = "toggle_find_word"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+R"
+command = "toggle_find_regex"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Alt+C"
+command = "toggle_find_case"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Alt+W"
+command = "toggle_find_word"
+platforms = ["windows", "linux"]
+[[keys]]
 keys = "Ctrl+Space"
 command = "completion"
 context = "editor"
@@ -336,10 +395,6 @@ command = "sidebar_new_file"
 context = "sidebar"
 [[keys]]
 keys = "Shift+A"
-command = "sidebar_new_folder"
-context = "sidebar"
-[[keys]]
-keys = "Cmd+Shift+N"
 command = "sidebar_new_folder"
 context = "sidebar"
 [[keys]]
@@ -494,11 +549,19 @@ description = "Choose, open, cancel"
 [[docs]]
 section = "Find panel"
 keys = "Enter / Shift+Enter"
-description = "Next / previous match"
+description = "Next / previous match (Replace field: replace and find next)"
+[[docs]]
+section = "Find panel"
+keys = "Tab / Shift+Tab"
+description = "Next / previous field (Find, Where, Replace)"
 [[docs]]
 section = "Find panel"
 keys = "Esc"
-description = "Close and return to where you started"
+description = "Close the panel (the match stays selected); also from the file"
+[[docs]]
+section = "Find Results"
+keys = "Enter / double-click"
+description = "Open the match on that line"
 [[docs]]
 section = "Prompts"
 keys = "Tab"
@@ -848,3 +911,8 @@ keys = "Ctrl+Delete"
 command = "delete_word_right"
 context = "editor"
 platforms = ["windows", "linux"]
+
+# A new, empty window (Sublime: Cmd+Shift+N).
+[[keys]]
+keys = "Cmd+Shift+N"
+command = "new_window"

@@ -38,6 +38,8 @@ impl App {
             c if needs_buffer(c) => has_buf,
             Completion | Hover | GotoDefinition | FindReferences | Rename | Format => lsp,
             SaveAll => self.any_modified(),
+            RevertFile => self.buf().is_some_and(|b| b.path.is_some() && !b.deleted),
+            ConvertToUtf8 => self.buf().is_some_and(|b| !b.encoding.is_utf8()),
             ReopenClosed => !self.closed.is_empty(),
             JumpBack => !self.jumps.is_empty(),
             SidebarPaste => self.file_clip.is_some(),

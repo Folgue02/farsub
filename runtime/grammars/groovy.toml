@@ -1,0 +1,5 @@
+# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+# A maintained Groovy grammar that also covers Gradle build scripts and Jenkinsfiles.
+name = "groovy"
+crate = "dekobon-tree-sitter-groovy"
+version = "0.6.0"

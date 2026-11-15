@@ -21,7 +21,12 @@ impl Gui {
             FontId::proportional(11.0),
             if focused { c.accent } else { c.dim },
         );
-        let rootname = self.app.project.name();
+        // No folder open (an empty window): no project name in the header.
+        let rootname = if self.app.project.folders.is_empty() && self.app.project.file.is_none() {
+            String::new()
+        } else {
+            self.app.project.name()
+        };
         p.with_clip_rect(
             head.shrink2(Vec2::new(70.0, 0.0))
                 .translate(Vec2::new(30.0, 0.0)),
@@ -183,13 +188,21 @@ impl Gui {
             i += 1;
         }
         if t.nodes.is_empty() {
-            p.text(
-                Pos2::new(list.left() + 14.0, list.top() + 14.0),
-                Align2::LEFT_CENTER,
-                "(empty folder — press a to add a file)",
-                ui_font,
-                c.dim,
-            );
+            let clip = p.with_clip_rect(list);
+            let lines: &[&str] = if self.app.project.folders.is_empty() {
+                &["No folder open", "File › Open Folder… (Cmd+O)"]
+            } else {
+                &["(empty folder — press a to add a file)"]
+            };
+            for (i, l) in lines.iter().enumerate() {
+                clip.text(
+                    Pos2::new(list.left() + 14.0, list.top() + 14.0 + i as f32 * 20.0),
+                    Align2::LEFT_CENTER,
+                    *l,
+                    ui_font.clone(),
+                    c.dim,
+                );
+            }
         }
         if (resp.clicked() || resp.double_clicked())
             && let Some(pos) = resp.interact_pointer_pos()

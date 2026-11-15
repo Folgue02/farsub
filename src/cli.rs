@@ -34,6 +34,10 @@ pub struct Args {
     #[arg(short, long)]
     pub new: bool,
 
+    /// Open an empty window: no folder, no project, no session (File › New Window).
+    #[arg(long, conflicts_with_all = ["project", "add"])]
+    pub empty: bool,
+
     /// Add the given folders to the last session's project instead of opening them alone.
     #[arg(short, long)]
     pub add: bool,
@@ -200,6 +204,16 @@ pub fn plan(
         && !p.is_file()
     {
         return Err(format!("no such project: {}", p.display()));
+    }
+    if args.empty {
+        // A clean window; files given too still open in it.
+        return Ok(Plan {
+            target: Target::Folders(vec![]),
+            restore: false,
+            add: vec![],
+            files,
+            stdin,
+        });
     }
     // The last session, if it still exists.
     let last = (!args.new && restore_session)
@@ -470,6 +484,21 @@ mod tests {
 
     fn args(v: &[&str]) -> Args {
         Args::try_parse_from(std::iter::once("farsub").chain(v.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn empty_window() {
+        let d = std::env::temp_dir();
+        let last = Last::Folders(vec![d.clone()]);
+        let p = plan(&args(&["--empty"]), &d, Some(&last), true).unwrap();
+        assert_eq!(p.target, Target::Folders(vec![]));
+        assert!(!p.restore, "no session");
+        assert!(p.files.is_empty());
+        // Files still open in it.
+        let p = plan(&args(&["--empty", "notes.txt"]), &d, Some(&last), true).unwrap();
+        assert_eq!(p.target, Target::Folders(vec![]));
+        assert_eq!(p.files.len(), 1);
+        assert!(Args::try_parse_from(["farsub", "--empty", "-p", "x.farsub-project"]).is_err());
     }
 
     #[test]

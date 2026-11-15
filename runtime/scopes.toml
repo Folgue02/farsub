@@ -1,0 +1,110 @@
+# Fallback highlighting: files with no tree-sitter grammar (none exists yet, it's still
+# installing, or it can't be compiled) are highlighted with Sublime-style regex grammars.
+# Those name tokens with TextMate scopes ("keyword.control.rust"); this table turns a scope
+# into the theme capture it's colored with ("keyword"), so themes need nothing extra.
+#
+# The longest matching scope prefix wins, and a token's innermost scope that maps to
+# something wins. Map a scope to "" to make it fall through to the scope around it (so
+# the quotes of a string look like the string). Override or extend this from a package or
+# the config folder with your own scopes.toml.
+
+[scopes]
+"comment" = "comment"
+"comment.block.documentation" = "comment.documentation"
+"punctuation.definition.comment" = ""
+
+"string" = "string"
+"string.regexp" = "string.regexp"
+"string.other.link" = "markup.link"
+"string.unquoted.heredoc" = "string"
+"punctuation.definition.string" = ""
+"constant.character.escape" = "string.escape"
+"constant.other.placeholder" = "string.special"
+"punctuation.section.interpolation" = "punctuation.special"
+"punctuation.definition.interpolation" = "punctuation.special"
+
+"constant" = "constant"
+"constant.numeric" = "number"
+"constant.language" = "constant.builtin"
+"constant.language.boolean" = "boolean"
+"constant.language.null" = "constant.builtin"
+"constant.character" = "character"
+"support.constant" = "constant.builtin"
+"variable.other.constant" = "constant"
+
+"keyword" = "keyword"
+"keyword.control.import" = "keyword.import"
+"keyword.control.return" = "keyword.return"
+"keyword.declaration.function" = "keyword.function"
+"keyword.operator" = "operator"
+"keyword.operator.word" = "keyword.operator"
+"keyword.other.unit" = "number"
+"storage" = "keyword.storage"
+"storage.type" = "keyword"
+"storage.type.function" = "keyword.function"
+"storage.modifier" = "keyword"
+
+"entity.name.function" = "function"
+"entity.name.function.constructor" = "constructor"
+"entity.name.function.macro" = "function.macro"
+"meta.function-call" = ""
+"variable.function" = "function.call"
+"support.function" = "function.builtin"
+"support.function.builtin" = "function.builtin"
+
+"entity.name.type" = "type"
+"entity.name.class" = "type"
+"entity.name.struct" = "type"
+"entity.name.enum" = "type"
+"entity.name.trait" = "type"
+"entity.name.interface" = "type"
+"entity.other.inherited-class" = "type"
+"support.type" = "type.builtin"
+"support.class" = "type"
+"storage.type.primitive" = "type.builtin"
+"storage.type.numeric" = "type.builtin"
+
+"entity.name.namespace" = "module"
+"entity.name.module" = "module"
+"entity.name.label" = "label"
+"entity.name.constant" = "constant"
+"entity.name.tag" = "tag"
+"entity.other.attribute-name" = "tag.attribute"
+"entity.name.section" = "markup.heading"
+"meta.annotation" = "attribute"
+"meta.attribute" = "attribute"
+"storage.type.annotation" = "attribute"
+"punctuation.definition.annotation" = "attribute"
+
+"variable" = "variable"
+"variable.parameter" = "variable.parameter"
+"variable.language" = "variable.builtin"
+"variable.other.member" = "property"
+"variable.other.property" = "property"
+"variable.other.object.property" = "property"
+"support.variable" = "variable.builtin"
+"meta.property-name" = "property"
+"support.type.property-name" = "property"
+
+"punctuation" = "punctuation"
+"punctuation.section" = "punctuation.bracket"
+"punctuation.separator" = "punctuation.delimiter"
+"punctuation.terminator" = "punctuation.delimiter"
+"punctuation.accessor" = "punctuation.delimiter"
+"punctuation.definition.variable" = ""
+"punctuation.definition.keyword" = ""
+"punctuation.definition.tag" = "punctuation.bracket"
+"punctuation.definition.heading" = "markup.heading"
+
+"markup.heading" = "markup.heading"
+"markup.bold" = "markup.bold"
+"markup.italic" = "markup.italic"
+"markup.underline.link" = "markup.link.url"
+"markup.quote" = "markup.quote"
+"markup.raw" = "markup.raw"
+"markup.list" = "markup.list"
+"markup.inserted" = "diff.plus"
+"markup.deleted" = "diff.minus"
+"markup.changed" = "diff.delta"
+
+"invalid" = "error"

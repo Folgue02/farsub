@@ -3,3 +3,4 @@ title = "CUDA"
 extensions = ["cu", "cuh"]
 comment = "//"
 servers = ["clangd"]
+fallback_syntax = "C++"

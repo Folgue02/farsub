@@ -6,6 +6,8 @@ mod cli;
 mod commands;
 mod config;
 mod editor;
+mod encoding;
+mod fallback;
 mod fileops;
 mod grammar_install;
 mod grammars;
@@ -23,6 +25,7 @@ mod native_menu;
 mod packages;
 mod palette;
 mod project;
+mod search;
 mod terminal;
 #[cfg(test)]
 mod tests;

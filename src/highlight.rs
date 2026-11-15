@@ -1,4 +1,5 @@
-//! Syntax highlighting with tree-sitter.
+//! Syntax highlighting with tree-sitter (and a regex fallback, `fallback.rs`, for files
+//! with no usable tree-sitter grammar).
 //!
 //! Each buffer keeps a parser and its syntax tree. Edits are fed to the tree as they happen
 //! (`HlCache::edit`), so re-parsing is incremental; a long first parse is spread over
@@ -168,6 +169,10 @@ pub struct Syntax {
     pub theme_gen: u64,
     /// Problems loading themes / queries (shown in the console).
     pub errors: Vec<String>,
+    /// Scope → capture table for the regex fallback (`scopes.toml`).
+    pub scopes: crate::fallback::ScopeMap,
+    /// Languages by name, to find their fallback grammar.
+    languages: HashMap<String, crate::config::LanguageConfig>,
 }
 
 const DEFAULT_THEME: &str = "Monokai Extended";
@@ -178,8 +183,13 @@ impl Syntax {
         let mut queries: HashMap<String, String> = HashMap::new();
         let mut themes = vec![];
         let mut errors = vec![];
+        let mut scopes = crate::fallback::ScopeMap::default();
         for (path, text) in crate::config::RUNTIME_FILES {
-            if let Some(rest) = path.strip_prefix("queries/")
+            if *path == "scopes.toml" {
+                if let Err(e) = scopes.merge(text) {
+                    errors.push(format!("built-in {path}: {e}"));
+                }
+            } else if let Some(rest) = path.strip_prefix("queries/")
                 && let Some(g) = rest.strip_suffix("/highlights.scm")
             {
                 queries.insert(g.to_string(), text.to_string());
@@ -209,6 +219,8 @@ impl Syntax {
             theme: Theme::default(),
             theme_gen: 0,
             errors,
+            scopes,
+            languages: HashMap::new(),
         };
         s.set_theme(theme);
         s
@@ -243,9 +255,16 @@ impl Syntax {
         }
     }
 
-    /// Add themes (`themes/*.toml`) and highlight-query overrides
-    /// (`queries/<grammar>/highlights.scm`) from a package or the config folder.
+    /// Add themes (`themes/*.toml`), highlight-query overrides
+    /// (`queries/<grammar>/highlights.scm`) and fallback scope rules (`scopes.toml`) from a
+    /// package or the config folder.
     pub fn add_dir(&mut self, dir: &Path) {
+        let sc = dir.join("scopes.toml");
+        if let Ok(text) = std::fs::read_to_string(&sc)
+            && let Err(e) = self.scopes.merge(&text)
+        {
+            self.errors.push(format!("{}: {e}", sc.display()));
+        }
         if let Ok(rd) = std::fs::read_dir(dir.join("themes")) {
             let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
             files.sort();
@@ -314,6 +333,16 @@ impl Syntax {
         v
     }
 
+    /// The languages (to find a file's fallback grammar).
+    pub fn set_languages(&mut self, langs: &[crate::config::LanguageConfig]) {
+        self.languages = langs.iter().map(|l| (l.name.clone(), l.clone())).collect();
+    }
+
+    /// The regex fallback grammar for a language, if one fits.
+    pub fn fallback_for(&self, language: &str) -> Option<usize> {
+        self.languages.get(language).and_then(crate::fallback::find)
+    }
+
     pub fn has_grammar(&self, name: &str) -> bool {
         self.grammars.contains_key(name)
     }
@@ -355,6 +384,14 @@ impl Syntax {
     pub fn active_guide(&self) -> Option<Color32> {
         self.theme.editor_color("active_guide")
     }
+    /// Outline of find matches (theme `find_highlight`).
+    pub fn find_highlight(&self) -> Option<Color32> {
+        self.theme.editor_color("find_highlight")
+    }
+    /// A theme style for a highlight capture name (with dotted fallbacks).
+    pub fn capture_style(&self, capture: &str) -> Option<Style> {
+        self.theme.style_for(capture)
+    }
     pub fn gutter(&self) -> Color32 {
         self.theme
             .editor_color("gutter")
@@ -383,6 +420,12 @@ pub struct HlCache {
     spans: Vec<Vec<Span>>,
     /// (tree generation, theme generation, from, to) the spans were made for.
     made_for: Option<(u64, u64, usize, usize)>,
+    /// Regex highlighting, used while there's no usable tree-sitter grammar.
+    fallback: Option<crate::fallback::Fallback>,
+    /// The fallback grammar was looked up (it may not exist).
+    fallback_tried: bool,
+    /// The last `ensure` used the fallback.
+    using_fallback: bool,
 }
 
 impl HlCache {
@@ -399,6 +442,9 @@ impl HlCache {
             first: 0,
             spans: vec![],
             made_for: None,
+            fallback: None,
+            fallback_tried: false,
+            using_fallback: false,
         }
     }
 
@@ -416,7 +462,8 @@ impl HlCache {
     }
 
     /// The text changed without exact edit info: parse again from scratch.
-    pub fn invalidate(&mut self, _line: usize) {
+    pub fn invalidate(&mut self, line: usize) {
+        self.changed_line(line);
         self.tree = None;
         self.edits.clear();
         if self.parsing {
@@ -427,6 +474,22 @@ impl HlCache {
         }
         self.dirty = true;
         self.made_for = None;
+    }
+
+    /// Text changed from line `line` on (for the regex fallback, which needs no exact edits).
+    pub fn changed_line(&mut self, line: usize) {
+        if let Some(f) = &mut self.fallback {
+            f.invalidate(line);
+        }
+    }
+
+    /// The fallback grammar's name, when the buffer is highlighted with it.
+    #[cfg(test)]
+    pub fn fallback_name(&self) -> Option<&'static str> {
+        self.fallback
+            .as_ref()
+            .filter(|_| self.using_fallback)
+            .map(|f| f.name())
     }
 
     /// Report an edit, in bytes and (row, byte column) points, so the tree is re-parsed
@@ -440,6 +503,7 @@ impl HlCache {
         old_end: (usize, usize),
         new_end: (usize, usize),
     ) {
+        self.changed_line(start.0);
         if self.grammar.is_none() {
             return;
         }
@@ -458,6 +522,9 @@ impl HlCache {
 
     /// Highlight spans for line `ln`, if it's in the highlighted range.
     pub fn line(&self, ln: usize) -> Option<&Vec<Span>> {
+        if self.using_fallback {
+            return self.fallback.as_ref().and_then(|f| f.line(ln));
+        }
         ln.checked_sub(self.first).and_then(|i| self.spans.get(i))
     }
 
@@ -472,19 +539,20 @@ impl HlCache {
         deadline: std::time::Instant,
     ) -> bool {
         let to = to.min(text.len());
-        let Some(g) = self.grammar.as_deref().and_then(|n| syn.grammar(n)) else {
-            self.spans.clear();
-            return true;
+        let tree_sitter = self
+            .grammar
+            .as_deref()
+            .and_then(|n| syn.grammar(n))
+            .and_then(|g| g.query().ok().map(|q| (g, q)));
+        let Some((g, query)) = tree_sitter else {
+            return self.ensure_fallback(syn, text, to, deadline);
         };
-        let Ok(query) = g.query() else {
-            self.spans.clear();
-            return true;
-        };
+        self.using_fallback = false;
         if self.parser.is_none() {
             let mut p = Parser::new();
             if p.set_language(&g.language).is_err() {
                 self.grammar = None;
-                return true;
+                return self.ensure_fallback(syn, text, to, deadline);
             }
             self.parser = Some(p);
             self.tree = None;
@@ -545,6 +613,30 @@ impl HlCache {
         self.first = from;
         self.made_for = Some(key);
         done
+    }
+
+    /// No usable tree-sitter grammar: highlight with the regex fallback, if the language
+    /// has one.
+    fn ensure_fallback(
+        &mut self,
+        syn: &Syntax,
+        text: &[String],
+        to: usize,
+        deadline: std::time::Instant,
+    ) -> bool {
+        self.spans.clear();
+        if !self.fallback_tried {
+            self.fallback_tried = true;
+            self.fallback = syn
+                .fallback_for(&self.syntax)
+                .map(crate::fallback::Fallback::new);
+        }
+        let Some(f) = &mut self.fallback else {
+            self.using_fallback = false;
+            return true;
+        };
+        self.using_fallback = true;
+        f.ensure(&syn.scopes, &syn.theme, syn.theme_gen, text, to, deadline)
     }
 }
 
@@ -738,6 +830,94 @@ mod tests {
 #[cfg(test)]
 mod coverage {
     #[test]
+    fn every_language_without_a_builtin_grammar_has_a_fallback() {
+        // While a grammar installs (or can't be compiled, or doesn't exist), the file still
+        // gets regex highlighting.
+        let mut s = super::Syntax::load("Monokai Extended");
+        let c = crate::config::Config::builtin();
+        s.set_languages(&c.languages);
+        let missing: Vec<&str> = c
+            .languages
+            .iter()
+            .filter(|l| !s.has_grammar(l.grammar_name()))
+            .filter(|l| s.fallback_for(&l.name).is_none())
+            .map(|l| l.name.as_str())
+            .collect();
+        assert!(missing.is_empty(), "no fallback grammar: {missing:?}");
+        // Pins name real grammars.
+        for l in &c.languages {
+            if let Some(n) = l.fallback_syntax.as_deref().filter(|n| !n.is_empty()) {
+                assert!(
+                    s.fallback_for(&l.name).is_some(),
+                    "{}: unknown `{n}`",
+                    l.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_highlights_and_follows_edits() {
+        use super::HlCache;
+        let mut s = super::Syntax::load("Monokai Extended");
+        s.set_languages(&crate::config::Config::builtin().languages);
+        // Kotlin with no tree-sitter grammar installed.
+        let mut text: Vec<String> = ["// note", "fun main() {", "    val s = \"hi\"", "}"]
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        let mut hl = HlCache::new("kotlin".into());
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(hl.fallback_name(), Some("Kotlin"));
+        let style_at = |hl: &HlCache, ln: usize, col: usize| {
+            hl.line(ln)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let comment = s.theme.style_for("comment").unwrap();
+        let string = s.theme.style_for("string").unwrap();
+        assert_eq!(style_at(&hl, 0, 3), Some(comment));
+        assert_eq!(style_at(&hl, 2, 13), Some(string), "{:?}", hl.line(2));
+        assert_eq!(
+            style_at(&hl, 2, 12),
+            Some(string),
+            "quotes look like the string"
+        );
+        let kw = style_at(&hl, 1, 0).expect("`fun` is styled");
+        assert_ne!(kw, string);
+        assert_ne!(kw, comment);
+        // An edit re-highlights from that line down: the comment becomes code.
+        text[0] = "val x = 1".into();
+        hl.changed_line(0);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_ne!(style_at(&hl, 0, 1), Some(comment));
+        // A language with no fallback either stays plain.
+        let mut plain = HlCache::new("Plain Text".into());
+        assert!(plain.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(plain.fallback_name(), None);
+        assert!(plain.line(0).is_none_or(|l| l.is_empty()));
+    }
+
+    #[test]
+    fn scope_map_uses_the_longest_prefix() {
+        let mut m = crate::fallback::ScopeMap::default();
+        m.merge("[scopes]\n\"keyword\" = \"keyword\"\n\"keyword.operator\" = \"operator\"\n\"punctuation.definition.string\" = \"\"\n").unwrap();
+        assert_eq!(m.capture("keyword.control.kotlin"), Some("keyword"));
+        assert_eq!(
+            m.capture("keyword.operator.arithmetic.kotlin"),
+            Some("operator")
+        );
+        assert_eq!(
+            m.capture("punctuation.definition.string.begin.kotlin"),
+            Some("")
+        );
+        assert_eq!(m.capture("meta.block.kotlin"), None);
+    }
+
+    #[test]
     fn every_language_grammar_exists() {
         let s = super::Syntax::load("Monokai Extended");
         let c = crate::config::Config::builtin();
@@ -776,9 +956,7 @@ mod coverage {
                 "crystal",
                 "dotenv",
                 "graphql",
-                "groovy",
                 "just",
-                "kotlin",
                 "latex",
                 "meson",
                 "nim",

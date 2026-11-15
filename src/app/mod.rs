@@ -28,6 +28,7 @@ use crate::project::{self, Last, Project, Recent};
 use crate::tree::Tree;
 use crate::workspace::{BufferState, Workspace};
 
+pub use find::{FindField, FindMode, FindOpt, FindPanel, opt_command, opt_name};
 use helpers::*;
 
 mod buffers;
@@ -35,6 +36,7 @@ mod completion;
 mod console;
 mod context_menu;
 mod editing;
+mod find;
 mod groups;
 mod helpers;
 mod hover;
@@ -61,6 +63,8 @@ pub enum AppEvent {
     Menu(String),
     /// Progress of a grammar install (grammar name).
     Grammar(String, InstallEvent),
+    /// Find in Files results (search generation).
+    Search(u64, crate::search::SearchEvent),
 }
 
 /// Event sender that also wakes the GUI so background results show up immediately.
@@ -104,6 +108,8 @@ pub enum Focus {
     Sidebar,
     Console,
     Terminal,
+    /// The find panel's fields.
+    Find,
 }
 
 /// What the bottom panel shows.
@@ -162,11 +168,6 @@ pub enum PromptKind {
     RenameMove(PathBuf, PathBuf),
     SaveAs,
     OpenPath,
-    Find {
-        origin: Pos,
-    },
-    ReplaceFind,
-    ReplaceWith(String),
     RenameSymbol,
     PackageUrl,
     OpenProject,
@@ -207,6 +208,12 @@ pub enum ConfirmKind {
     UninstallServer(String),
     RemovePackage(String),
     CloseBuffer(usize),
+    /// Reload a buffer changed on disk (dropping its unsaved edits).
+    Reload(usize),
+    /// Save a buffer over a file that changed on disk.
+    Overwrite(usize),
+    /// Replace what the last Find in Files found.
+    ReplaceInFiles,
     Quit,
 }
 
@@ -377,6 +384,8 @@ pub enum FileRequest {
     PackageFolder,
     GrammarFile,
     GrammarFolder,
+    /// A folder for the find panel's Where field.
+    FindFolder,
 }
 
 /// Most editor groups (layout columns).
@@ -413,6 +422,17 @@ pub struct App {
     pub files: HashMap<PathBuf, Vec<String>>,
     indexing: HashSet<PathBuf>,
     pub search: Option<String>,
+    /// The find panel (Find, Replace, Find in Files).
+    pub find: FindPanel,
+    pub find_opts: crate::search::FindOptions,
+    matcher_cache: Option<(
+        String,
+        crate::search::FindOptions,
+        Result<crate::search::Matcher, String>,
+    )>,
+    find_counted: Option<find::FindCount>,
+    file_run: Option<find::FileRun>,
+    search_gen: u64,
     clip: String,
     clip_line: bool,
     /// Text the GUI should put on the system clipboard.
@@ -453,6 +473,8 @@ pub struct App {
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
     pub settings_view: Option<SettingsView>,
+    /// When open files were last checked against the disk (deleted files).
+    last_disk_check: Instant,
     /// Set by commands that need a file/folder from the user; the GUI shows the picker.
     pub file_request: Option<FileRequest>,
     /// Columns the focused editor wraps at (set by the GUI each frame), None if not
@@ -501,6 +523,12 @@ impl App {
             files: HashMap::new(),
             indexing: HashSet::new(),
             search: None,
+            find: FindPanel::default(),
+            find_opts: Default::default(),
+            matcher_cache: None,
+            find_counted: None,
+            file_run: None,
+            search_gen: 0,
             clip: String::new(),
             clip_line: false,
             pending_copy: None,
@@ -534,6 +562,7 @@ impl App {
             group_split: vec![1.0],
             settings_view: None,
             wrap_cols: None,
+            last_disk_check: Instant::now(),
             file_request: None,
             keymap: Keymap::default(),
             menus: vec![],
@@ -570,6 +599,12 @@ impl App {
 
     /// Expire the status message; returns true if the UI needs a repaint.
     pub fn tick(&mut self) -> bool {
+        if self.last_disk_check.elapsed() >= Duration::from_secs(1) {
+            self.last_disk_check = Instant::now();
+            if self.check_deleted_files() {
+                return true;
+            }
+        }
         if let Some((_, t)) = &self.status
             && t.elapsed() > Duration::from_secs(6)
         {

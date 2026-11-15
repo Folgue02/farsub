@@ -59,6 +59,13 @@ impl Gui {
             } else if has_servers {
                 right.push(("no LSP".into(), Some(crate::commands::Command::LspInfo)));
             }
+            if !b.encoding.is_utf8() {
+                // Like Sublime: the encoding shows only when it isn't plain UTF-8.
+                right.push((
+                    b.encoding.label(),
+                    Some(crate::commands::Command::ConvertToUtf8),
+                ));
+            }
             right.push((
                 if b.indent_unit == "\t" {
                     format!("Tab Size: {}", b.tab_size)

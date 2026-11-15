@@ -147,6 +147,9 @@ impl App {
             console_height: Some(self.panel.height),
             layout: self.layout,
             focused_group: self.group,
+            find_options: self.find_opts,
+            find_where: self.find.place.text().to_string(),
+            find_replace: self.find.replace.text().to_string(),
         };
         // Remember collapsed project folders as "!path" entries.
         ws.expanded
@@ -195,6 +198,15 @@ impl App {
                     );
                     let i = self.push_buffer(b);
                     if let Some(p) = path.clone() {
+                        // Unsaved edits of a file: save back in the file's own encoding,
+                        // and notice changes to it from here on.
+                        if let Some((_, enc)) = std::fs::read(&p)
+                            .ok()
+                            .and_then(|b| crate::encoding::decode(&b))
+                        {
+                            self.buffers[i].encoding = enc;
+                        }
+                        self.buffers[i].disk = crate::fileops::DiskStamp::of(&p);
                         self.set_buffer_path(i, p);
                     }
                     self.buffers[i].modified = true;
@@ -248,6 +260,9 @@ impl App {
             .set_roots(self.project.folders.clone(), self.show_hidden);
         self.tree.rebuild();
         self.search = ws.search.clone();
+        self.find_opts = ws.find_options;
+        self.find.place.set(&ws.find_where);
+        self.find.replace.set(&ws.find_replace);
         self.closed = ws.closed.clone();
         if let Some(w) = ws.sidebar_width {
             self.sidebar_width = w.clamp(120.0, 900.0);

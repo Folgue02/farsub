@@ -250,10 +250,6 @@ pub(super) fn needs_buffer(cmd: Command) -> bool {
             | UpperCase
             | LowerCase
             | SortLines
-            | Find
-            | FindNext
-            | FindPrev
-            | Replace
             | GotoSymbol
             | GotoLine
             | NextBuffer

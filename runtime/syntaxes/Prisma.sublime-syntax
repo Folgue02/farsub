@@ -1,0 +1,47 @@
+%YAML 1.2
+---
+# Bundled with farsub. Prisma schema files.
+name: Prisma
+file_extensions: [prisma]
+scope: source.prisma
+
+contexts:
+  main:
+    - match: '///.*$'
+      scope: comment.block.documentation.prisma
+    - match: '//.*$'
+      scope: comment.line.double-slash.prisma
+    - match: '\b(model|enum|type|view)\s+([A-Za-z_][A-Za-z0-9_]*)'
+      captures:
+        1: storage.type.prisma
+        2: entity.name.type.prisma
+    - match: '\b(datasource|generator)\s+([A-Za-z_][A-Za-z0-9_]*)'
+      captures:
+        1: storage.type.prisma
+        2: entity.name.section.prisma
+    - match: '@@?[A-Za-z_][A-Za-z0-9_.]*'
+      scope: entity.other.attribute-name.prisma
+    - match: '\b(String|Boolean|Int|BigInt|Float|Decimal|DateTime|Json|Bytes|Unsupported)\b'
+      scope: support.type.prisma
+    - match: '\b(true|false|null)\b'
+      scope: constant.language.prisma
+    - match: '\b([A-Za-z_][A-Za-z0-9_]*)(?=\()'
+      scope: support.function.prisma
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.prisma
+        - match: '\\.'
+          scope: constant.character.escape.prisma
+        - match: '"'
+          pop: true
+    - match: '\b[0-9]+(\.[0-9]+)?\b'
+      scope: constant.numeric.prisma
+    - match: '[?\[\]]'
+      scope: keyword.operator.prisma
+    - match: '^\s*([A-Za-z_][A-Za-z0-9_]*)(?=\s+[A-Z])'
+      captures:
+        1: variable.other.member.prisma
+    - match: '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(=)'
+      captures:
+        1: variable.other.member.prisma
+        2: keyword.operator.assignment.prisma
