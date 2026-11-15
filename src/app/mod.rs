@@ -59,7 +59,8 @@ pub enum AppEvent {
     Files(PathBuf, Vec<String>),
     Install(String, InstallEvent),
     PackageInstalled(Result<String, String>),
-    /// A native menu item was chosen (command id).
+    /// A native menu item was chosen (command id; macOS only).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Menu(String),
     /// Progress of a grammar install (grammar name).
     Grammar(String, InstallEvent),

@@ -176,6 +176,7 @@ pub fn default_label(cmd: Command) -> String {
 /// global (the OS menu grabs the key before the window sees it), so only global/editor
 /// bindings qualify, and each key combination is used once — otherwise e.g. Sidebar › Cut
 /// would steal Cmd+X from Edit › Cut while you're typing.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn native_accelerators(
     menus: &[Menu],
     keymap: &crate::keymap::Keymap,

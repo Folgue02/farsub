@@ -27,6 +27,22 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Use rustup's toolchain when it's installed but not on PATH (Homebrew's keg-only rustup
+# next to Homebrew's rust), plus Homebrew's llvm / lld for cross-compiling to Windows.
+# Only for this script: the shell's own setup is left alone.
+if command -v brew >/dev/null; then
+    for f in rustup llvm lld; do
+        d="$(brew --prefix "$f" 2>/dev/null)/bin"
+        [ -d "$d" ] && PATH="$d:$PATH"
+    done
+fi
+PATH="$HOME/.cargo/bin:$PATH"
+if command -v rustup >/dev/null; then
+    # rustup's proxies (cargo, rustc) must win over another Rust earlier on PATH.
+    PATH="$(dirname "$(command -v rustup)"):$PATH"
+fi
+export PATH
+
 allow_dirty=0
 want=()
 for a in "$@"; do

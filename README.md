@@ -527,9 +527,22 @@ version is 0.x, a minor bump may still change behaviour.
      both `aarch64-apple-darwin` and `x86_64-apple-darwin`, otherwise this Mac's
      architecture).
    - `farsub-<version>-windows-x86_64.zip`: `farsub.exe`. Build it on Windows with
-     `scripts\release.ps1` (needs rustup and Visual Studio Build Tools), or from a Mac
-     with rustup, `rustup target add x86_64-pc-windows-msvc` and
-     `cargo install --locked cargo-xwin`.
+     `scripts\release.ps1` (needs rustup and Visual Studio Build Tools), or cross-compile
+     it from a Mac (one-time setup below).
+
+   One-time setup to build everything from a Mac (rustup stays out of your PATH; the
+   script finds it, llvm and lld through Homebrew):
+
+   ```bash
+   brew install rustup llvm lld
+   $(brew --prefix rustup)/bin/rustup toolchain install stable --profile minimal \
+       --target aarch64-apple-darwin --target x86_64-apple-darwin --target x86_64-pc-windows-msvc
+   cargo install --locked cargo-xwin
+   ```
+
+   The first Windows build downloads Microsoft's Windows SDK and C runtime (accepting
+   their license). If Homebrew's own `rust` stops working after llvm is upgraded
+   (`Symbol not found … libLLVM`), `brew upgrade rust` fixes it.
 
 3. On GitHub, create a release from the tag and upload the zips and `SHA256SUMS.txt`.
 
