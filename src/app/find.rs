@@ -176,6 +176,7 @@ impl App {
             FindPrev => self.find_next(false),
             ReplaceNext => self.replace_next(),
             ReplaceAll => self.replace_all(),
+            FindAll => self.find_all(),
             NextResult => self.step_result(true),
             PrevResult => self.step_result(false),
             ToggleFindRegex => self.toggle_find_opt(FindOpt::Regex),
@@ -378,8 +379,37 @@ impl App {
                 }
                 true
             }
+            // Alt+Enter: a cursor on every match (Sublime's Find All).
+            KeyCode::Enter if k.alt && !k.ctrl && !k.sup && self.find.mode != FindMode::Files => {
+                self.find_all();
+                true
+            }
             _ => false,
         }
+    }
+
+    /// Select every match in the file (each one a cursor) and go back to the editor.
+    pub(super) fn find_all(&mut self) {
+        let q = self.find.find.text().to_string();
+        if q.is_empty() {
+            return self.msg("Nothing to find");
+        }
+        let m = match self.matcher_for(&q) {
+            Ok(m) => m,
+            Err(e) => return self.msg(e),
+        };
+        let scope = self.scope();
+        let Some(b) = self.buf_mut() else { return };
+        let all = b.matches_with(&m, scope, usize::MAX);
+        if all.is_empty() {
+            self.find.not_found = true;
+            return self.msg(format!("'{q}' not found"));
+        }
+        let n = all.len();
+        b.select_ranges(&all);
+        self.close_find();
+        self.focus = Focus::Editor;
+        self.msg(format!("{n} selected"));
     }
 
     /// Find Next / Previous (Enter / Shift+Enter in the panel, F3 / Shift+F3).

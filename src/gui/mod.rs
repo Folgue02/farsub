@@ -115,6 +115,8 @@ pub struct Gui {
     side_px: f32,
     term_scroll_acc: f32,
     last_cursor: Option<(usize, Pos, i32)>,
+    /// Alt+drag column selection: where it started (line, display column).
+    col_drag: Option<(usize, usize)>,
     /// Caret position/version and when it last changed: the blink phase restarts there so
     /// the caret is solid while typing or moving.
     caret_mark: (Option<(usize, Pos, i32)>, Instant),
@@ -202,6 +204,7 @@ impl Gui {
             side_px: 0.0,
             term_scroll_acc: 0.0,
             last_cursor: None,
+            col_drag: None,
             caret_mark: (None, Instant::now()),
             vscroll_grab: None,
             hscroll_grab: None,
@@ -234,7 +237,13 @@ impl Gui {
     }
 
     #[cfg(test)]
-    /// Screen point of a buffer position's character cell middle (tests drive the mouse).
+    /// Screen point of a caret position on an unscrolled, unwrapped buffer (tests drive
+    /// the mouse).
+    pub fn pos_px_for_test(&self, line: usize, col: usize) -> egui::Pos2 {
+        let (cw, left, top, lh) = self.text_geom;
+        egui::Pos2::new(left + col as f32 * cw, top + line as f32 * lh + lh / 2.0)
+    }
+
     #[cfg(test)]
     /// Icon images loaded so far: (path, decoded ok).
     pub fn icon_textures_for_test(&self) -> Vec<(PathBuf, bool)> {

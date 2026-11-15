@@ -42,6 +42,8 @@ pub struct EditorConfig {
     pub highlight_current_line: bool,
     /// Enter on a line holding only indentation empties it (Sublime's setting).
     pub trim_automatic_white_space: bool,
+    /// Format with the language server before saving (Cmd+S).
+    pub format_on_save: bool,
     /// Wrap long lines at the pane width (View: Toggle Word Wrap changes it per file).
     pub word_wrap: bool,
     /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
@@ -84,6 +86,7 @@ impl Default for EditorConfig {
             indent_guides: true,
             highlight_current_line: false,
             trim_automatic_white_space: true,
+            format_on_save: false,
             word_wrap: true,
             terminal_shell: None,
             auto_install: true,
@@ -913,6 +916,8 @@ indent_guides = true
 highlight_current_line = false
 # Pressing Enter on a line that holds only indentation leaves it empty (no trailing spaces).
 trim_automatic_white_space = true
+# Format the file with its language server when saving it.
+format_on_save = false
 # Wrap long lines at the pane width; View › Word Wrap (Alt+Z) toggles it per file.
 word_wrap = true
 # Shell for the terminal panel (default: $SHELL).

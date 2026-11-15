@@ -344,6 +344,17 @@ impl App {
             // Saving a deleted file recreates it, folder included.
             let _ = std::fs::create_dir_all(dir);
         }
+        // Format on save: ask the server first; the file is saved when its edits arrive.
+        // Saving again while waiting saves right away (a server that never answers).
+        let id = b.id;
+        if self.config.editor.format_on_save
+            && !self.format_saving.remove(&id)
+            && self.request_format(true)
+        {
+            self.format_saving.insert(id);
+            return self.msg("Formatting before saving…");
+        }
+        let Some(b) = self.buf_mut() else { return };
         match b.save() {
             Ok(()) => {
                 b.deleted = false;

@@ -24,7 +24,10 @@ pub enum Pending {
     DocSymbols { buf: usize },
     WorkspaceSymbols,
     Rename,
-    Format { buf: usize },
+    /// `save`: the file is saved once the edits are in (format on save).
+    Format { buf: usize, save: bool },
+    CodeActions { buf: usize },
+    ResolveAction { buf: usize },
     Other,
 }
 
@@ -353,7 +356,8 @@ fn initialize_params(root: &Path) -> Value {
                 "workspaceFolders": true,
                 "applyEdit": true,
                 "workspaceEdit": {"documentChanges": true},
-                "symbol": {}
+                "symbol": {},
+                "executeCommand": {}
             },
             "textDocument": {
                 "synchronization": {"didSave": true},
@@ -367,6 +371,16 @@ fn initialize_params(root: &Path) -> Value {
                 "documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
                 "rename": {},
                 "formatting": {},
+                "codeAction": {
+                    "codeActionLiteralSupport": {"codeActionKind": {"valueSet": [
+                        "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
+                        "refactor.rewrite", "source", "source.organizeImports", "source.fixAll"
+                    ]}},
+                    "isPreferredSupport": true,
+                    "disabledSupport": true,
+                    "dataSupport": true,
+                    "resolveSupport": {"properties": ["edit"]}
+                },
                 "publishDiagnostics": {}
             },
             "window": {"workDoneProgress": true}

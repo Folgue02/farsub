@@ -60,6 +60,9 @@ workspace.
 - With regex on, the replacement can use groups: `$1`, `${name}`, `\1`, plus `\n` and
   `\t`. `$$` and `\$` give a literal `$`. Without regex the replacement is inserted
   exactly as typed.
+- **Find All** (Alt+Enter in the panel, or Find › Find All): selects every match in the
+  file (or in the selection with "in selection" on), one cursor each, closes the panel
+  and says how many. See [Multiple cursors](multiple-cursors.md).
 - Read-only files (like Find Results) can be searched but not replaced in.
 
 ## Find in Files

@@ -134,6 +134,7 @@ pub fn default_label(cmd: Command) -> String {
         CloseBuffer => Some("Close"),
         Hover => Some("Show Hover Info"),
         Format => Some("Format Document"),
+        CodeActions => Some("Code Actions…"),
         Rename => Some("Rename Symbol…"),
         RemoveFolder => Some("Remove Folder from Project"),
         CloseTerminal => Some("Kill Terminal"),

@@ -1072,7 +1072,7 @@ fn ibeam_cursor_over_text() {
     {
         let b = h.state_mut().app.buf_mut().unwrap();
         b.goto(crate::editor::Pos::new(0, 0));
-        b.select_word_or_next(); // "hello"
+        b.add_next_occurrence(); // "hello"
     }
     steps(&mut h, 1);
     let (cw, text_left, line_y) = h.state().text_metrics_for_test();
@@ -3309,5 +3309,138 @@ fn tabs_sidebar_rows_and_menus_react_on_press() {
         h.state().app.menu.map(|m| m.menu),
         Some(0),
         "still open after release"
+    );
+}
+
+#[test]
+fn multiple_cursors_by_keyboard_and_mouse() {
+    let d = project("cursors", &[("a.txt", "foo x foo\nfoo y\nabcdef\nabcdef\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    let text = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().text();
+    let count = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().sels().len();
+    // Cmd+D three times: "foo" and its next two occurrences; typing replaces all three.
+    for _ in 0..3 {
+        press(&mut h, CMD, Key::D);
+    }
+    assert_eq!(count(&h), 3);
+    typ(&mut h, "Z");
+    assert_eq!(text(&h), "Z x Z\nZ y\nabcdef\nabcdef\n");
+    // Copy three pieces, paste them back one per cursor.
+    press(&mut h, CMD, Key::Z);
+    assert_eq!(count(&h), 3);
+    h.state_mut().app.run(crate::commands::Command::Copy);
+    typ(&mut h, "-");
+    h.state_mut().app.run(crate::commands::Command::Paste);
+    assert_eq!(text(&h), "-foo x -foo\n-foo y\nabcdef\nabcdef\n");
+    // Esc: back to one cursor.
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert_eq!(count(&h), 1);
+    // Cmd+Click adds a caret; typing goes to both.
+    let mods = |h: &mut Harness<'static, Gui>, m: Modifiers| {
+        h.event(Event::ModifiersChanged(m));
+    };
+    let a = h.state().pos_px_for_test(2, 1);
+    let b = h.state().pos_px_for_test(3, 4);
+    click(&mut h, a);
+    mods(&mut h, CMD);
+    h.event(Event::PointerMoved(b));
+    steps(&mut h, 1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: b,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: CMD,
+        });
+        steps(&mut h, 1);
+    }
+    mods(&mut h, Modifiers::NONE);
+    steps(&mut h, 1);
+    assert_eq!(count(&h), 2, "Cmd+Click added a caret");
+    typ(&mut h, "_");
+    assert_eq!(text(&h), "-foo x -foo\n-foo y\na_bcdef\nabcd_ef\n");
+    // Alt+drag: a column from line 2 to 3, columns 1..3.
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    let from = h.state().pos_px_for_test(2, 1);
+    let to = h.state().pos_px_for_test(3, 3);
+    mods(&mut h, Modifiers::ALT);
+    h.event(Event::PointerMoved(from));
+    steps(&mut h, 1);
+    h.event(Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::ALT,
+    });
+    steps(&mut h, 1);
+    for k in 1..=6 {
+        h.event(Event::PointerMoved(from + (to - from) * (k as f32 / 6.0)));
+        steps(&mut h, 1);
+    }
+    h.event(Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::ALT,
+    });
+    mods(&mut h, Modifiers::NONE);
+    steps(&mut h, 2);
+    assert_eq!(
+        h.state().app.buf().unwrap().selected_texts(),
+        vec!["_b".to_string(), "bc".to_string()]
+    );
+    // Find All from the find panel: a cursor on every "foo".
+    press(&mut h, CMD, Key::F);
+    typ(&mut h, "foo");
+    press(&mut h, Modifiers::ALT, Key::Enter);
+    assert_eq!(count(&h), 3);
+    assert_eq!(h.state().app.focus, Focus::Editor);
+}
+
+#[test]
+fn lsp_code_actions_and_format_on_save() {
+    if !clangd_available() {
+        eprintln!("clangd not found; skipping");
+        return;
+    }
+    let src = "int main() {\n    int x = 1\n    return x;\n}\n";
+    let d = project("codeaction", &[("main.c", src)]);
+    let path = d.join("main.c");
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&path, true);
+    assert!(wait(&mut h, 20, |g| g
+        .app
+        .diagnostics
+        .get(&path)
+        .is_some_and(|d| d.iter().any(|x| x.severity == 1))));
+    // Cmd+. on the error (clangd puts it on the next token): it offers to insert the ';'.
+    h.state_mut().app.buf_mut().unwrap().goto(Pos::new(2, 6));
+    press(&mut h, CMD, Key::Period);
+    assert!(
+        wait(&mut h, 10, |g| matches!(&g.app.modal,
+            Some(Modal::Palette(p)) if p.mode == crate::palette::Mode::CodeActions
+                && !p.shown.is_empty())),
+        "code actions listed"
+    );
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(wait(&mut h, 5, |g| g.app.buf().unwrap().lines[1] == "    int x = 1;"));
+    // Format on save: the file is formatted, then saved.
+    h.state_mut().app.config.editor.format_on_save = true;
+    {
+        let b = h.state_mut().app.buf_mut().unwrap();
+        b.goto(Pos::new(2, 4));
+        b.insert_text("      ");
+    }
+    press(&mut h, CMD, Key::S);
+    assert!(
+        wait(&mut h, 10, |g| !g.app.buf().unwrap().modified),
+        "saved after formatting"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "int main() {\n  int x = 1;\n  return x;\n}\n",
+        "clangd's default style (2 spaces)"
     );
 }

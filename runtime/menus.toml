@@ -12,11 +12,11 @@ items = ["undo", "redo", "-", "cut", "copy", "paste", "-", "toggle_comment", "du
 
 [[menu]]
 title = "Selection"
-items = ["select_all", "select_line", "select_word"]
+items = ["select_all", "select_line", "select_word", "select_all_occurrences", "-", "split_into_lines", "add_cursor_above", "add_cursor_below"]
 
 [[menu]]
 title = "Find"
-items = ["find", "find_next", "find_prev", "-", "replace", "replace_next", "replace_all", "-", "find_in_files", "next_result", "prev_result", "-", "toggle_find_regex", "toggle_find_case", "toggle_find_word", "toggle_find_wrap", "toggle_find_in_selection"]
+items = ["find", "find_next", "find_prev", "find_all", "-", "replace", "replace_next", "replace_all", "-", "find_in_files", "next_result", "prev_result", "-", "toggle_find_regex", "toggle_find_case", "toggle_find_word", "toggle_find_wrap", "toggle_find_in_selection"]
 
 [[menu]]
 title = "Goto"
@@ -32,7 +32,7 @@ items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_colu
 
 [[menu]]
 title = "Tools"
-items = ["show_commands", "-", "completion", "hover", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "install_grammar", "-", "install_package", "install_package_from_file", "install_package_from_folder", "remove_package", "browse_packages", "reload_packages"]
+items = ["show_commands", "-", "completion", "hover", "code_actions", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "install_grammar", "-", "install_package", "install_package_from_file", "install_package_from_folder", "remove_package", "browse_packages", "reload_packages"]
 
 [[menu]]
 title = "Project"
@@ -45,7 +45,7 @@ items = ["show_keymap", "show_commands"]
 # Right-click menus (like Sublime's Context.sublime-menu / Side Bar.sublime-menu).
 # Shift+F10 or the Menu key opens the one for the focused pane.
 [context.editor]
-items = ["cut", "copy", "paste", "-", "select_all", "-", "goto_definition", "find_references", "rename", "hover", "format", "-", "toggle_comment", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager"]
+items = ["cut", "copy", "paste", "-", "select_all", "-", "goto_definition", "find_references", "code_actions", "rename", "hover", "format", "-", "toggle_comment", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager"]
 
 [context.sidebar]
 items = ["sidebar_new_file", "sidebar_new_folder", "-", "sidebar_rename", "sidebar_duplicate", "-", "sidebar_copy", "sidebar_cut", "sidebar_paste", "sidebar_copy_path", "-", "open_terminal_here", "reveal_in_file_manager", "-", "sidebar_delete", "-", "remove_folder"]

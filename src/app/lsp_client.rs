@@ -295,6 +295,10 @@ impl App {
                         return;
                     }
                     crate::log::warn("lsp", format!("request failed: {m}"));
+                    if let Pending::Format { buf, save: true } = pending {
+                        // Formatting failed: save the file as it is.
+                        return self.save_after_format(buf);
+                    }
                     if !matches!(
                         pending,
                         Pending::Completion { .. } | Pending::WorkspaceSymbols
@@ -371,6 +375,7 @@ impl App {
                     .diagnostics
                     .into_iter()
                     .map(|d| Diag {
+                        raw: serde_json::to_value(&d).unwrap_or_default(),
                         start: conv(d.range.start.line, d.range.start.character),
                         end: conv(d.range.end.line, d.range.end.character),
                         severity: d.severity.map(|s| kind_num(&s) as u8).unwrap_or(1),
@@ -751,12 +756,15 @@ impl App {
                 }
                 _ => self.msg("Rename failed"),
             },
-            Pending::Format { buf } => {
+            Pending::Format { buf, save } => {
                 let Some(bi) = self.buf_index(buf) else {
                     return;
                 };
                 let Ok(Some(edits)) = serde_json::from_value::<Option<Vec<lt::TextEdit>>>(result)
                 else {
+                    if save {
+                        self.save_after_format(buf);
+                    }
                     return;
                 };
                 let b = &mut self.buffers[bi];
@@ -772,13 +780,200 @@ impl App {
                     .collect::<Vec<_>>();
                 let n = es.len();
                 b.apply_edits(es);
+                if save {
+                    return self.save_after_format(buf);
+                }
                 self.msg(if n == 0 {
                     "Already formatted".to_string()
                 } else {
                     format!("Formatted ({n} edits)")
                 });
             }
+            Pending::CodeActions { buf } => {
+                let mut list: Vec<Value> = result
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|a| a.get("disabled").is_none())
+                    .collect();
+                if list.is_empty() {
+                    return self.msg("No code actions here");
+                }
+                // The server's preferred fix first.
+                list.sort_by_key(|a| !a.get("isPreferred").and_then(Value::as_bool).unwrap_or(false));
+                let items: Vec<Item> = list
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| Item {
+                        label: a
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .unwrap_or("(untitled)")
+                            .to_string(),
+                        detail: a
+                            .get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        action: Action::CodeAction(i),
+                    })
+                    .collect();
+                self.code_actions = list.into_iter().map(|a| (cid, buf, a)).collect();
+                let mut p = Palette::new(Mode::CodeActions, "");
+                p.title = match items.len() {
+                    1 => "1 code action".to_string(),
+                    n => format!("{n} code actions"),
+                };
+                p.set_items(items);
+                self.modal = Some(Modal::Palette(p));
+            }
+            Pending::ResolveAction { buf } => {
+                if result.is_object() {
+                    self.apply_code_action(cid, buf, result, false);
+                }
+            }
             Pending::Other => {}
+        }
+    }
+
+    /// Ask the server to format the current file; with `save`, it's saved afterwards.
+    /// False if there's no server that can format it.
+    pub(super) fn request_format(&mut self, save: bool) -> bool {
+        self.sync_lsp();
+        let Some(b) = self.buf() else { return false };
+        let (Some(cid), Some(path)) = (b.lsp_client, b.path.clone()) else {
+            return false;
+        };
+        let id = b.id;
+        let tab = b.indent_unit == "\t";
+        let size = if tab { 4 } else { b.indent_unit.len() };
+        let Some(c) = self.lsp.clients.get_mut(&cid) else {
+            return false;
+        };
+        if !c.alive || (save && !(c.ready && c.has_cap("documentFormattingProvider"))) {
+            return false;
+        }
+        c.request(
+            "textDocument/formatting",
+            json!({"textDocument": {"uri": path_to_uri(&path)},
+                   "options": {"tabSize": size, "insertSpaces": !tab}}),
+            Pending::Format { buf: id, save },
+        );
+        true
+    }
+
+    /// Format on save: the edits are in (or formatting failed), save the file now.
+    pub(super) fn save_after_format(&mut self, buf: usize) {
+        if !self.format_saving.contains(&buf) {
+            return;
+        }
+        let Some(bi) = self.buf_index(buf) else {
+            self.format_saving.remove(&buf);
+            return;
+        };
+        let (cur, group) = (self.cur, self.group);
+        self.cur = bi;
+        self.group = self.buffers[bi].group;
+        self.save_current();
+        self.cur = cur;
+        self.group = group;
+    }
+
+    /// Cmd+.: ask the server what it can do at the cursor (quick fixes for the
+    /// diagnostics there, refactorings of the selection).
+    pub(super) fn request_code_actions(&mut self) {
+        self.sync_lsp();
+        let Some(b) = self.buf() else { return };
+        let (Some(cid), Some(path)) = (b.lsp_client, b.path.clone()) else {
+            return self.msg("No language server for this file");
+        };
+        let (a, z) = b.selection().unwrap_or((b.cursor, b.cursor));
+        let range = json!({"start": to_lsp(&b.lines[a.line], a), "end": to_lsp(&b.lines[z.line], z)});
+        let id = b.id;
+        let diags: Vec<Value> = self
+            .diagnostics
+            .get(&path)
+            .map(|ds| {
+                ds.iter()
+                    .filter(|d| d.start.line <= z.line && d.end.line >= a.line)
+                    .map(|d| d.raw.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Some(c) = self.lsp.clients.get_mut(&cid) else {
+            return;
+        };
+        if c.ready && !c.has_cap("codeActionProvider") {
+            let name = c.server.clone();
+            return self.msg(format!("{name} has no code actions"));
+        }
+        c.request(
+            "textDocument/codeAction",
+            json!({"textDocument": {"uri": path_to_uri(&path)}, "range": range,
+                   "context": {"diagnostics": diags, "triggerKind": 1}}),
+            Pending::CodeActions { buf: id },
+        );
+    }
+
+    /// The code action picked from the list.
+    pub(super) fn run_code_action(&mut self, i: usize) {
+        let Some((cid, buf, a)) = self.code_actions.get(i).cloned() else {
+            return;
+        };
+        self.code_actions.clear();
+        self.apply_code_action(cid, buf, a, true);
+    }
+
+    /// Apply an action's edit and run its command. An action without its edit yet is
+    /// resolved first (servers fill it in lazily).
+    fn apply_code_action(&mut self, cid: usize, buf: usize, a: Value, may_resolve: bool) {
+        let title = a.get("title").and_then(Value::as_str).unwrap_or("").to_string();
+        // A bare Command: { title, command: "name", arguments }.
+        if a.get("command").is_some_and(Value::is_string) {
+            return self.execute_command(cid, &a);
+        }
+        if a.get("edit").is_none()
+            && may_resolve
+            && let Some(c) = self.lsp.clients.get_mut(&cid)
+            && c.caps
+                .pointer("/codeActionProvider/resolveProvider")
+                .and_then(Value::as_bool)
+                == Some(true)
+        {
+            c.request("codeAction/resolve", a, Pending::ResolveAction { buf });
+            return;
+        }
+        let mut done = false;
+        if let Some(edit) = a.get("edit").cloned()
+            && let Ok(e) = serde_json::from_value::<lt::WorkspaceEdit>(edit)
+        {
+            self.apply_workspace_edit(e);
+            done = true;
+        }
+        if let Some(cmd) = a.get("command").filter(|c| c.is_object()).cloned() {
+            self.execute_command(cid, &cmd);
+            done = true;
+        }
+        self.msg(if done {
+            title.clone()
+        } else {
+            format!("{title}: the server sent nothing to apply")
+        });
+    }
+
+    /// workspace/executeCommand; the server usually answers with workspace/applyEdit.
+    fn execute_command(&mut self, cid: usize, cmd: &Value) {
+        let Some(name) = cmd.get("command").and_then(Value::as_str) else {
+            return;
+        };
+        let args = cmd.get("arguments").cloned().unwrap_or(json!([]));
+        if let Some(c) = self.lsp.clients.get_mut(&cid) {
+            c.request(
+                "workspace/executeCommand",
+                json!({"command": name, "arguments": args}),
+                Pending::Other,
+            );
         }
     }
 

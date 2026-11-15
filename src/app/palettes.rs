@@ -358,7 +358,7 @@ impl App {
                     action: Action::Package(n.clone()),
                 })
                 .collect(),
-            Mode::Locations => return,
+            Mode::Locations | Mode::CodeActions => return,
         };
         if let Some(p) = self.palette() {
             p.loading = loading;
@@ -603,6 +603,7 @@ impl App {
                 };
                 self.keep_setting("font_face", &f, &format!("Font: {label}"));
             }
+            Action::CodeAction(i) => self.run_code_action(i),
             Action::None => {}
         }
     }

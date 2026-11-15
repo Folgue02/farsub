@@ -14,7 +14,10 @@ impl Gui {
         let app = &self.app;
         if let Some(b) = app.buf() {
             left = format!("Line {}, Column {}", b.cursor.line + 1, b.cursor.col + 1);
-            if let Some((a, z)) = b.selection() {
+            if b.multi() {
+                // Like Sublime: "3 selection regions" instead of the position.
+                left = format!("{} selection regions", b.extra.len() + 1);
+            } else if let Some((a, z)) = b.selection() {
                 let n = b.text_range(a, z).chars().count();
                 left.push_str(&format!("; {n} characters selected"));
             }

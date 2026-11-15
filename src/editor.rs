@@ -31,8 +31,120 @@ struct Group {
     edits: Vec<Edit>,
     before: (Pos, Option<Pos>),
     after: (Pos, Option<Pos>),
+    /// The other cursors before and after (multiple selections).
+    extra_before: Vec<Sel>,
+    extra_after: Vec<Sel>,
     typing: bool,
     at: Instant,
+}
+
+/// One selection of several (multiple cursors): its caret, where its selected text
+/// starts (if any) and the column Up/Down aim for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sel {
+    pub cursor: Pos,
+    pub anchor: Option<Pos>,
+    pub want_col: usize,
+}
+
+impl Sel {
+    pub fn caret(p: Pos) -> Sel {
+        Sel {
+            cursor: p,
+            anchor: None,
+            want_col: p.col,
+        }
+    }
+
+    pub fn range(a: Pos, b: Pos) -> Sel {
+        Sel {
+            cursor: b,
+            anchor: (a != b).then_some(a),
+            want_col: b.col,
+        }
+    }
+
+    /// Start and end, in document order (equal for a bare caret).
+    pub fn span(&self) -> (Pos, Pos) {
+        match self.anchor {
+            Some(a) if a < self.cursor => (a, self.cursor),
+            Some(a) => (self.cursor, a),
+            None => (self.cursor, self.cursor),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anchor.is_none_or(|a| a == self.cursor)
+    }
+
+    fn map(self, f: impl Fn(Pos) -> Pos) -> Sel {
+        Sel {
+            cursor: f(self.cursor),
+            anchor: self.anchor.map(&f),
+            want_col: self.want_col,
+        }
+    }
+}
+
+/// Where `p` ends up after edit `e`. A position exactly where text is inserted moves past
+/// it only if `push` (it belongs to a selection after the edited one).
+fn shift_pos(p: Pos, e: &Edit, push: bool) -> Pos {
+    let a = e.start;
+    let p = if e.removed.is_empty() {
+        p
+    } else {
+        let b = end_of(a, &e.removed);
+        if p <= a {
+            p
+        } else if p < b {
+            a
+        } else if p.line == b.line {
+            Pos::new(a.line, a.col + p.col - b.col)
+        } else {
+            Pos::new(p.line - (b.line - a.line), p.col)
+        }
+    };
+    if e.inserted.is_empty() || p < a || (p == a && !push) {
+        return p;
+    }
+    let end = end_of(a, &e.inserted);
+    if p.line == a.line {
+        Pos::new(end.line, end.col + p.col - a.col)
+    } else {
+        Pos::new(p.line + end.line - a.line, p.col)
+    }
+}
+
+/// Sort selections and merge the ones that overlap (or carets on the same spot). The
+/// `bool` marks the primary one; a merge keeps the mark.
+fn merge_sels(mut v: Vec<(Sel, bool)>) -> Vec<(Sel, bool)> {
+    v.sort_by_key(|(s, _)| s.span());
+    let mut out: Vec<(Sel, bool)> = Vec::with_capacity(v.len());
+    for (s, prim) in v {
+        if let Some((last, lp)) = out.last_mut() {
+            let (la, lb) = last.span();
+            let (a, b) = s.span();
+            if a < lb || (a == lb && (last.is_empty() || s.is_empty())) {
+                let end = lb.max(b);
+                let fwd = last.anchor.is_none_or(|x| x <= last.cursor);
+                *last = if la == end {
+                    Sel::caret(end)
+                } else if fwd {
+                    Sel::range(la, end)
+                } else {
+                    Sel {
+                        cursor: la,
+                        anchor: Some(end),
+                        want_col: la.col,
+                    }
+                };
+                *lp |= prim;
+                continue;
+            }
+        }
+        out.push((s, prim));
+    }
+    out
 }
 
 pub fn char_len(s: &str) -> usize {
@@ -185,6 +297,15 @@ pub struct Buffer {
     redo: Vec<Group>,
     pending: Vec<Edit>,
     seal: bool,
+    /// The other cursors (multiple selections), in document order; `cursor`/`anchor` is
+    /// the primary one (the one the view follows).
+    pub extra: Vec<Sel>,
+    /// While an edit runs once per cursor: whether every run was typing.
+    batch: Option<bool>,
+    /// The other cursors before a per-cursor edit (for its undo step).
+    extra_before: Option<Vec<Sel>>,
+    /// Cmd+D started from a bare caret: further occurrences match whole words only.
+    next_word: Option<String>,
 }
 
 impl Buffer {
@@ -249,6 +370,10 @@ impl Buffer {
             redo: vec![],
             pending: vec![],
             seal: true,
+            extra: vec![],
+            batch: None,
+            extra_before: None,
+            next_word: None,
         }
     }
 
@@ -327,6 +452,7 @@ impl Buffer {
             Pos::new(line, old[start..byte].chars().count())
         };
         let (a, b) = (pos_of(pre), pos_of(old.len() - suf));
+        self.extra.clear();
         let before = self.begin();
         self.seal = true;
         self.delete(a, b);
@@ -753,12 +879,36 @@ impl Buffer {
 
     fn commit(&mut self, before: (Pos, Option<Pos>), typing: bool) {
         self.want_col = self.cursor.col;
+        if let Some(t) = &mut self.batch {
+            // One run of a per-cursor edit: `each` commits them all as one step.
+            *t &= typing;
+            return;
+        }
         if self.pending.is_empty() {
             return;
         }
+        let extra_before = match self.extra_before.take() {
+            Some(v) => v,
+            None => {
+                // An edit at the primary cursor only (completion, LSP edits): the other
+                // cursors follow the text.
+                let v = self.extra.clone();
+                if !self.extra.is_empty() {
+                    for e in &self.pending {
+                        for s in &mut self.extra {
+                            *s = s.map(|p| shift_pos(p, e, true));
+                        }
+                    }
+                    let c = self.cursor;
+                    self.extra.retain(|s| s.cursor != c);
+                }
+                v
+            }
+        };
         let edits = std::mem::take(&mut self.pending);
         self.redo.clear();
         let after = (self.cursor, self.anchor);
+        let extra_after = self.extra.clone();
         if typing
             && !self.seal
             && let Some(g) = self.undo.last_mut()
@@ -767,6 +917,7 @@ impl Buffer {
         {
             g.edits.extend(edits);
             g.after = after;
+            g.extra_after = extra_after;
             g.at = Instant::now();
             return;
         }
@@ -774,6 +925,8 @@ impl Buffer {
             edits,
             before,
             after,
+            extra_before,
+            extra_after,
             typing,
             at: Instant::now(),
         });
@@ -791,6 +944,7 @@ impl Buffer {
         }
         self.cursor = self.clamp(g.before.0);
         self.anchor = g.before.1.map(|a| self.clamp(a));
+        self.extra = g.extra_before.iter().map(|s| s.map(|p| self.clamp(p))).collect();
         self.want_col = self.cursor.col;
         self.redo.push(g);
         self.touch();
@@ -809,6 +963,7 @@ impl Buffer {
         }
         self.cursor = self.clamp(g.after.0);
         self.anchor = g.after.1.map(|a| self.clamp(a));
+        self.extra = g.extra_after.iter().map(|s| s.map(|p| self.clamp(p))).collect();
         self.want_col = self.cursor.col;
         self.undo.push(g);
         self.touch();
@@ -1077,6 +1232,7 @@ impl Buffer {
     // ---------- movement ----------
 
     pub fn set_cursor(&mut self, p: Pos, select: bool) {
+        self.next_word = None;
         if select {
             if self.anchor.is_none() {
                 self.anchor = Some(self.cursor);
@@ -1089,6 +1245,7 @@ impl Buffer {
     }
 
     pub fn goto(&mut self, p: Pos) {
+        self.extra.clear();
         self.set_cursor(p, false);
         self.want_col = self.cursor.col;
     }
@@ -1154,6 +1311,24 @@ impl Buffer {
     /// keymap.toml). `page` is the page height in rows, `wrap` the wrap width if wrapping.
     /// Returns false for commands that aren't motions.
     pub fn apply_motion(&mut self, cmd: Command, page: usize, wrap: Option<usize>) -> bool {
+        use Command::*;
+        if self.extra.is_empty() || matches!(cmd, ScrollLineUp | ScrollLineDown) {
+            return self.motion_one(cmd, page, wrap);
+        }
+        // Every cursor moves (or deletes); the view scrolls once.
+        let sy = self.scroll_y;
+        let mut ok = false;
+        self.each(|b| {
+            ok = b.motion_one(cmd, page, wrap);
+            b.scroll_y = sy;
+        });
+        if ok && matches!(cmd, MovePageUp | SelectPageUp | MovePageDown | SelectPageDown) {
+            self.scroll_y = self.cursor.line.saturating_sub(page / 2);
+        }
+        ok
+    }
+
+    fn motion_one(&mut self, cmd: Command, page: usize, wrap: Option<usize>) -> bool {
         use Command::*;
         let page = page.max(1);
         let vert = |b: &mut Buffer, d: isize, sel: bool| match wrap {
@@ -1268,6 +1443,7 @@ impl Buffer {
     }
 
     pub fn select_all(&mut self) {
+        self.extra.clear();
         self.anchor = Some(Pos::new(0, 0));
         self.cursor = self.last_pos();
         self.seal = true;
@@ -1292,23 +1468,372 @@ impl Buffer {
         self.seal = true;
     }
 
-    /// Ctrl+D: select word under cursor, or jump to the next occurrence of the selection.
-    pub fn select_word_or_next(&mut self) -> bool {
-        if let Some((a, b)) = self.selection() {
-            let needle = self.text_range(a, b);
-            if let Some((s, e)) = self.find(&needle, b, true, false) {
-                self.anchor = Some(s);
-                self.cursor = e;
-                return true;
-            }
-            false
-        } else if let Some((s, e)) = self.word_bounds(self.cursor) {
-            self.anchor = Some(s);
-            self.cursor = e;
-            true
-        } else {
-            false
+    // ---------- multiple cursors ----------
+
+    /// Every selection, the primary one included, in document order.
+    pub fn sels(&self) -> Vec<Sel> {
+        let mut v = self.extra.clone();
+        v.push(self.primary());
+        v.sort_by_key(|s| s.span());
+        v
+    }
+
+    pub fn primary(&self) -> Sel {
+        Sel {
+            cursor: self.cursor,
+            anchor: self.anchor,
+            want_col: self.want_col,
         }
+    }
+
+    pub fn multi(&self) -> bool {
+        !self.extra.is_empty()
+    }
+
+    fn set_sels(&mut self, v: Vec<(Sel, bool)>) {
+        let v = merge_sels(v);
+        let pi = v.iter().position(|(_, p)| *p).unwrap_or(v.len() - 1);
+        let p = v[pi].0;
+        self.cursor = self.clamp(p.cursor);
+        self.anchor = p.anchor.map(|a| self.clamp(a));
+        self.want_col = p.want_col;
+        self.extra = v
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != pi)
+            .map(|(_, (s, _))| s.map(|x| self.clamp(x)))
+            .collect();
+    }
+
+    /// Add a selection; it becomes the primary one (the view follows it).
+    pub fn add_sel(&mut self, s: Sel) {
+        let mut v: Vec<(Sel, bool)> = self.extra.iter().map(|s| (*s, false)).collect();
+        v.push((self.primary(), false));
+        v.push((s, true));
+        self.set_sels(v);
+        self.seal = true;
+    }
+
+    /// Esc: back to one selection (the primary one). False if there was only one.
+    pub fn single_selection(&mut self) -> bool {
+        if self.extra.is_empty() {
+            return false;
+        }
+        self.extra.clear();
+        true
+    }
+
+    /// Run `f` once per selection (as if it were the only one), keeping the others where
+    /// the text they were on moved to, then merge what overlaps. The edits are one undo
+    /// step.
+    pub fn each(&mut self, f: impl FnMut(&mut Buffer)) {
+        self.each_with(false, false, f)
+    }
+
+    /// `each` for line commands: selections sharing a line run once. `desc` runs the
+    /// bottom one first (Move Line Down).
+    pub fn each_line(&mut self, desc: bool, f: impl FnMut(&mut Buffer)) {
+        self.each_with(desc, true, f)
+    }
+
+    fn each_with(&mut self, desc: bool, by_line: bool, mut f: impl FnMut(&mut Buffer)) {
+        if self.extra.is_empty() {
+            return f(self);
+        }
+        let before = self.begin();
+        let extra_before = self.extra.clone();
+        let mut sels: Vec<(Sel, bool)> = self.extra.iter().map(|s| (*s, false)).collect();
+        sels.push((self.primary(), true));
+        let mut sels = merge_sels(sels);
+        if by_line {
+            let lines = |s: &Sel| {
+                let (a, b) = s.span();
+                let end = if b.col == 0 && b.line > a.line {
+                    b.line - 1
+                } else {
+                    b.line
+                };
+                (a.line, end)
+            };
+            let mut kept: Vec<(Sel, bool)> = vec![];
+            for (s, p) in sels {
+                if let Some((last, lp)) = kept.last_mut()
+                    && lines(&s).0 <= lines(last).1
+                {
+                    *lp |= p;
+                    continue;
+                }
+                kept.push((s, p));
+            }
+            sels = kept;
+        }
+        let n = sels.len();
+        let order: Vec<usize> = if desc {
+            (0..n).rev().collect()
+        } else {
+            (0..n).collect()
+        };
+        self.batch = Some(true);
+        let start = self.pending.len();
+        for i in order {
+            let s = sels[i].0;
+            self.cursor = s.cursor;
+            self.anchor = s.anchor;
+            self.want_col = s.want_col;
+            self.want_vx = None;
+            let k = self.pending.len();
+            f(self);
+            sels[i].0 = Sel {
+                cursor: self.cursor,
+                anchor: self.anchor,
+                want_col: self.want_col,
+            };
+            let new: Vec<Edit> = self.pending[k..].to_vec();
+            for e in &new {
+                for (j, (o, _)) in sels.iter_mut().enumerate() {
+                    if j != i {
+                        *o = o.map(|p| shift_pos(p, e, j > i));
+                    }
+                }
+            }
+        }
+        let typing = self.batch.take().unwrap_or(false);
+        let edited = self.pending.len() > start;
+        let want = sels.iter().find(|s| s.1).map(|s| s.0.want_col);
+        self.set_sels(sels);
+        if edited {
+            self.extra_before = Some(extra_before);
+            self.commit(before, typing);
+        }
+        if let Some(w) = want {
+            self.want_col = w;
+        }
+    }
+
+    /// Cmd+D: select the word at each caret; with text selected, also select its next
+    /// occurrence (a new cursor). False when there's no further one.
+    pub fn add_next_occurrence(&mut self) -> bool {
+        if self.selection().is_none() {
+            let before = self.extra.len();
+            self.each(|b| {
+                if let Some((s, e)) = b.word_bounds(b.cursor) {
+                    b.anchor = Some(s);
+                    b.cursor = e;
+                }
+            });
+            self.next_word = self.selected_text();
+            return self.selection().is_some() || self.extra.len() != before;
+        }
+        let needle = self.selected_text().unwrap_or_default();
+        let whole = self.next_word.as_deref() == Some(needle.as_str());
+        let taken: Vec<(Pos, Pos)> = self.sels().iter().map(|s| s.span()).collect();
+        let from = self.selection().map(|r| r.1).unwrap_or(self.cursor);
+        let Some((a, b)) = self.next_exact(&needle, from, whole, &taken) else {
+            return false;
+        };
+        self.add_sel(Sel::range(a, b));
+        true
+    }
+
+    /// Select every occurrence of the selection (or of the word at the caret).
+    pub fn select_all_occurrences(&mut self) -> bool {
+        let (needle, whole) = match self.selected_text() {
+            Some(t) => {
+                let w = self.next_word.as_deref() == Some(t.as_str());
+                (t, w)
+            }
+            None => match self.word_bounds(self.cursor) {
+                Some((a, b)) => (self.text_range(a, b), true),
+                None => return false,
+            },
+        };
+        let all = self.occurrences(&needle, whole);
+        if all.is_empty() {
+            return false;
+        }
+        let here = self.selection().map(|r| r.0).unwrap_or(self.cursor);
+        let pi = all.iter().rposition(|r| r.0 <= here).unwrap_or(0);
+        let v = all
+            .into_iter()
+            .enumerate()
+            .map(|(i, (a, b))| (Sel::range(a, b), i == pi))
+            .collect();
+        self.set_sels(v);
+        self.seal = true;
+        true
+    }
+
+    /// Select these ranges (e.g. every find match), the first at or after the primary
+    /// cursor becoming the primary one.
+    pub fn select_ranges(&mut self, rs: &[(Pos, Pos)]) {
+        if rs.is_empty() {
+            return;
+        }
+        let c = self.cursor;
+        let pi = rs.iter().position(|r| r.0 >= c).unwrap_or(0);
+        let v = rs
+            .iter()
+            .enumerate()
+            .map(|(i, &(a, b))| (Sel::range(a, b), i == pi))
+            .collect();
+        self.set_sels(v);
+        self.seal = true;
+    }
+
+    /// Exact-case occurrences of `needle` (a single line), whole words only if `whole`.
+    fn occurrences(&self, needle: &str, whole: bool) -> Vec<(Pos, Pos)> {
+        if needle.is_empty() || needle.contains('\n') {
+            return vec![];
+        }
+        let nl = char_len(needle);
+        let mut out = vec![];
+        for (l, line) in self.lines.iter().enumerate() {
+            for (bi, _) in line.match_indices(needle) {
+                let c = char_len(&line[..bi]);
+                if whole {
+                    let before = line[..bi].chars().next_back();
+                    let after = line[bi + needle.len()..].chars().next();
+                    if before.is_some_and(is_word) || after.is_some_and(is_word) {
+                        continue;
+                    }
+                }
+                out.push((Pos::new(l, c), Pos::new(l, c + nl)));
+            }
+        }
+        out
+    }
+
+    /// The first occurrence after `from` (wrapping around) not already selected.
+    fn next_exact(
+        &self,
+        needle: &str,
+        from: Pos,
+        whole: bool,
+        taken: &[(Pos, Pos)],
+    ) -> Option<(Pos, Pos)> {
+        let all = self.occurrences(needle, whole);
+        let free = |r: &&(Pos, Pos)| !taken.contains(r);
+        all.iter()
+            .filter(|r| r.0 >= from)
+            .find(free)
+            .or_else(|| all.iter().find(free))
+            .copied()
+    }
+
+    /// Cmd+Shift+L: a selection spanning lines becomes one per line, caret at its end.
+    pub fn split_into_lines(&mut self) {
+        let mut v: Vec<(Sel, bool)> = vec![];
+        let prim = self.primary().span();
+        for s in self.sels() {
+            let (a, b) = s.span();
+            let is_p = s.span() == prim;
+            if a.line == b.line {
+                v.push((s, is_p));
+                continue;
+            }
+            for l in a.line..=b.line {
+                let start = if l == a.line { a.col } else { 0 };
+                let end = if l == b.line { b.col } else { self.line_len(l) };
+                if l == b.line && end == 0 && l > a.line {
+                    continue;
+                }
+                v.push((Sel::range(Pos::new(l, start), Pos::new(l, end)), is_p && l == a.line));
+            }
+        }
+        self.set_sels(v);
+        self.seal = true;
+    }
+
+    /// Add a caret on the line above the first selection (or below the last).
+    pub fn add_cursor_line(&mut self, up: bool) {
+        let all = self.sels();
+        let edge = if up { all[0] } else { all[all.len() - 1] };
+        let l = edge.cursor.line;
+        if (up && l == 0) || (!up && l + 1 >= self.lines.len()) {
+            return;
+        }
+        let nl = if up { l - 1 } else { l + 1 };
+        let col = edge.want_col.max(edge.cursor.col).min(self.line_len(nl));
+        let mut s = Sel::caret(Pos::new(nl, col));
+        s.want_col = edge.want_col.max(edge.cursor.col);
+        self.add_sel(s);
+    }
+
+    /// Mouse: add a caret, or remove the selection the click is in (Cmd+Click).
+    pub fn toggle_caret(&mut self, p: Pos) {
+        let p = self.clamp(p);
+        let all = self.sels();
+        let hit = all.iter().position(|s| {
+            let (a, b) = s.span();
+            (a == b && a == p) || (a <= p && p < b)
+        });
+        match hit {
+            Some(i) if all.len() > 1 => {
+                let mut v: Vec<(Sel, bool)> = all.into_iter().map(|s| (s, false)).collect();
+                v.remove(i);
+                if let Some(last) = v.last_mut() {
+                    last.1 = true;
+                }
+                self.set_sels(v);
+            }
+            Some(_) => {}
+            None => self.add_sel(Sel::caret(p)),
+        }
+        self.seal = true;
+    }
+
+    /// Alt+drag: one selection per line from `from` to `to`, by display column.
+    pub fn column_select(&mut self, from: Pos, to: Pos, from_col: usize, to_col: usize) {
+        let (l0, l1) = (from.line.min(to.line), from.line.max(to.line));
+        let tab = self.tab_size;
+        let col_of = |line: &str, d: usize| {
+            let mut w = 0;
+            for (i, c) in line.chars().enumerate() {
+                if w >= d {
+                    return i;
+                }
+                w = if c == '\t' { w + tab - w % tab } else { w + 1 };
+            }
+            char_len(line)
+        };
+        let width = |line: &str| {
+            line.chars()
+                .fold(0, |w, c| if c == '\t' { w + tab - w % tab } else { w + 1 })
+        };
+        let lo = from_col.min(to_col);
+        let mut v: Vec<(Sel, bool)> = vec![];
+        for (l, line) in self.lines.iter().enumerate().take(l1 + 1).skip(l0) {
+            let a = Pos::new(l, col_of(line, from_col));
+            let b = Pos::new(l, col_of(line, to_col));
+            // Lines too short to reach the box are skipped, unless it's only a column of
+            // carets.
+            if a == b && from_col != to_col && width(line) <= lo {
+                continue;
+            }
+            let mut s = Sel::range(a, b);
+            s.want_col = b.col;
+            v.push((s, l == to.line));
+        }
+        if v.is_empty() {
+            v.push((Sel::caret(to), true));
+        }
+        if !v.iter().any(|s| s.1) {
+            let n = v.len() - 1;
+            v[n].1 = true;
+        }
+        self.set_sels(v);
+        self.seal = true;
+    }
+
+    /// The selected text of every selection, in order.
+    pub fn selected_texts(&self) -> Vec<String> {
+        self.sels()
+            .iter()
+            .map(|s| {
+                let (a, b) = s.span();
+                self.text_range(a, b)
+            })
+            .collect()
     }
 
     // ---------- line operations ----------
@@ -1583,85 +2108,6 @@ impl Buffer {
 
     // ---------- search ----------
 
-    fn smart_lower(needle: &str) -> bool {
-        !needle.chars().any(|c| c.is_uppercase())
-    }
-
-    /// Byte ranges of `needle` in a line (smart-case, ascii insensitive).
-    pub fn matches_in_line(line: &str, needle: &str) -> Vec<(usize, usize)> {
-        if needle.is_empty() || needle.contains('\n') {
-            return vec![];
-        }
-        let ci = Self::smart_lower(needle);
-        let (hay, nd) = if ci {
-            (line.to_ascii_lowercase(), needle.to_ascii_lowercase())
-        } else {
-            (line.to_string(), needle.to_string())
-        };
-        hay.match_indices(&nd)
-            .map(|(i, m)| (i, i + m.len()))
-            .collect()
-    }
-
-    pub fn find(
-        &self,
-        needle: &str,
-        from: Pos,
-        forward: bool,
-        _wrap_only: bool,
-    ) -> Option<(Pos, Pos)> {
-        let first = needle.split('\n').next().unwrap_or("");
-        if first.is_empty() {
-            return None;
-        }
-        let n = self.lines.len();
-        let to_pos = |l: usize, b: usize, s: &str| -> (Pos, Pos) {
-            let c = char_len(&s[..b]);
-            (Pos::new(l, c), Pos::new(l, c + char_len(first)))
-        };
-        if forward {
-            for i in 0..=n {
-                let l = (from.line + i) % n;
-                let line = &self.lines[l];
-                let start = if i == 0 { byte_idx(line, from.col) } else { 0 };
-                let ms = Self::matches_in_line(line, first);
-                let hit = if i == n {
-                    ms.into_iter().find(|m| m.0 < byte_idx(line, from.col))
-                } else {
-                    ms.into_iter().find(|m| m.0 >= start)
-                };
-                if let Some((b, _)) = hit {
-                    return Some(to_pos(l, b, line));
-                }
-            }
-        } else {
-            for i in 0..=n {
-                let l = (from.line + n * 2 - i) % n;
-                let line = &self.lines[l];
-                let limit = if i == 0 {
-                    byte_idx(line, from.col)
-                } else {
-                    line.len() + 1
-                };
-                let ms = Self::matches_in_line(line, first);
-                let hit = if i == n {
-                    ms.into_iter()
-                        .rev()
-                        .find(|m| m.0 >= byte_idx(line, from.col))
-                } else {
-                    ms.into_iter().rev().find(|m| m.0 < limit)
-                };
-                if let Some((b, _)) = hit {
-                    return Some(to_pos(l, b, line));
-                }
-            }
-        }
-        None
-    }
-
-    // ---------- find panel (search.rs matcher) ----------
-
-    /// Matches in line `l` as (start, end) positions.
     pub fn line_matches(&self, m: &crate::search::Matcher, l: usize) -> Vec<(Pos, Pos)> {
         let line = &self.lines[l];
         m.find_in(line)
@@ -1938,21 +2384,97 @@ mod tests {
     }
 
     #[test]
-    fn find_and_next_occurrence() {
-        let mut b = buf("foo bar foo\nfoo");
+    fn next_occurrence_adds_cursors() {
+        let mut b = buf("foo bar foo\nfoobar foo");
         b.goto(Pos::new(0, 1));
-        b.select_word_or_next();
+        assert!(b.add_next_occurrence());
         assert_eq!(b.selected_text().as_deref(), Some("foo"));
-        b.select_word_or_next();
-        assert_eq!(b.selection(), Some((Pos::new(0, 8), Pos::new(0, 11))));
-        b.select_word_or_next();
-        assert_eq!(b.selection(), Some((Pos::new(1, 0), Pos::new(1, 3))));
-        b.select_word_or_next();
-        assert_eq!(b.selection(), Some((Pos::new(0, 0), Pos::new(0, 3))));
+        assert!(!b.multi());
+        // Started from a caret: whole words only ("foobar" is skipped).
+        assert!(b.add_next_occurrence());
+        assert!(b.add_next_occurrence());
+        let spans: Vec<_> = b.sels().iter().map(|s| s.span()).collect();
         assert_eq!(
-            b.find("foo", Pos::new(0, 0), false, false),
-            Some((Pos::new(1, 0), Pos::new(1, 3)))
+            spans,
+            vec![
+                (Pos::new(0, 0), Pos::new(0, 3)),
+                (Pos::new(0, 8), Pos::new(0, 11)),
+                (Pos::new(1, 7), Pos::new(1, 10)),
+            ]
         );
+        assert!(!b.add_next_occurrence(), "all taken");
+        // Typing replaces every selection, as one undo step.
+        b.each(|b| b.insert_char('x'));
+        assert_eq!(b.text(), "x bar x\nfoobar x");
+        b.each(|b| b.backspace());
+        b.each(|b| b.insert_char('y'));
+        assert_eq!(b.text(), "y bar y\nfoobar y");
+        b.undo();
+        b.undo();
+        assert_eq!(b.text(), "foo bar foo\nfoobar foo");
+        assert_eq!(b.sels().len(), 3, "undo brings the cursors back");
+        // A plain selection (not from a caret) also matches inside words.
+        b.goto(Pos::new(1, 0));
+        b.anchor = Some(Pos::new(1, 0));
+        b.cursor = Pos::new(1, 3);
+        assert_eq!(b.select_all_occurrences(), true);
+        assert_eq!(b.sels().len(), 4);
+    }
+
+    #[test]
+    fn cursors_move_and_edit_together() {
+        let mut b = buf("let a = 1;\nlet bb = 2;\nlet c = 3;");
+        b.goto(Pos::new(0, 4));
+        b.add_cursor_line(false);
+        b.add_cursor_line(false);
+        assert_eq!(b.sels().len(), 3);
+        b.apply_motion(Command::SelectToLineEnd, 10, None);
+        b.each(|b| b.insert_text("z"));
+        assert_eq!(b.text(), "let z\nlet z\nlet z");
+        // Enter at every cursor, then Esc back to one.
+        b.each(|b| b.newline(true));
+        assert_eq!(b.lines.len(), 6);
+        assert!(b.single_selection());
+        assert!(!b.multi());
+        // Two cursors on one line: a line command runs once for that line.
+        let mut b = buf("a\nb\nc");
+        b.goto(Pos::new(1, 0));
+        b.toggle_caret(Pos::new(1, 1));
+        b.each_line(false, |b| b.delete_line());
+        assert_eq!(b.text(), "a\nc");
+        // Move Line Down with cursors on adjacent lines keeps their order.
+        let mut b = buf("1\n2\n3\n4");
+        b.goto(Pos::new(0, 0));
+        b.add_cursor_line(false);
+        b.each_line(true, |b| b.move_lines(false));
+        assert_eq!(b.text(), "3\n1\n2\n4");
+        // Carets that run into each other merge.
+        let mut b = buf("ab");
+        b.goto(Pos::new(0, 1));
+        b.toggle_caret(Pos::new(0, 2));
+        b.apply_motion(Command::MoveLineStart, 10, None);
+        assert!(!b.multi());
+    }
+
+    #[test]
+    fn split_into_lines_and_column_select() {
+        let mut b = buf("one\ntwo\nthree");
+        b.select_all();
+        b.split_into_lines();
+        let spans: Vec<_> = b.sels().iter().map(|s| s.span()).collect();
+        assert_eq!(
+            spans,
+            vec![
+                (Pos::new(0, 0), Pos::new(0, 3)),
+                (Pos::new(1, 0), Pos::new(1, 3)),
+                (Pos::new(2, 0), Pos::new(2, 5)),
+            ]
+        );
+        // Columns 1..3 of every line; a line too short is skipped.
+        let mut b = buf("abcd\nx\nefgh");
+        b.column_select(Pos::new(0, 0), Pos::new(2, 0), 1, 3);
+        let t = b.selected_texts();
+        assert_eq!(t, vec!["bc".to_string(), "fg".to_string()]);
     }
 
     #[test]

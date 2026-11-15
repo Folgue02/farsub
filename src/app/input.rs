@@ -288,6 +288,7 @@ impl App {
         let Some(t) = t else { return false };
         self.clip = t.clone();
         self.clip_line = false;
+        self.clip_parts = None;
         self.pending_copy = Some(t);
         if cmd == Command::Cut {
             self.input_changed();
@@ -360,11 +361,41 @@ impl App {
 
     pub(super) fn paste_text(&mut self, text: String) {
         let line_mode = self.clip_line && text == self.clip;
+        let parts = self.clip_parts.clone().filter(|_| text == self.clip);
         let Some(b) = self.buf_mut() else { return };
         if b.read_only {
             return;
         }
-        if line_mode && b.selection().is_none() {
+        if b.multi() {
+            // One piece per cursor when the counts match (what several cursors copied, or
+            // as many lines as cursors); otherwise the whole text at each.
+            let n = b.sels().len();
+            let text = text.replace("\r\n", "\n");
+            let pieces: Option<Vec<String>> = parts.filter(|p| p.len() == n).or_else(|| {
+                let ls: Vec<String> = text
+                    .strip_suffix('\n')
+                    .unwrap_or(&text)
+                    .split('\n')
+                    .map(String::from)
+                    .collect();
+                (ls.len() == n && !line_mode).then_some(ls)
+            });
+            let mut i = 0;
+            b.each(|b| {
+                match &pieces {
+                    Some(p) => b.insert_text(&p[i]),
+                    None if line_mode && b.selection().is_none() => {
+                        let c = b.cursor;
+                        let t = text.clone();
+                        b.cursor = Pos::new(c.line, 0);
+                        b.insert_text(&t);
+                        b.cursor = Pos::new(c.line + 1, c.col);
+                    }
+                    None => b.insert_text(&text),
+                }
+                i += 1;
+            });
+        } else if line_mode && b.selection().is_none() {
             // A whole line copied without selection is pasted above the current line.
             let c = b.cursor;
             b.goto(Pos::new(c.line, 0));

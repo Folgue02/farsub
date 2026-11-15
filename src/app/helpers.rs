@@ -237,6 +237,10 @@ pub(super) fn needs_buffer(cmd: Command) -> bool {
             | Cut
             | SelectLine
             | SelectWord
+            | SelectAllOccurrences
+            | SplitIntoLines
+            | AddCursorAbove
+            | AddCursorBelow
             | DeleteLine
             | DuplicateLine
             | MoveLineUp

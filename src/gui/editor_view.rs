@@ -300,16 +300,40 @@ impl Gui {
             };
             ui.ctx().set_cursor_icon(icon);
         }
+        // Line and display column under a point, also past the end of the line (for
+        // column selection).
+        let to_vcol = |pt: Pos2| -> (usize, usize) {
+            match row_at(pt).or(hit_rows.last()) {
+                Some(row) => (row.line, ((pt.x - row.x0) / cw).round().max(0.0) as usize),
+                None => (0, 0),
+            }
+        };
         let mut click: Option<(Pos, u32, bool)> = None;
         let mut drag: Option<Pos> = None;
+        // Cmd+Click (Ctrl elsewhere) adds a cursor; Alt+drag selects a column.
+        let mut add_caret: Option<(Pos, u32)> = None;
+        let mut column: Option<((usize, usize), (usize, usize))> = None;
+        if !resp.dragged() && !resp.drag_started() {
+            self.col_drag = None;
+        }
         if let Some(pt) = resp.interact_pointer_pos() {
-            let shift = ui.ctx().input(|i| i.modifiers.shift);
-            if resp.triple_clicked() {
+            let m = ui.ctx().input(|i| i.modifiers);
+            let origin = ui.ctx().input(|i| i.pointer.press_origin()).unwrap_or(pt);
+            if resp.drag_started() && m.alt {
+                self.col_drag = Some(to_vcol(origin));
+            }
+            if let Some(start) = self.col_drag {
+                column = Some((start, to_vcol(pt)));
+            } else if m.command && (resp.double_clicked() || resp.triple_clicked()) {
+                add_caret = Some((to_pos(b, pt), 2));
+            } else if m.command && (resp.drag_started() || resp.clicked()) {
+                add_caret = Some((to_pos(b, if resp.drag_started() { origin } else { pt }), 1));
+            } else if resp.triple_clicked() {
                 click = Some((to_pos(b, pt), 3, false));
             } else if resp.double_clicked() {
                 click = Some((to_pos(b, pt), 2, false));
             } else if resp.drag_started() || resp.clicked() {
-                click = Some((to_pos(b, pt), 1, shift));
+                click = Some((to_pos(b, pt), 1, m.shift));
             } else if resp.dragged() {
                 drag = Some(to_pos(b, pt));
             }
@@ -416,7 +440,29 @@ impl Gui {
             deadline,
         );
 
-        let sel = b.selection();
+        // Every selection (multiple cursors) on the lines in view.
+        let (vis0, vis1) = (
+            rows.first().map_or(0, |r| r.line),
+            rows.last().map_or(0, |r| r.line),
+        );
+        let all_sels: Vec<crate::editor::Sel> = b
+            .sels()
+            .into_iter()
+            .filter(|s| {
+                let (a, z) = s.span();
+                z.line >= vis0 && a.line <= vis1
+            })
+            .collect();
+        let sel_spans: Vec<(Pos, Pos)> = all_sels
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.span())
+            .collect();
+        let caret_lines: Vec<usize> = all_sels
+            .iter()
+            .filter(|s| s.is_empty())
+            .map(|s| s.cursor.line)
+            .collect();
         let clip = p.with_clip_rect(r);
         let text_clip = p.with_clip_rect(Rect::from_min_max(
             Pos2::new(text_left - 2.0, r.top()),
@@ -479,7 +525,7 @@ impl Gui {
             );
             let xr = |d: usize| row.x0 + d as f32 * cw;
             let lr = Rect::from_min_size(Pos2::new(r.left(), y), Vec2::new(r.width(), lh));
-            if line_highlight && ln == b.cursor.line && sel.is_none() {
+            if line_highlight && caret_lines.contains(&ln) {
                 clip.rect_filled(lr, 0.0, c.line);
             }
             // Gutter: only on a line's first row.
@@ -505,11 +551,8 @@ impl Gui {
                     if ln == b.cursor.line { c.fg } else { c.gutter },
                 );
             }
-            // Selection.
-            if let Some((a, z)) = sel
-                && a.line <= ln
-                && z.line >= ln
-            {
+            // Selections.
+            for &(a, z) in sel_spans.iter().filter(|(a, z)| a.line <= ln && z.line >= ln) {
                 let s = if a.line == ln {
                     display_col(line, a.col)
                 } else {
@@ -651,8 +694,7 @@ impl Gui {
         let cursor_px = row_for(&rows, b.cursor.line, cur_dcol)
             .map(|row| Pos2::new(row.x0 + cur_dcol as f32 * cw, row.y))
             .filter(|p| p.y < r.bottom());
-        if focused && let Some(cp) = cursor_px {
-            let (cx, cy) = (cp.x, cp.y);
+        if focused && (cursor_px.is_some() || !all_sels.is_empty()) {
             let ed = &self.app.config.editor;
             let mark = Some((b.id, b.cursor, b.version));
             if self.caret_mark.0 != mark {
@@ -670,17 +712,29 @@ impl Gui {
                 ui.ctx().request_repaint_after(next);
             }
             let w = 1.0 + ed.caret_extra_width.clamp(0.0, 20.0);
-            let top = cy - ed.caret_extra_top.clamp(-lh / 2.0, lh);
-            let bottom = cy + lh + ed.caret_extra_bottom.clamp(-lh / 2.0, lh);
-            if alpha > 0.0 && bottom > top {
-                text_clip.rect_filled(
-                    Rect::from_min_max(
-                        Pos2::new(cx - w / 2.0, top),
-                        Pos2::new(cx + w / 2.0, bottom),
-                    ),
-                    0.0,
-                    c.accent.gamma_multiply(alpha),
-                );
+            let up = ed.caret_extra_top.clamp(-lh / 2.0, lh);
+            let down = lh + ed.caret_extra_bottom.clamp(-lh / 2.0, lh);
+            if alpha > 0.0 && down > -up {
+                let bar = |x: f32, y: f32| {
+                    text_clip.rect_filled(
+                        Rect::from_min_max(
+                            Pos2::new(x - w / 2.0, y - up),
+                            Pos2::new(x + w / 2.0, y + down),
+                        ),
+                        0.0,
+                        c.accent.gamma_multiply(alpha),
+                    );
+                };
+                if let Some(cp) = cursor_px {
+                    bar(cp.x, cp.y);
+                }
+                // The other cursors blink along with the primary one.
+                for s in all_sels.iter().filter(|s| s.cursor != b.cursor) {
+                    let d = display_col(&b.lines[s.cursor.line], s.cursor.col);
+                    if let Some(row) = row_for(&rows, s.cursor.line, d) {
+                        bar(row.x0 + d as f32 * cw, row.y);
+                    }
+                }
             }
         }
         if b.scroll_y > 0 || b.scroll_row > 0 || b.scroll_px > 0.0 {
@@ -881,6 +935,10 @@ impl Gui {
             }
         } else if let Some(pos) = drag {
             self.app.editor_drag(pos);
+        } else if let Some((pos, n)) = add_caret {
+            self.app.editor_add_caret(pos, n);
+        } else if let Some((from, to)) = column {
+            self.app.editor_column(from, to);
         }
         if let Some((pos, pt, in_sel)) = right_click {
             // Like VS Code: right-click outside the selection moves the cursor there first.

@@ -34,6 +34,10 @@ pub enum Command {
     SelectAll,
     SelectLine,
     SelectWord,
+    SelectAllOccurrences,
+    SplitIntoLines,
+    AddCursorAbove,
+    AddCursorBelow,
     DeleteLine,
     DuplicateLine,
     MoveLineUp,
@@ -54,6 +58,7 @@ pub enum Command {
     FindInFiles,
     ReplaceNext,
     ReplaceAll,
+    FindAll,
     NextResult,
     PrevResult,
     ToggleFindRegex,
@@ -68,6 +73,7 @@ pub enum Command {
     FindReferences,
     Rename,
     Format,
+    CodeActions,
     NextDiagnostic,
     PrevDiagnostic,
     JumpBack,
@@ -225,7 +231,15 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (Paste, "Edit: Paste", true),
     (SelectAll, "Selection: Select All", true),
     (SelectLine, "Selection: Expand to Line", true),
-    (SelectWord, "Selection: Word / Next Occurrence", true),
+    (SelectWord, "Selection: Word / Add Next Occurrence", true),
+    (
+        SelectAllOccurrences,
+        "Selection: Select All Occurrences",
+        true,
+    ),
+    (SplitIntoLines, "Selection: Split into Lines", true),
+    (AddCursorAbove, "Selection: Add Cursor Above", true),
+    (AddCursorBelow, "Selection: Add Cursor Below", true),
     (DeleteLine, "Edit: Delete Line", true),
     (DuplicateLine, "Edit: Duplicate Line", true),
     (MoveLineUp, "Edit: Move Line Up", true),
@@ -246,6 +260,7 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (FindInFiles, "Find in Files…", true),
     (ReplaceNext, "Replace Next", true),
     (ReplaceAll, "Replace All", true),
+    (FindAll, "Find All (a cursor on every match)", true),
     (NextResult, "Find: Next Result", true),
     (PrevResult, "Find: Previous Result", true),
     (ToggleFindRegex, "Find: Toggle Regular Expression", true),
@@ -260,6 +275,7 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (FindReferences, "LSP: Find References", true),
     (Rename, "LSP: Rename Symbol", true),
     (Format, "LSP: Format Document", true),
+    (CodeActions, "LSP: Code Actions / Quick Fix", true),
     (NextDiagnostic, "LSP: Next Diagnostic", true),
     (PrevDiagnostic, "LSP: Previous Diagnostic", true),
     (JumpBack, "Jump Back", true),
@@ -439,6 +455,7 @@ pub fn is_find_command(c: Command) -> bool {
             | FindPrev
             | ReplaceNext
             | ReplaceAll
+            | FindAll
             | NextResult
             | PrevResult
             | ToggleFindRegex

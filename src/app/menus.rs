@@ -36,7 +36,8 @@ impl App {
             Copy | Paste | SelectAll => has_buf,
             SwitchBuffer => !self.buffers.is_empty(),
             c if needs_buffer(c) => has_buf,
-            Completion | Hover | GotoDefinition | FindReferences | Rename | Format => lsp,
+            Completion | Hover | GotoDefinition | FindReferences | Rename | Format
+            | CodeActions => lsp,
             SaveAll => self.any_modified(),
             RevertFile => self.buf().is_some_and(|b| b.path.is_some() && !b.deleted),
             ConvertToUtf8 => self.buf().is_some_and(|b| !b.encoding.is_utf8()),

@@ -56,3 +56,19 @@
   all running servers; `i` install, `r` restart, `s` manager.
 - A server that fails `initialize` is shown as failed with its reason (never stuck on
   "starting").
+- **Code actions** (decided 2026-11-15; Cmd+. / Ctrl+., LSP › Code Actions, or the
+  editor's right-click menu): asks the server what it can do at the cursor or selection,
+  sending the diagnostics on those lines so it can offer their quick fixes. The actions
+  are listed like Goto Anything, the server's preferred fix first, with their kind
+  (quickfix, refactor…) on the right; disabled ones are left out. Choosing one applies
+  its edits (in any file) and runs its command. An action the server sends without its
+  edit is resolved first (`codeAction/resolve`). "No code actions here" when there are
+  none. A diagnostic often sits on the token after the mistake (clangd puts a missing `;`
+  on the next line), so the cursor goes on the squiggle.
+- **Format Document** (LSP › Format Document, also in the right-click menu) applies the
+  server's formatting as one undo step.
+- **Format on save** (`format_on_save`, default off, like Sublime LSP): Cmd+S first asks
+  the server to format the file, then saves it once the edits arrive (or as it is if
+  formatting fails). Saving again while it waits saves right away, so a server that
+  never answers can't block saving. Files without a server that can format are saved
+  directly.

@@ -338,6 +338,8 @@ pub struct Diag {
     pub end: Pos,
     pub severity: u8,
     pub message: String,
+    /// The diagnostic as the server sent it (sent back when asking for code actions).
+    pub raw: Value,
 }
 
 #[derive(Clone, Debug)]
@@ -444,6 +446,12 @@ pub struct App {
     search_gen: u64,
     clip: String,
     clip_line: bool,
+    /// What each cursor copied (pasted back one per cursor when the counts match).
+    clip_parts: Option<Vec<String>>,
+    /// The code actions on offer: (server, buffer id, the action as the server sent it).
+    code_actions: Vec<(usize, usize, Value)>,
+    /// Buffers (ids) being formatted before they're saved.
+    format_saving: std::collections::HashSet<usize>,
     /// Text the GUI should put on the system clipboard.
     pub pending_copy: Option<String>,
     /// Sidebar clipboard: paths and whether they were cut.
@@ -552,6 +560,9 @@ impl App {
             search_gen: 0,
             clip: String::new(),
             clip_line: false,
+            clip_parts: None,
+            code_actions: vec![],
+            format_saving: Default::default(),
             pending_copy: None,
             file_clip: None,
             jumps: vec![],

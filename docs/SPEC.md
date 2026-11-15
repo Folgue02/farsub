@@ -14,6 +14,8 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
   changed on disk, encodings, saving, hover, scrollbars and smooth scrolling
 - [Languages and highlighting](spec/languages-and-highlighting.md): language detection,
   tree-sitter, themes, installable grammars, the regex fallback
+- [Multiple cursors](spec/multiple-cursors.md): Cmd+D, column selection, editing at
+  every cursor; no code folding
 - [Find, Replace and Find in Files](spec/find.md): the find panel, its toggles, replace,
   searching folders, Find Results
 - [File icons](spec/file-icons.md): built-in icons and icon packages

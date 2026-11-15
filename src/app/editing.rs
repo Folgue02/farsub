@@ -45,14 +45,17 @@ impl App {
         let Some(b) = self.buf_mut() else { return };
         let typed: Option<char> = None;
         match k.code {
-            KeyCode::Enter => b.newline(trim_ws),
-            KeyCode::Tab if k.shift => b.outdent(),
-            KeyCode::Tab => {
-                let multi = b.selection().is_some_and(|(a, c)| a.line != c.line);
-                if multi { b.indent() } else { b.insert_indent() }
-            }
+            KeyCode::Enter => b.each(|b| b.newline(trim_ws)),
+            KeyCode::Tab if k.shift => b.each_line(false, |b| b.outdent()),
+            KeyCode::Tab => b.each(|b| {
+                let lines = b.selection().is_some_and(|(a, c)| a.line != c.line);
+                if lines { b.indent() } else { b.insert_indent() }
+            }),
             KeyCode::Esc => {
-                b.anchor = None;
+                // Back to one cursor first, then drop the selection.
+                if !b.single_selection() {
+                    b.anchor = None;
+                }
                 self.completion = None;
             }
             _ => {}
@@ -96,7 +99,7 @@ impl App {
         if b.read_only {
             return;
         }
-        b.insert_char(c);
+        b.each(|b| b.insert_char(c));
         self.hover = None;
         self.after_editor_key(Some(c));
     }
@@ -122,6 +125,9 @@ impl App {
         self.hover = None;
         let Some(b) = self.buf_mut() else { return };
         let pos = b.clamp(pos);
+        if !extend {
+            b.single_selection();
+        }
         match clicks {
             2 => {
                 if let Some((s, e)) = b.word_bounds(pos) {
@@ -140,6 +146,36 @@ impl App {
                 b.want_col = b.cursor.col;
             }
         }
+    }
+
+    /// Cmd+Click: add a cursor there (or remove the one clicked); Cmd+double-click adds
+    /// the word.
+    pub fn editor_add_caret(&mut self, pos: Pos, clicks: u32) {
+        self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
+        let Some(b) = self.buf_mut() else { return };
+        let pos = b.clamp(pos);
+        if clicks >= 2 {
+            // The first click of the double-click already added a caret here.
+            if let Some((s, e)) = b.word_bounds(pos) {
+                b.anchor = Some(s);
+                b.cursor = e;
+            }
+        } else {
+            b.toggle_caret(pos);
+        }
+    }
+
+    /// Alt+drag: a selection per line between two (line, display column) points.
+    pub fn editor_column(&mut self, from: (usize, usize), to: (usize, usize)) {
+        self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
+        let Some(b) = self.buf_mut() else { return };
+        let n = b.lines.len().saturating_sub(1);
+        let (fl, tl) = (from.0.min(n), to.0.min(n));
+        b.column_select(Pos::new(fl, 0), Pos::new(tl, 0), from.1, to.1);
     }
 
     pub fn editor_drag(&mut self, pos: Pos) {
@@ -192,7 +228,41 @@ impl App {
                 }
                 return;
             }
+            Copy | Cut if self.buffers[self.cur].multi() => {
+                // Several cursors: each selection on its own line (whole lines where
+                // nothing is selected, like Sublime).
+                let b = &mut self.buffers[self.cur];
+                let sels = b.sels();
+                let line = sels.iter().all(|s| s.is_empty());
+                let parts = b.selected_texts();
+                let text = if line {
+                    let mut seen = vec![];
+                    sels.iter()
+                        .filter(|s| {
+                            let new = !seen.contains(&s.cursor.line);
+                            seen.push(s.cursor.line);
+                            new
+                        })
+                        .map(|s| format!("{}\n", b.lines[s.cursor.line]))
+                        .collect::<String>()
+                } else {
+                    b.selected_texts().join("\n")
+                };
+                if cmd == Cut && !b.read_only {
+                    if line {
+                        b.each_line(false, |b| b.delete_line());
+                    } else {
+                        b.each(|b| b.insert_text(""));
+                    }
+                }
+                self.clip_parts = (!line).then_some(parts);
+                self.pending_copy = Some(text.clone());
+                self.clip = text;
+                self.clip_line = line;
+                return;
+            }
             Copy | Cut => {
+                self.clip_parts = None;
                 let b = &mut self.buffers[self.cur];
                 let (text, line) = match b.selected_text() {
                     Some(t) => (t, false),
@@ -215,6 +285,7 @@ impl App {
                 return self.paste_text(t);
             }
             Completion => return self.request_completion(),
+            CodeActions => return self.request_code_actions(),
             Hover => {
                 let pos = self.buffers[self.cur].cursor;
                 let id = self.buffers[self.cur].id;
@@ -257,21 +328,8 @@ impl App {
                 return self.prompt("Rename symbol to", &w, PromptKind::RenameSymbol);
             }
             Format => {
-                self.sync_lsp();
-                let b = &self.buffers[self.cur];
-                let (Some(cid), Some(path)) = (b.lsp_client, b.path.clone()) else {
-                    return self.msg("No language server for this file");
-                };
-                let id = b.id;
-                let tab = b.indent_unit == "\t";
-                let size = if tab { 4 } else { b.indent_unit.len() };
-                if let Some(c) = self.lsp.clients.get_mut(&cid) {
-                    c.request(
-                        "textDocument/formatting",
-                        json!({"textDocument": {"uri": path_to_uri(&path)},
-                               "options": {"tabSize": size, "insertSpaces": !tab}}),
-                        Pending::Format { buf: id },
-                    );
+                if !self.request_format(false) {
+                    self.msg("No language server for this file");
                 }
                 return;
             }
@@ -295,26 +353,38 @@ impl App {
                 }
             }
             SelectAll => b.select_all(),
-            SelectLine => b.select_line(),
+            SelectLine => b.each(|b| b.select_line()),
             SelectWord => {
-                b.select_word_or_next();
+                if !b.add_next_occurrence() && b.selection().is_some() {
+                    self.msg("No more occurrences");
+                }
             }
-            DeleteLine => b.delete_line(),
-            DuplicateLine => b.duplicate(),
-            MoveLineUp => b.move_lines(true),
-            MoveLineDown => b.move_lines(false),
+            SelectAllOccurrences => {
+                if !b.select_all_occurrences() {
+                    self.msg("Nothing to select: put the cursor on a word or select text");
+                }
+            }
+            SplitIntoLines => b.split_into_lines(),
+            AddCursorAbove => b.add_cursor_line(true),
+            AddCursorBelow => b.add_cursor_line(false),
+            DeleteLine => b.each_line(false, |b| b.delete_line()),
+            DuplicateLine => b.each_line(false, |b| b.duplicate()),
+            MoveLineUp => b.each_line(false, |b| b.move_lines(true)),
+            MoveLineDown => b.each_line(true, |b| b.move_lines(false)),
             ToggleComment => {
-                if !b.toggle_comment() {
+                let mut ok = true;
+                b.each_line(false, |b| ok &= b.toggle_comment());
+                if !ok {
                     self.msg("No comment syntax known for this file type");
                 }
             }
-            Indent => b.indent(),
-            Outdent => b.outdent(),
-            InsertLineAfter => b.insert_line_after(false),
-            InsertLineBefore => b.insert_line_after(true),
-            JoinLines => b.join_lines(),
-            UpperCase => b.transform_selection(|s| s.to_uppercase()),
-            LowerCase => b.transform_selection(|s| s.to_lowercase()),
+            Indent => b.each_line(false, |b| b.indent()),
+            Outdent => b.each_line(false, |b| b.outdent()),
+            InsertLineAfter => b.each_line(false, |b| b.insert_line_after(false)),
+            InsertLineBefore => b.each_line(false, |b| b.insert_line_after(true)),
+            JoinLines => b.each_line(false, |b| b.join_lines()),
+            UpperCase => b.each(|b| b.transform_selection(|s| s.to_uppercase())),
+            LowerCase => b.each(|b| b.transform_selection(|s| s.to_lowercase())),
             SortLines => b.sort_lines(),
             _ => {}
         }

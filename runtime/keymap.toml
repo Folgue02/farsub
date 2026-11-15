@@ -155,6 +155,7 @@ context = "editor"
 keys = "Ctrl+Shift+Up"
 command = "move_line_up"
 context = "editor"
+platforms = ["windows", "linux"]
 [[keys]]
 keys = "Alt+Down"
 command = "move_line_down"
@@ -162,6 +163,45 @@ context = "editor"
 [[keys]]
 keys = "Ctrl+Shift+Down"
 command = "move_line_down"
+context = "editor"
+platforms = ["windows", "linux"]
+# ---- multiple cursors
+[[keys]]
+keys = "Ctrl+Shift+Up"
+command = "add_cursor_above"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Ctrl+Shift+Down"
+command = "add_cursor_below"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Ctrl+Alt+Up"
+command = "add_cursor_above"
+context = "editor"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Ctrl+Alt+Down"
+command = "add_cursor_below"
+context = "editor"
+platforms = ["windows", "linux"]
+[[keys]]
+keys = "Cmd+."
+command = "code_actions"
+context = "editor"
+[[keys]]
+keys = "Cmd+Shift+L"
+command = "split_into_lines"
+context = "editor"
+[[keys]]
+keys = "Cmd+Alt+G"
+command = "select_all_occurrences"
+context = "editor"
+platforms = ["macos"]
+[[keys]]
+keys = "Alt+F3"
+command = "select_all_occurrences"
 context = "editor"
 [[keys]]
 keys = "Cmd+/"
