@@ -1,6 +1,10 @@
 //! farsub — a Sublime Text-style code editor with a keyboard-driven sidebar, projects,
 //! syntax packages and LSP support.
 
+// A GUI app on Windows: no console window opens with it. Started from a terminal, it
+// attaches to that terminal's console so --help and the headless commands still print.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod app;
 mod cli;
 mod commands;
@@ -39,6 +43,8 @@ use std::process::ExitCode;
 use clap::Parser;
 
 fn main() -> ExitCode {
+    #[cfg(windows)]
+    attach_parent_console();
     let args = cli::Args::parse();
     // Panics end up in the console log (and the log file) as well as on stderr.
     let default_hook = std::panic::take_hook();
@@ -140,6 +146,21 @@ fn main() -> ExitCode {
             eprintln!("farsub: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Print to the console of the terminal we were started from, if any (a GUI-subsystem
+/// program has none of its own).
+#[cfg(windows)]
+fn attach_parent_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    // Fails harmlessly when started from Explorer (no parent console).
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
     }
 }
 

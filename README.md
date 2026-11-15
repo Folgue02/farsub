@@ -507,3 +507,34 @@ projects, workspaces, CLI planning), CLI integration tests against the built bin
 GUI end-to-end tests that drive the real interface headlessly with egui_kittest.
 The LSP test uses clangd if it's installed. `cargo test -- --ignored` also runs real
 npm and pip server installs (network). Set `FARSUB_SHOTS=dir` to save screenshots.
+
+## Versions and releases
+
+Versions follow [semver](https://semver.org) and each release is a git tag `vX.Y.Z`
+(the version also lives in `Cargo.toml`, and `farsub --version` prints it). While the
+version is 0.x, a minor bump may still change behaviour.
+
+1. Tag the release, from a clean tree:
+
+   ```bash
+   scripts/bump-version.sh minor     # or patch / major / 1.4.0; --tag tags the current version
+   git push --follow-tags
+   ```
+
+2. Build the archives: `scripts/release.sh` puts them in `dist/<version>/` with a
+   `SHA256SUMS.txt`:
+   - `farsub-<version>-macos-<arch>.zip`: `farsub.app` (a universal app when rustup has
+     both `aarch64-apple-darwin` and `x86_64-apple-darwin`, otherwise this Mac's
+     architecture).
+   - `farsub-<version>-windows-x86_64.zip`: `farsub.exe`. Build it on Windows with
+     `scripts\release.ps1` (needs rustup and Visual Studio Build Tools), or from a Mac
+     with rustup, `rustup target add x86_64-pc-windows-msvc` and
+     `cargo install --locked cargo-xwin`.
+
+3. On GitHub, create a release from the tag and upload the zips and `SHA256SUMS.txt`.
+
+The macOS app is ad-hoc signed, so on another Mac the first launch needs right-click →
+Open (or `xattr -dr com.apple.quarantine farsub.app`). Set `MACOS_SIGN_IDENTITY` to sign it
+with a Developer ID certificate instead; notarizing isn't automated. To use the `farsub`
+command from a terminal, link it:
+`ln -s /Applications/farsub.app/Contents/MacOS/farsub /usr/local/bin/farsub`.
