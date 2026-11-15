@@ -80,7 +80,7 @@ Nothing about languages, servers, keys or menus is hard-coded. The defaults ship
 folder override them:
 
 ```text
-~/.config/farsub/                 ($FARSUB_CONFIG points at config.toml elsewhere)
+~/.config/farsub/  (Windows: %APPDATA%\farsub)   ($FARSUB_CONFIG points at config.toml elsewhere)
   config.toml          [editor] settings (+ optional [[languages]] / [[servers]])
   languages/<name>.toml   add a language, or replace a built-in with the same name
   servers/<name>.toml     add/replace a language server (nvim-lspconfig style)
@@ -89,14 +89,18 @@ folder override them:
   themes/*.toml        color themes
   queries/<grammar>/highlights.scm   override a grammar's highlighting
   Packages/            packages: themes, highlight queries, icons
-~/.local/share/farsub/                ($FARSUB_DATA or --data-dir)
+~/.local/share/farsub/  (Windows: %LOCALAPPDATA%\farsub)   ($FARSUB_DATA or --data-dir)
   servers/<name>/      servers installed by the server manager
   workspaces/          sessions for folders opened without a project file
   recent.toml          recent projects and the last session
 ```
 
 Saving any of these files inside farsub applies it immediately (Cmd+, opens `config.toml`,
-created from a commented template).
+created from a short template the first time farsub starts).
+
+Opening and saving use the system's file dialogs: **Cmd+O** opens a file, **File › Open
+Folder…** a folder, and Save As / Open Project / Add Folder ask the same way. "File: Open
+Path… (type it)" in the command palette keeps the typed path prompt with Tab completion.
 
 ## Menus and the keymap
 
@@ -228,13 +232,17 @@ farsub, or found on PATH) runs. Built-in definitions:
 | Vim script | vimls | yes (npm) |
 | Prisma | prismals | yes (npm) |
 | CMake | cmake_ls | yes (pip) |
-| Ruby | ruby_lsp, solargraph | no (gem) |
-| Java, Kotlin, Scala | jdtls, kotlin_language_server, metals | no (needs a JDK) |
+| Java | jdtls | yes (eclipse.org; needs Java 21+) |
+| Kotlin | kotlin_lsp (JetBrains), kotlin_language_server | yes (kotlin_lsp brings its own Java, ~370 MB; the other needs Java ≤ 21) |
+| Scala | metals | yes (Coursier; needs Java) |
+| Ruby | ruby_lsp, solargraph | yes (gem, into farsub's folder; needs Ruby) |
+| C# | csharp_ls | yes (dotnet tool; needs the .NET SDK) |
+| Gleam, Odin, Terraform | gleam, ols, terraformls | yes (prebuilt downloads) |
+| Elixir, Nim | elixir_ls, nimlangserver | yes (need Elixir / Nim) |
+| R | r_language_server | yes (R package; needs R) |
 | Swift | sourcekit_lsp | no (ships with Xcode / Swift) |
-| C# | csharp_ls | no (dotnet tool) |
-| Haskell, OCaml | hls, ocamllsp | no (ghcup / opam) |
-| Elixir, Erlang, Gleam | elixir_ls, erlang_ls, gleam | no |
-| Dart, Nim, Odin, Nix, Terraform, R | dartls, nimlangserver, ols, nil_ls / nixd, terraformls, r_language_server | no |
+| Haskell, OCaml | hls, ocamllsp | no (ghcup / opam: must match your compiler) |
+| Dart, Erlang, Nix | dartls, erlang_ls, nil_ls / nixd | no (Dart SDK, your OTP version, Nix) |
 
 Languages with highlighting, comments and indentation defaults but no server yet: SQL,
 GraphQL, Protocol Buffers, PowerShell, Batch, Perl, Julia, Fish, AWK, Groovy / Gradle /
@@ -383,9 +391,18 @@ Click a pane to focus it, and drag the divider to resize. Each pane has scrollba
 (vertical always, horizontal for long lines). The layout is saved with the
 workspace.
 
-**Preferences: Settings** (Cmd+,) opens the full, read-only `Default Settings.toml` on the
-left and your settings file on the right, as in Sublime. Copy over what you want to change
-and save. Closing either pane closes both and restores your layout.
+**Preferences: Settings** (Cmd+,) opens a settings window, as in Sublime: the full,
+read-only `Default Settings.toml` on the left and your settings file on the right. Copy
+over what you want to change and save; every farsub window picks up the change. Closing
+either pane closes the window. The settings file and its folder are created the first time
+farsub starts.
+
+**Preferences › Font…** lists the fonts installed on your computer (monospaced first) and
+previews each one in the editor as you move through them; Enter keeps it (written to your
+settings as `font_face`), Esc goes back. **Preferences › Color Theme…** works the same way.
+
+Pressing Enter on a line that holds only indentation leaves that line empty, so blank lines
+don't keep trailing spaces (`trim_automatic_white_space = false` turns that off).
 
 ## Terminal
 

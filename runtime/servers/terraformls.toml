@@ -3,3 +3,11 @@ command = "terraform-ls"
 args = ["serve"]
 root_markers = [".terraform"]
 description = "Terraform language server (HashiCorp)"
+
+# HashiCorp publishes its binaries on releases.hashicorp.com, not on GitHub.
+[install.url.assets]
+macos-aarch64 = "https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_darwin_arm64.zip"
+macos-x86_64 = "https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_darwin_amd64.zip"
+linux-x86_64 = "https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_linux_amd64.zip"
+linux-aarch64 = "https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_linux_arm64.zip"
+windows-x86_64 = "https://releases.hashicorp.com/terraform-ls/0.39.1/terraform-ls_0.39.1_windows_amd64.zip"

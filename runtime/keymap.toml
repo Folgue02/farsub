@@ -34,7 +34,7 @@ keys = "Cmd+N"
 command = "new_file"
 [[keys]]
 keys = "Cmd+O"
-command = "open_folder"
+command = "open_file"
 [[keys]]
 keys = "Cmd+Shift+T"
 command = "reopen_closed"

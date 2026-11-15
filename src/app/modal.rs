@@ -113,6 +113,59 @@ impl App {
         self.modal = Some(Modal::Prompt(p));
     }
 
+    /// A path chosen in the system's file picker, handled like the typed prompt.
+    pub fn path_picked(&mut self, req: FileRequest, path: &Path) {
+        let kind = match req {
+            FileRequest::OpenFile | FileRequest::OpenFolder => PromptKind::OpenPath,
+            FileRequest::OpenProject => PromptKind::OpenProject,
+            FileRequest::AddFolder => PromptKind::AddFolder,
+            FileRequest::SaveProjectAs => PromptKind::SaveProjectAs,
+            FileRequest::SaveAs(id) => match self.buf_index(id) {
+                Some(i) => {
+                    self.set_cur(i);
+                    PromptKind::SaveAs
+                }
+                None => return,
+            },
+            _ => return,
+        };
+        self.prompt_accept(Prompt {
+            title: String::new(),
+            input: LineEdit::new(&path.display().to_string()),
+            kind,
+        });
+    }
+
+    /// Where a file picker starts, and the name it suggests (Save As).
+    pub fn picker_start(&self, req: FileRequest) -> (PathBuf, Option<String>) {
+        let base = self.base_dir();
+        match req {
+            FileRequest::SaveAs(id) => {
+                let p = self
+                    .buf_index(id)
+                    .and_then(|i| self.buffers[i].path.clone());
+                match p {
+                    Some(p) => (
+                        p.parent().map(Path::to_path_buf).unwrap_or(base),
+                        p.file_name().map(|n| n.to_string_lossy().into_owned()),
+                    ),
+                    None => (base, None),
+                }
+            }
+            FileRequest::SaveProjectAs => {
+                let name = match &self.project.file {
+                    Some(f) => f.file_name().map(|n| n.to_string_lossy().into_owned()),
+                    None => base
+                        .file_name()
+                        .map(|n| format!("{}.{}", n.to_string_lossy(), project::PROJECT_EXT)),
+                };
+                (base, name)
+            }
+            FileRequest::AddFolder => (base.parent().map(Path::to_path_buf).unwrap_or(base), None),
+            _ => (base, None),
+        }
+    }
+
     pub(super) fn prompt_accept(&mut self, p: Prompt) {
         let input = p.input.text().trim().to_string();
         match p.kind {

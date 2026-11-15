@@ -41,10 +41,11 @@ impl App {
         }
         // Movement, selection and deletion keys are keymap commands (handled above via
         // run → run_editor → Buffer::apply_motion). Only structural keys remain here.
+        let trim_ws = self.config.editor.trim_automatic_white_space;
         let Some(b) = self.buf_mut() else { return };
         let typed: Option<char> = None;
         match k.code {
-            KeyCode::Enter => b.newline(),
+            KeyCode::Enter => b.newline(trim_ws),
             KeyCode::Tab if k.shift => b.outdent(),
             KeyCode::Tab => {
                 let multi = b.selection().is_some_and(|(a, c)| a.line != c.line);
@@ -167,12 +168,9 @@ impl App {
         match cmd {
             Save => return self.save_current(),
             SaveAs => {
-                let def = self
-                    .buf()
-                    .and_then(|b| b.path.as_ref())
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                return self.prompt("Save as", &def, PromptKind::SaveAs);
+                let id = self.buffers[self.cur].id;
+                self.file_request = Some(FileRequest::SaveAs(id));
+                return;
             }
             CloseBuffer => {
                 let b = &self.buffers[self.cur];

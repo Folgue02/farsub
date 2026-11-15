@@ -69,9 +69,12 @@ impl Client {
         tx: EventTx,
     ) -> io::Result<Client> {
         let server = server.clone();
-        let mut vars: Vec<(&str, String)> = vec![("root", root.display().to_string())];
-        if let Some(h) = std::env::var_os("HOME") {
-            vars.push(("home", PathBuf::from(h).display().to_string()));
+        let mut vars: Vec<(&str, String)> = vec![
+            ("root", root.display().to_string()),
+            ("root_id", root_id(root)),
+        ];
+        if let Some(h) = crate::paths::home_dir() {
+            vars.push(("home", h.display().to_string()));
         }
         if let Some(d) = install_dir {
             vars.push(("install_dir", d.display().to_string()));
@@ -105,6 +108,8 @@ impl Client {
         );
         let mut child = Command::new(cmd)
             .args(&args)
+            // For launchers that keep data per project (installer.rs `{root_id}`).
+            .env("FARSUB_ROOT_ID", root_id(root))
             .envs(env)
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -454,28 +459,59 @@ pub fn from_lsp(lines: &[String], line: u32, character: u32) -> Pos {
 
 fn which(cmd: &str) -> Option<PathBuf> {
     let p = Path::new(cmd);
-    if p.is_absolute() || cmd.contains('/') {
+    if p.is_absolute() || cmd.contains('/') || cmd.contains('\\') {
         return p.is_file().then(|| p.to_path_buf());
     }
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
     // GUI apps launched from Finder/Dock get a minimal PATH; check the usual places too.
-    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+    if let Some(home) = crate::paths::home_dir() {
         for d in [
             ".cargo/bin",
             ".local/bin",
             "go/bin",
             ".npm-global/bin",
             ".bun/bin",
+            ".local/share/mise/shims",
+            ".asdf/shims",
+            ".dotnet/tools",
+            "scoop/shims",
         ] {
             dirs.push(home.join(d));
         }
     }
-    for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
-        dirs.push(PathBuf::from(d));
+    if cfg!(windows) {
+        // npm's global folder; Program Files installs usually add themselves to PATH.
+        if let Some(a) = std::env::var_os("APPDATA") {
+            dirs.push(PathBuf::from(a).join("npm"));
+        }
+    } else {
+        for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+            dirs.push(PathBuf::from(d));
+        }
     }
-    dirs.into_iter().map(|d| d.join(cmd)).find(|p| p.is_file())
+    // Windows runs `npm` as npm.cmd, `java` as java.exe…: try the executable extensions.
+    let names: Vec<String> = if cfg!(windows) && p.extension().is_none() {
+        let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        exts.split(';')
+            .filter(|e| !e.is_empty())
+            .map(|e| format!("{cmd}{}", e.to_ascii_lowercase()))
+            .collect()
+    } else {
+        vec![cmd.to_string()]
+    };
+    dirs.into_iter()
+        .flat_map(|d| names.iter().map(move |n| d.join(n)))
+        .find(|p| p.is_file())
+}
+
+/// A short id for a project folder (servers that keep per-project data, like jdtls).
+pub fn root_id(root: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    root.hash(&mut h);
+    format!("{:016x}", h.finish())
 }
 
 /// Recent lookups: screens like the server manager ask about every server each frame, and

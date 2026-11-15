@@ -4,6 +4,11 @@
   key combination is registered once (a sidebar-only binding must never capture a key
   while typing — e.g. Cmd+X always cuts text in the editor).
 - Windows/Linux: in-window menu bar; F10 opens the in-window menus everywhere.
+- **Opening and saving use the system's file dialogs** (decided 2026-11-15): Cmd+O = File
+  › Open File…, File › Open Folder…, Project › Open Project… / Add Folder… / Save Project
+  As…, and Save As (also Save on an untitled file). The typed prompt with Tab completion
+  stays available as "File: Open Path… (type it)". Open Folder has no default key
+  (Cmd+O used to open a folder or a file in one typed prompt).
 - Cursor movement, selection and deletion are keymap commands (`move_word_left`,
   `select_to_line_end`, `delete_word_left`, … in `keymap.toml`) with platform defaults:
   macOS Option = word, Cmd = line/document, Ctrl+A/E = line start/end; Windows/Linux

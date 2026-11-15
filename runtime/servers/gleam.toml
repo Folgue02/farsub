@@ -3,3 +3,13 @@ command = "gleam"
 args = ["lsp"]
 root_markers = ["gleam.toml"]
 description = "Gleam language server (built into the gleam binary)"
+
+[install.github]
+repo = "gleam-lang/gleam"
+[install.github.assets]
+macos-aarch64 = "gleam-v*-aarch64-apple-darwin.tar.gz"
+macos-x86_64 = "gleam-v*-x86_64-apple-darwin.tar.gz"
+linux-x86_64 = "gleam-v*-x86_64-unknown-linux-musl.tar.gz"
+linux-aarch64 = "gleam-v*-aarch64-unknown-linux-musl.tar.gz"
+windows-x86_64 = "gleam-v*-x86_64-pc-windows-msvc.zip"
+windows-aarch64 = "gleam-v*-aarch64-pc-windows-msvc.zip"

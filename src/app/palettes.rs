@@ -135,6 +135,28 @@ impl App {
                     action: Action::Buffer(i),
                 })
                 .collect(),
+            Mode::Fonts => {
+                let cur = self.config.editor.font_face.clone();
+                let mut items = vec![Item {
+                    label: "Built-in (Hack)".into(),
+                    detail: if cur.is_empty() {
+                        "current".into()
+                    } else {
+                        "monospace".into()
+                    },
+                    action: Action::Font(String::new()),
+                }];
+                items.extend(crate::fonts::families().into_iter().map(|f| Item {
+                    detail: match (f.name == cur, f.mono) {
+                        (true, _) => "current".into(),
+                        (false, true) => "monospace".into(),
+                        (false, false) => String::new(),
+                    },
+                    action: Action::Font(f.name.clone()),
+                    label: f.name,
+                }));
+                items
+            }
             Mode::Themes => {
                 let cur = self.config.editor.theme.clone();
                 self.syn
@@ -375,6 +397,13 @@ impl App {
             }
             return;
         }
+        if p.mode == Mode::Fonts {
+            // The GUI loads the font next frame.
+            if let Some(Action::Font(f)) = p.selected().map(|i| i.action.clone()) {
+                self.config.editor.font_face = f;
+            }
+            return;
+        }
         let target = match p.mode {
             Mode::Symbols => match p.selected().map(|i| &i.action) {
                 Some(Action::Goto(pos)) => Some(*pos),
@@ -401,10 +430,18 @@ impl App {
         match k.code {
             KeyCode::Esc => {
                 let origin = p.origin;
-                if p.mode == Mode::Themes
+                let mode = p.mode;
+                if mode == Mode::Themes
                     && let Some(t) = self.theme_before.take()
                 {
                     self.apply_theme(&t);
+                    self.modal = None;
+                    return;
+                }
+                if mode == Mode::Fonts
+                    && let Some(f) = self.font_before.take()
+                {
+                    self.config.editor.font_face = f;
                     self.modal = None;
                     return;
                 }
@@ -553,10 +590,18 @@ impl App {
             Action::Theme(n) => {
                 self.apply_theme(&n);
                 self.theme_before = None;
-                self.msg(format!(
-                    "Theme: {n} (set theme = \"{n}\" in settings to keep it)"
-                ));
-                self.config.editor.theme = n;
+                self.config.editor.theme = n.clone();
+                self.keep_setting("theme", &n, &format!("Theme: {n}"));
+            }
+            Action::Font(f) => {
+                self.font_before = None;
+                self.config.editor.font_face = f.clone();
+                let label = if f.is_empty() {
+                    "the built-in font".to_string()
+                } else {
+                    f.clone()
+                };
+                self.keep_setting("font_face", &f, &format!("Font: {label}"));
             }
             Action::None => {}
         }

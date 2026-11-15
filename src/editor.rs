@@ -909,12 +909,25 @@ impl Buffer {
         self.commit(before, true);
     }
 
-    pub fn newline(&mut self) {
+    /// Enter: a new line indented like this one (one level deeper after an opener). With
+    /// `trim_ws`, a line holding only indentation is emptied first, so blank lines don't
+    /// keep trailing spaces (Sublime's `trim_automatic_white_space`).
+    pub fn newline(&mut self, trim_ws: bool) {
         if self.read_only {
             return;
         }
         let before = self.begin();
         self.delete_selection();
+        let l = self.cursor.line;
+        let blank = self.lines[l].chars().all(|c| c == ' ' || c == '\t');
+        if trim_ws && blank && !self.lines[l].is_empty() && self.cursor.col == self.line_len(l) {
+            // Its indentation still carries to the new line below.
+            let indent = self.lines[l].clone();
+            self.delete(Pos::new(l, 0), self.cursor);
+            self.cursor = self.insert(Pos::new(l, 0), &format!("\n{indent}"));
+            self.commit(before, false);
+            return;
+        }
         let line = &self.lines[self.cursor.line];
         let indent: String = line
             .chars()
@@ -1868,9 +1881,31 @@ mod tests {
     fn newline_indents_between_braces() {
         let mut b = buf("fn a() {}");
         b.goto(Pos::new(0, 8));
-        b.newline();
+        b.newline(true);
         assert_eq!(b.text(), "fn a() {\n    \n}");
         assert_eq!(b.cursor, Pos::new(1, 4));
+    }
+
+    #[test]
+    fn enter_on_an_indentation_only_line_leaves_it_empty() {
+        let mut b = buf("def main():");
+        b.lang = Some("python".into());
+        b.goto(Pos::new(0, 11));
+        b.newline(true);
+        b.insert_text("pass");
+        b.newline(true);
+        b.newline(true);
+        // The blank line between the body and what follows has no trailing spaces, and the
+        // new line is still indented.
+        assert_eq!(b.text(), "def main():\n    pass\n\n    ");
+        assert_eq!(b.cursor, Pos::new(3, 4));
+        b.undo();
+        assert_eq!(b.text(), "def main():\n    pass\n    ", "one undo step");
+        // Off: the indentation stays.
+        let mut b = buf("    ");
+        b.goto(Pos::new(0, 4));
+        b.newline(false);
+        assert_eq!(b.text(), "    \n    ");
     }
 
     #[test]

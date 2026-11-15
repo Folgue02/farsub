@@ -340,10 +340,7 @@ pub(super) fn complete_path(base: &Path, input: &str) -> String {
     let dir = if dir_part.starts_with('/') {
         PathBuf::from(dir_part)
     } else if let Some(rest) = dir_part.strip_prefix("~/") {
-        std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_default()
-            .join(rest)
+        crate::paths::home_dir().unwrap_or_default().join(rest)
     } else {
         base.join(dir_part)
     };

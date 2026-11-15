@@ -190,7 +190,7 @@ impl Gui {
         if t.nodes.is_empty() {
             let clip = p.with_clip_rect(list);
             let lines: &[&str] = if self.app.project.folders.is_empty() {
-                &["No folder open", "File › Open Folder… (Cmd+O)"]
+                &["No folder open", "File › Open Folder…"]
             } else {
                 &["(empty folder — press a to add a file)"]
             };

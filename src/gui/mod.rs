@@ -131,6 +131,8 @@ pub struct Gui {
     text_geom: (f32, f32, f32, f32),
     last_tree_sel: Option<usize>,
     last_title: String,
+    /// The editor font now loaded (`font_face`; None before the first frame).
+    applied_font: Option<String>,
     pub menu_titles: Vec<Rect>,
     /// Clickable status-bar items of the last frame.
     pub status_hits: Vec<(crate::commands::Command, Rect)>,
@@ -205,6 +207,7 @@ impl Gui {
             text_geom: (0.0, 0.0, 0.0, 0.0),
             last_tree_sel: None,
             last_title: String::new(),
+            applied_font: None,
             menu_titles: vec![],
             status_hits: vec![],
             hover_rect: None,
@@ -335,6 +338,12 @@ impl Gui {
         };
         if (ctx.zoom_factor() - scale).abs() > f32::EPSILON {
             ctx.set_zoom_factor(scale);
+        }
+        // The editor font (`font_face`), loaded when it changes (also while previewing).
+        let want = self.app.config.editor.font_face.clone();
+        if self.applied_font.as_deref() != Some(want.as_str()) {
+            self.apply_font(&ctx, &want);
+            self.applied_font = Some(want);
         }
         self.pump();
         self.handle_input(&ctx);
@@ -873,37 +882,97 @@ fn draw_line_edit(
 }
 
 impl Gui {
+    /// Use an installed font family for monospace text (the editor, inputs); "" = built-in.
+    /// The built-in font stays behind it for characters the chosen one lacks.
+    fn apply_font(&mut self, ctx: &egui::Context, name: &str) {
+        let mut defs = egui::FontDefinitions::default();
+        if !name.is_empty() {
+            match crate::fonts::load(name) {
+                Some((bytes, index)) => {
+                    let mut fd = egui::FontData::from_owned(bytes);
+                    fd.index = index;
+                    defs.font_data
+                        .insert("farsub-editor".into(), std::sync::Arc::new(fd));
+                    defs.families
+                        .entry(egui::FontFamily::Monospace)
+                        .or_default()
+                        .insert(0, "farsub-editor".into());
+                }
+                None => self.app.msg(format!(
+                    "The font \"{name}\" isn't installed; using the built-in one"
+                )),
+            }
+        }
+        ctx.set_fonts(defs);
+    }
+
     /// A command asked for a file or folder: show the system's picker, then install.
     fn answer_file_request(&mut self) {
         use crate::app::FileRequest::*;
         let Some(req) = self.app.file_request.take() else {
             return;
         };
-        let archives = ["zip", "gz", "tgz", "tar", "crate"];
-        let picked = match req {
-            PackageFile => rfd::FileDialog::new()
-                .set_title("Install a package (archive)")
-                .add_filter("Package archive", &archives)
-                .pick_file(),
-            PackageFolder => rfd::FileDialog::new()
-                .set_title("Install a package (folder)")
-                .pick_folder(),
-            GrammarFile => rfd::FileDialog::new()
-                .set_title("Install a tree-sitter grammar (source archive)")
-                .add_filter("Grammar source archive", &archives)
-                .pick_file(),
-            GrammarFolder => rfd::FileDialog::new()
-                .set_title("Install a tree-sitter grammar (source folder)")
-                .pick_folder(),
-            FindFolder => rfd::FileDialog::new()
-                .set_title("Search in folder")
-                .pick_folder(),
+        let (start, name) = self.app.picker_start(req);
+        #[cfg(test)]
+        let picked = {
+            // Tests can't click a native dialog: they set the answer beforehand.
+            let _ = (&start, &name);
+            self.app.test_pick.take()
+        };
+        #[cfg(not(test))]
+        let picked = {
+            let archives = ["zip", "gz", "tgz", "tar", "crate"];
+            let dialog = || rfd::FileDialog::new().set_directory(&start);
+            let project = ["farsub-project"];
+            match req {
+                PackageFile => dialog()
+                    .set_title("Install a package (archive)")
+                    .add_filter("Package archive", &archives)
+                    .pick_file(),
+                PackageFolder => dialog()
+                    .set_title("Install a package (folder)")
+                    .pick_folder(),
+                GrammarFile => dialog()
+                    .set_title("Install a tree-sitter grammar (source archive)")
+                    .add_filter("Grammar source archive", &archives)
+                    .pick_file(),
+                GrammarFolder => dialog()
+                    .set_title("Install a tree-sitter grammar (source folder)")
+                    .pick_folder(),
+                FindFolder => dialog().set_title("Search in folder").pick_folder(),
+                OpenFile => dialog().set_title("Open File").pick_file(),
+                OpenFolder => dialog().set_title("Open Folder").pick_folder(),
+                OpenProject => dialog()
+                    .set_title("Open Project")
+                    .add_filter("farsub project", &project)
+                    .pick_file(),
+                AddFolder => dialog().set_title("Add Folder to Project").pick_folder(),
+                SaveAs(_) => {
+                    let d = dialog().set_title("Save As");
+                    match &name {
+                        Some(n) => d.set_file_name(n),
+                        None => d,
+                    }
+                    .save_file()
+                }
+                SaveProjectAs => {
+                    let d = dialog()
+                        .set_title("Save Project As")
+                        .add_filter("farsub project", &project);
+                    match &name {
+                        Some(n) => d.set_file_name(n),
+                        None => d,
+                    }
+                    .save_file()
+                }
+            }
         };
         let Some(path) = picked else { return };
         match req {
             PackageFile | PackageFolder => self.app.install_package_from(path),
             GrammarFile | GrammarFolder => self.app.install_grammar_from(path),
             FindFolder => self.app.add_find_folder(path),
+            _ => self.app.path_picked(req, &path),
         }
     }
 }

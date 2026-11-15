@@ -114,13 +114,60 @@ pub fn run_install(data: &Path, s: &ServerConfig, log: &dyn Fn(String)) -> Resul
     Ok(bin)
 }
 
-/// Returns the executable's path relative to the install folder.
+/// Returns the executable's path relative to the install folder: check what the install
+/// needs, fetch the source, run the extra commands, write the launcher.
 fn install_into(
     dir: &Path,
     spec: &InstallSpec,
     bin: &str,
     log: &dyn Fn(String),
 ) -> Result<PathBuf, String> {
+    for tool in &spec.needs {
+        if crate::lsp::find_server(tool).is_none() {
+            let hint = spec
+                .needs_hint
+                .clone()
+                .unwrap_or_else(|| format!("install {tool} first"));
+            return Err(format!("`{tool}` not found — {hint}"));
+        }
+    }
+    let file = bin_file(spec, bin);
+    // With a launcher or extra commands, the download doesn't hold the executable itself.
+    let find = (spec.wrapper.is_none() && spec.run.is_empty()).then_some(file.as_str());
+    let main = install_source(dir, spec, bin, find, log)?;
+    if main.is_none() && spec.run.is_empty() && spec.wrapper.is_none() {
+        return Err("the [install] section names no source (npm, pip, cargo, go, github, url, run or script)".into());
+    }
+    for step in &spec.run {
+        run_step(dir, step, log)?;
+    }
+    if let Some(w) = &spec.wrapper {
+        return write_wrapper(dir, w, bin, log);
+    }
+    match main {
+        Some(p) => Ok(p),
+        None => find_file(dir, &file)
+            .map(|f| f.strip_prefix(dir).unwrap_or(&f).to_path_buf())
+            .ok_or_else(|| format!("{file} not found after installing")),
+    }
+}
+
+/// The executable's file name on this platform.
+fn bin_file(spec: &InstallSpec, bin: &str) -> String {
+    match &spec.bin_windows {
+        Some(w) if cfg!(windows) => w.clone(),
+        _ => exe(bin),
+    }
+}
+
+/// The main source; None if the recipe has none (only `run` / `wrapper`).
+fn install_source(
+    dir: &Path,
+    spec: &InstallSpec,
+    bin: &str,
+    find: Option<&str>,
+    log: &dyn Fn(String),
+) -> Result<Option<PathBuf>, String> {
     let need = |tool: &str, hint: &str| {
         crate::lsp::find_server(tool).ok_or_else(|| format!("`{tool}` not found — {hint}"))
     };
@@ -139,7 +186,7 @@ fn install_into(
         } else {
             bin.to_string()
         };
-        return Ok(Path::new("node_modules").join(".bin").join(b));
+        return Ok(Some(Path::new("node_modules").join(".bin").join(b)));
     }
     if !spec.pip.is_empty() {
         let py = crate::lsp::find_server("python3")
@@ -160,24 +207,35 @@ fn install_into(
         ])
         .args(&spec.pip);
         run(c, dir, log)?;
-        return Ok(Path::new("venv").join(scripts).join(exe(bin)));
+        return Ok(Some(Path::new("venv").join(scripts).join(exe(bin))));
     }
     if let Some(krate) = &spec.cargo {
         let cargo = need("cargo", "install Rust (rustup.rs)")?;
         let mut c = Command::new(cargo);
         c.args(["install", "--root"]).arg(dir).arg(krate);
         run(c, dir, log)?;
-        return Ok(Path::new("bin").join(exe(bin)));
+        return Ok(Some(Path::new("bin").join(exe(bin))));
     }
     if let Some(module) = &spec.go {
         let go = need("go", "install Go (go.dev)")?;
         let mut c = Command::new(go);
         c.args(["install", module]).env("GOBIN", dir.join("bin"));
         run(c, dir, log)?;
-        return Ok(Path::new("bin").join(exe(bin)));
+        return Ok(Some(Path::new("bin").join(exe(bin))));
     }
     if let Some(gh) = &spec.github {
-        return github_install(dir, gh, bin, log);
+        return github_install(dir, gh, find, log);
+    }
+    if let Some(u) = &spec.url {
+        let url = crate::config::platform_asset(&u.assets).ok_or_else(|| {
+            format!(
+                "no download for {}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )
+        })?;
+        let name = url.rsplit('/').next().unwrap_or("download").to_string();
+        return download_and_extract(dir, url, &name, 0, find, u.file.as_deref(), log);
     }
     if let Some(script) = &spec.script {
         let (sh, flag) = if cfg!(windows) {
@@ -188,9 +246,141 @@ fn install_into(
         let mut c = Command::new(sh);
         c.arg(flag).arg(script).env("FARSUB_INSTALL_DIR", dir);
         run(c, dir, log)?;
-        return Ok(PathBuf::from(bin));
+        return Ok(Some(PathBuf::from(bin)));
     }
-    Err("the [install] section names no source (npm, pip, cargo, go or script)".into())
+    Ok(None)
+}
+
+/// Fill in `{dir}`, `{dir/}` (forward slashes), `{os}` and `{arm}`.
+fn expand(s: &str, dir: &Path) -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "mac",
+        "windows" => "win",
+        _ => "linux",
+    };
+    let arm = if std::env::consts::ARCH == "aarch64" {
+        "_arm"
+    } else {
+        ""
+    };
+    s.replace("{dir/}", &dir.display().to_string().replace('\\', "/"))
+        .replace("{dir}", &dir.display().to_string())
+        .replace("{os}", os)
+        .replace("{arm}", arm)
+}
+
+/// A path whose file name may hold `*`: the last match (newest version) in its folder.
+fn resolve_glob(path: &str) -> Result<PathBuf, String> {
+    let p = Path::new(path);
+    let name = p
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !name.contains('*') {
+        return if p.exists() {
+            Ok(p.to_path_buf())
+        } else {
+            Err(format!("{path} not found"))
+        };
+    }
+    let glob = globset::Glob::new(&name)
+        .map_err(|e| format!("bad pattern {name:?}: {e}"))?
+        .compile_matcher();
+    let parent = p.parent().unwrap_or(Path::new("."));
+    let mut hits: Vec<PathBuf> = std::fs::read_dir(parent)
+        .map_err(|e| format!("{}: {e}", parent.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|f| f.file_name().is_some_and(|n| glob.is_match(n)))
+        .collect();
+    hits.sort();
+    hits.pop().ok_or_else(|| format!("nothing matches {path}"))
+}
+
+#[cfg(unix)]
+fn make_executable(p: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755));
+}
+#[cfg(not(unix))]
+fn make_executable(_: &Path) {}
+
+/// A program for a run step or launcher: under the install folder (`{dir}/…`), or on PATH.
+fn program(dir: &Path, command: &str) -> Result<PathBuf, String> {
+    if command.contains("{dir") {
+        let p = resolve_glob(&expand(command, dir))?;
+        make_executable(&p);
+        return Ok(p);
+    }
+    crate::lsp::find_server(command).ok_or_else(|| format!("`{command}` not found"))
+}
+
+fn run_step(dir: &Path, step: &crate::config::RunStep, log: &dyn Fn(String)) -> Result<(), String> {
+    let mut c = Command::new(program(dir, &step.command)?);
+    c.args(step.args.iter().map(|a| expand(a, dir)));
+    run(c, dir, log)
+}
+
+/// Write the launcher (`launch-<bin>`, or `launch-<bin>.cmd` on Windows) and return it.
+fn write_wrapper(
+    dir: &Path,
+    w: &crate::config::Wrapper,
+    bin: &str,
+    log: &dyn Fn(String),
+) -> Result<PathBuf, String> {
+    let template = match &w.command_windows {
+        Some(c) if cfg!(windows) => c,
+        _ => &w.command,
+    };
+    let command = program(dir, template)?.display().to_string();
+    let mut args = vec![];
+    for a in &w.args {
+        let e = expand(a, dir);
+        args.push(if e.contains('*') {
+            resolve_glob(&e)?.display().to_string()
+        } else {
+            e
+        });
+    }
+    let mut env: Vec<(String, String)> = w
+        .env
+        .iter()
+        .map(|(k, v)| (k.clone(), expand(v, dir)))
+        .collect();
+    env.sort();
+    let (name, text) = if cfg!(windows) {
+        let q = |s: &str| format!("\"{}\"", s.replace("{root_id}", "%FARSUB_ROOT_ID%"));
+        let mut t = String::from("@echo off\r\n");
+        for (k, v) in &env {
+            t.push_str(&format!("set \"{k}={v}\"\r\n"));
+        }
+        let line: Vec<String> = std::iter::once(command.as_str())
+            .chain(args.iter().map(String::as_str))
+            .map(q)
+            .collect();
+        t.push_str(&format!("{} %*\r\n", line.join(" ")));
+        (format!("launch-{bin}.cmd"), t)
+    } else {
+        // Single-quoted, except the per-project id, which the shell fills in.
+        let q = |s: &str| {
+            format!("'{}'", s.replace('\'', "'\\''")).replace("{root_id}", "'\"$FARSUB_ROOT_ID\"'")
+        };
+        let mut t = String::from("#!/bin/sh\n# Written by farsub's installer.\n");
+        for (k, v) in &env {
+            t.push_str(&format!("export {k}={}\n", q(v)));
+        }
+        let line: Vec<String> = std::iter::once(command.as_str())
+            .chain(args.iter().map(String::as_str))
+            .map(q)
+            .collect();
+        t.push_str(&format!("exec {} \"$@\"\n", line.join(" ")));
+        (format!("launch-{bin}"), t)
+    };
+    let path = dir.join(&name);
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    make_executable(&path);
+    log(format!("wrote the launcher {name} ({command})"));
+    Ok(PathBuf::from(name))
 }
 
 pub(crate) fn http_get(url: &str) -> Result<ureq::Response, String> {
@@ -210,9 +400,9 @@ pub(crate) fn http_get(url: &str) -> Result<ureq::Response, String> {
 fn github_install(
     dir: &Path,
     gh: &crate::config::GithubSource,
-    bin: &str,
+    find: Option<&str>,
     log: &dyn Fn(String),
-) -> Result<PathBuf, String> {
+) -> Result<Option<PathBuf>, String> {
     let pattern = gh.asset_for_this_platform().ok_or_else(|| {
         format!(
             "{} has no prebuilt binary for {}-{}",
@@ -251,27 +441,53 @@ fn github_install(
         .as_str()
         .ok_or("asset has no download URL")?;
     let size = asset["size"].as_u64().unwrap_or(0);
-    log(format!(
-        "downloading {name} ({:.1} MB) from release {tag}",
-        size as f64 / 1_048_576.0
-    ));
-    let archive = dir.join(&name);
+    log(format!("release {tag}"));
+    download_and_extract(dir, url, &name, size, find, gh.file.as_deref(), log)
+}
+
+/// Download `url` into `dir` as `name`, unpack it, and find the executable `find` (or
+/// `single`, the name a single-file download is saved as) in it.
+fn download_and_extract(
+    dir: &Path,
+    url: &str,
+    name: &str,
+    size: u64,
+    find: Option<&str>,
+    single: Option<&str>,
+    log: &dyn Fn(String),
+) -> Result<Option<PathBuf>, String> {
+    if size > 0 {
+        log(format!(
+            "downloading {name} ({:.1} MB)",
+            size as f64 / 1_048_576.0
+        ));
+    } else {
+        log(format!("downloading {url}"));
+    }
+    let archive = dir.join(name);
     {
         let mut reader = http_get(url)?.into_reader();
         let mut f = std::fs::File::create(&archive).map_err(|e| e.to_string())?;
         std::io::copy(&mut reader, &mut f).map_err(|e| format!("download failed: {e}"))?;
     }
     log(format!("extracting {name}"));
-    extract(&archive, dir, &exe(bin))?;
+    let single = single
+        .map(exe)
+        .or(find.map(String::from))
+        .unwrap_or_else(|| "download".into());
+    extract(&archive, dir, &single)?;
     let _ = std::fs::remove_file(&archive);
-    let found =
-        find_file(dir, &exe(bin)).ok_or_else(|| format!("{} not found in {name}", exe(bin)))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&found, std::fs::Permissions::from_mode(0o755));
-    }
-    Ok(found.strip_prefix(dir).unwrap_or(&found).to_path_buf())
+    let Some(find) = find else {
+        if let Some(p) = find_file(dir, &single) {
+            make_executable(&p);
+        }
+        return Ok(None);
+    };
+    let found = find_file(dir, find).ok_or_else(|| format!("{find} not found in {name}"))?;
+    make_executable(&found);
+    Ok(Some(
+        found.strip_prefix(dir).unwrap_or(&found).to_path_buf(),
+    ))
 }
 
 /// Unpack `.zip`, `.tar.gz`/`.tgz`, `.tar.xz`, `.tar`, a single gzipped file
@@ -282,7 +498,8 @@ pub(crate) fn extract(archive: &Path, dir: &Path, bin: &str) -> Result<(), Strin
         .map(|n| n.to_string_lossy().to_lowercase())
         .unwrap_or_default();
     let open = || std::fs::File::open(archive).map_err(|e| e.to_string());
-    if name.ends_with(".zip") {
+    // A .vsix (VS Code extension) is a zip too.
+    if name.ends_with(".zip") || name.ends_with(".vsix") {
         let mut z = zip::ZipArchive::new(open()?).map_err(|e| format!("bad zip: {e}"))?;
         z.extract(dir).map_err(|e| format!("unzip failed: {e}"))?;
     } else if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
@@ -477,34 +694,76 @@ mod tests {
         assert_eq!(g.asset_for_this_platform(), Some("any-arch-*.zip"));
         g.assets.insert(format!("{os}-{arch}"), "exact.gz".into());
         assert_eq!(g.asset_for_this_platform(), Some("exact.gz"));
-        // Every built-in GitHub recipe covers the three desktop platforms.
+        g.assets.clear();
+        g.assets.insert("all".into(), "server.zip".into());
+        assert_eq!(
+            g.asset_for_this_platform(),
+            Some("server.zip"),
+            "\"all\" fits anywhere"
+        );
+        // Every built-in download recipe (GitHub release or URL) covers the three desktop
+        // platforms.
         let cfg = crate::config::Config::builtin();
-        let github: Vec<String> = cfg
-            .servers
-            .iter()
-            .filter(|s| s.install.as_ref().is_some_and(|i| i.github.is_some()))
-            .map(|s| s.name.clone())
-            .collect();
-        assert!(github.len() >= 8, "{github:?}");
-        for name in &github {
-            let gh = cfg
-                .server(name)
-                .unwrap()
-                .install
-                .clone()
-                .unwrap()
-                .github
-                .unwrap();
+        let mut checked = 0;
+        for s in &cfg.servers {
+            let Some(i) = &s.install else { continue };
+            let assets = match (&i.github, &i.url) {
+                (Some(g), _) => &g.assets,
+                (_, Some(u)) => &u.assets,
+                _ => continue,
+            };
+            checked += 1;
             for plat in ["macos", "linux", "windows"] {
                 assert!(
-                    gh.assets
+                    assets
                         .keys()
-                        .any(|k| k == plat || k.starts_with(&format!("{plat}-"))),
-                    "{name} has no {plat} asset"
+                        .any(|k| k == "all" || k == plat || k.starts_with(&format!("{plat}-"))),
+                    "{} has no {plat} download",
+                    s.name
                 );
             }
         }
+        assert!(checked >= 15, "{checked}");
     }
+    #[cfg(unix)]
+    #[test]
+    fn launchers_pass_args_env_globs_and_the_project_id() {
+        let d = std::env::temp_dir().join(format!("farsub-wrap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("plugins")).unwrap();
+        for v in ["1.2", "1.10", "1.9"] {
+            std::fs::write(d.join(format!("plugins/launcher_{v}.jar")), "").unwrap();
+        }
+        // A "program" that prints what it got.
+        std::fs::write(d.join("tool"), "#!/bin/sh\necho \"$GREETING|$*\"\n").unwrap();
+        let w = crate::config::Wrapper {
+            command: "{dir}/tool".into(),
+            args: vec![
+                "-jar".into(),
+                "{dir}/plugins/launcher_1.*.jar".into(),
+                "-data".into(),
+                "{dir}/ws/{root_id}".into(),
+                "it's".into(),
+            ],
+            env: [("GREETING".to_string(), "hi {dir/}".to_string())].into(),
+            ..Default::default()
+        };
+        let rel = write_wrapper(&d, &w, "srv", &|_| {}).unwrap();
+        let out = Command::new(d.join(&rel))
+            .arg("--stdio")
+            .env("FARSUB_ROOT_ID", "abc")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let dd = d.display();
+        // "1.9" sorts last as text; the glob takes the last match.
+        assert_eq!(
+            text,
+            format!("hi {dd}|-jar {dd}/plugins/launcher_1.9.jar -data {dd}/ws/abc it's --stdio")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use std::sync::mpsc;
 
     fn wait_done(rx: &mpsc::Receiver<AppEvent>) -> (Vec<String>, Result<PathBuf, String>) {

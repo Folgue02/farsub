@@ -1,4 +1,15 @@
 name = "nimlangserver"
 command = "nimlangserver"
 root_markers = ["*.nimble"]
-description = "Nim language server (install with: nimble install nimlangserver)"
+description = "Nim language server (needs Nim)"
+
+[install]
+needs = ["nim"]
+needs_hint = "install Nim (nim-lang.org/install.html), then try again"
+[install.github]
+repo = "nim-lang/langserver"
+[install.github.assets]
+macos = "nimlangserver-macos-universal.zip"
+linux-x86_64 = "nimlangserver-linux-amd64.tar.gz"
+linux-aarch64 = "nimlangserver-linux-arm64.tar.gz"
+windows-x86_64 = "nimlangserver-windows-amd64.zip"

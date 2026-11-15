@@ -1,13 +1,35 @@
 # Editor
 
-- **Settings** (Preferences: Settings, Cmd+,): as in Sublime, opens two panes. On the
-  left, `Default Settings.toml`: read-only, every setting with its default and an
-  explanation, regenerated from the running version. On the right, your settings file,
-  focused. A new user file starts nearly empty (Sublime-style); you copy over only what you
-  change. Saving applies it. Closing either pane closes both (the other only if it has no
-  unsaved changes) and restores the previous layout. **Difference from Sublime:** Sublime
-  opens these in a new window; farsub is single-window, so they open as a two-column
-  layout in the current window.
+- **Settings** (Preferences: Settings, Cmd+,): as in Sublime, a **window of its own**
+  (decided 2026-11-15; another farsub process, `--settings`, with the same config and data
+  folders) with two panes. On the left, `Default Settings.toml`: read-only, every setting
+  with its default and an explanation, regenerated from the running version. On the
+  right, your settings file, focused. A new user file starts nearly empty (Sublime-style);
+  you copy over only what you change. Saving applies it in every window: each farsub
+  window checks the settings file about once a second and reloads it when it changes
+  (unless it has the file open with unsaved edits). Closing either pane closes both (the
+  other only if it has no unsaved changes) and then the window.
+- **Config folder created on first start** (decided 2026-11-15): if the settings file
+  doesn't exist, farsub creates its folder and a starter `config.toml`, so a new user always
+  has one to open. Standard places per platform: `%APPDATA%\farsub` on Windows (data in
+  `%LOCALAPPDATA%\farsub`), `$XDG_CONFIG_HOME/farsub` or `~/.config/farsub` elsewhere (data
+  in `$XDG_DATA_HOME/farsub` or `~/.local/share/farsub`). Windows has no `$HOME` by
+  default; `~` means `%USERPROFILE%` there. `FARSUB_CONFIG` / `FARSUB_DATA` override them.
+- **Font** (`font_face`, default `""` = the built-in Hack; Sublime's setting name):
+  any installed font family. Preferences › Font… ("Preferences: Select Font") lists the
+  installed fonts, monospaced ones first; moving through the list previews each in the
+  editor, Enter keeps it and **writes `font_face` into your settings file** (no editing
+  by hand), Esc goes back. It applies to monospace text (the editor, input boxes); the
+  built-in font fills in characters the chosen one lacks. A font that isn't installed
+  falls back to the built-in one with a message. **Not the system font dialog**
+  (decided 2026-11-15): the native pickers only report a font's name, while the editor
+  needs the font file, and macOS's font panel is a floating panel egui can't receive from.
+  Select Color Theme now also keeps the chosen theme in the settings file.
+- **Trailing spaces on blank lines** (`trim_automatic_white_space`, default on, as in
+  Sublime): Enter on a line holding only indentation empties that line (the new line
+  still gets the indentation), so blank lines between blocks don't keep spaces. Moving
+  the cursor off such a line without pressing Enter leaves it as it is (Sublime trims
+  then too).
 
 - Mouse pointer: I-beam over text, normal arrow over selected text (Sublime), arrow over
   the gutter.

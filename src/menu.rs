@@ -125,6 +125,7 @@ pub fn default_label(cmd: Command) -> String {
         LowerCase => Some("Convert to Lower Case"),
         ShowKeymap => Some("Keyboard Shortcuts"),
         SelectTheme => Some("Color Theme…"),
+        SelectFont => Some("Font…"),
         OpenSettings => Some("Settings & Languages…"),
         ManageServers => Some("Language Servers…"),
         RevealInFileManager if cfg!(target_os = "macos") => Some("Reveal in Finder"),

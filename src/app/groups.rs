@@ -201,16 +201,8 @@ impl App {
 
     pub(super) fn resolve(&self, base: &Path, s: &str) -> PathBuf {
         let s = s.trim();
-        if s == "~" {
-            return std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-        }
-        if let Some(rest) = s.strip_prefix("~/") {
-            return std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default()
-                .join(rest);
+        if let Some(p) = crate::paths::expand_tilde(s) {
+            return p;
         }
         let p = PathBuf::from(s);
         if p.is_absolute() { p } else { base.join(p) }

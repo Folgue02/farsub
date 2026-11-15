@@ -75,6 +75,21 @@ impl App {
                 self.modal = Some(Modal::Palette(p));
                 self.populate_palette();
             }
+            SelectFont => {
+                self.font_before = Some(self.config.editor.font_face.clone());
+                let mut p = Palette::new(Mode::Fonts, "");
+                p.title = "arrows preview, Enter keeps it".into();
+                self.modal = Some(Modal::Palette(p));
+                self.populate_palette();
+                let cur = self.config.editor.font_face.clone();
+                if let Some(Modal::Palette(p)) = &mut self.modal
+                    && let Some(i) = p.shown.iter().position(
+                        |(i, _)| matches!(&p.items[*i].action, Action::Font(f) if *f == cur),
+                    )
+                {
+                    p.sel = i;
+                }
+            }
             SelectTheme => {
                 self.theme_before = Some(self.config.editor.theme.clone());
                 let mut p = Palette::new(Mode::Themes, "");
@@ -96,7 +111,10 @@ impl App {
                 self.set_cur(i);
                 self.focus = Focus::Editor;
             }
-            OpenFolder => {
+            // The system's file pickers (the typed prompt stays as Open Path…).
+            OpenFile => self.file_request = Some(FileRequest::OpenFile),
+            OpenFolder => self.file_request = Some(FileRequest::OpenFolder),
+            OpenPath => {
                 let def = format!("{}/", self.base_dir().display());
                 self.prompt(
                     "Open folder or file  (Tab completes)",
@@ -175,51 +193,16 @@ impl App {
                 }
                 self.sidebar_nav(cmd);
             }
-            OpenProject => {
-                let def = format!("{}/", self.base_dir().display());
-                self.prompt(
-                    "Open project (.farsub-project) or folder  (Tab completes)",
-                    &def,
-                    PromptKind::OpenProject,
-                );
-            }
+            OpenProject => self.file_request = Some(FileRequest::OpenProject),
             SwitchProject => {
                 let mut p = Palette::new(Mode::Projects, "");
                 p.title = "Recent projects and folders".into();
                 self.modal = Some(Modal::Palette(p));
                 self.populate_palette();
             }
-            SaveProjectAs => {
-                let base = self.base_dir();
-                let name = self
-                    .project
-                    .file
-                    .as_ref()
-                    .map(|f| f.display().to_string())
-                    .unwrap_or_else(|| {
-                        let stem = base
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned();
-                        base.join(format!("{stem}.{}", project::PROJECT_EXT))
-                            .display()
-                            .to_string()
-                    });
-                self.prompt("Save project as", &name, PromptKind::SaveProjectAs);
-            }
+            SaveProjectAs => self.file_request = Some(FileRequest::SaveProjectAs),
             CloseProject => self.switch_project(Project::default()),
-            AddFolder => {
-                let def = format!(
-                    "{}/",
-                    self.base_dir().parent().unwrap_or(Path::new("/")).display()
-                );
-                self.prompt(
-                    "Add folder to project  (Tab completes)",
-                    &def,
-                    PromptKind::AddFolder,
-                );
-            }
+            AddFolder => self.file_request = Some(FileRequest::AddFolder),
             RemoveFolder => {
                 let target = self
                     .tree

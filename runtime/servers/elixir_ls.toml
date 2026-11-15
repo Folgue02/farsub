@@ -1,4 +1,14 @@
 name = "elixir_ls"
 command = "elixir-ls"
 root_markers = ["mix.exs"]
-description = "ElixirLS (e.g. brew install elixir-ls)"
+description = "ElixirLS (needs Elixir)"
+
+[install]
+needs = ["elixir"]
+needs_hint = "install Elixir (elixir-lang.org/install.html), then try again"
+bin = "language_server.sh"
+bin_windows = "language_server.bat"
+[install.github]
+repo = "elixir-lsp/elixir-ls"
+[install.github.assets]
+all = "elixir-ls-v*.zip"

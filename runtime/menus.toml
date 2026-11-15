@@ -4,7 +4,7 @@
 
 [[menu]]
 title = "File"
-items = ["new_file", "new_window", "open_folder", "reopen_closed", "-", "save", "save_as", "save_all", "-", "close_buffer", "-", "open_settings", "select_theme", "-", "quit"]
+items = ["new_file", "new_window", "open_file", "open_folder", "reopen_closed", "-", "save", "save_as", "save_all", "-", "close_buffer", "-", "open_settings", "select_theme", "select_font", "-", "quit"]
 
 [[menu]]
 title = "Edit"

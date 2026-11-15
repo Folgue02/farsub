@@ -1,4 +1,16 @@
 name = "ruby_lsp"
 command = "ruby-lsp"
 root_markers = ["Gemfile"]
-description = "Ruby LSP (install with: gem install ruby-lsp)"
+description = "Ruby LSP (needs Ruby)"
+
+# The gem goes into farsub's own folder (not your Ruby's gems).
+[install]
+needs = ["gem"]
+needs_hint = "install Ruby (ruby-lang.org), then try again"
+[[install.run]]
+command = "gem"
+args = ["install", "--install-dir", "{dir}", "--bindir", "{dir}/bin", "--no-document", "ruby-lsp"]
+[install.wrapper]
+command = "{dir}/bin/ruby-lsp"
+command_windows = "{dir}/bin/ruby-lsp.bat"
+env = { GEM_HOME = "{dir}" }

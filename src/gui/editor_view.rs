@@ -908,7 +908,7 @@ impl Gui {
             ("Focus Sidebar", "Cmd+0"),
             ("Toggle Sidebar", "Cmd+B"),
             ("New File", "Cmd+N"),
-            ("Open Folder", "Cmd+O"),
+            ("Open File", "Cmd+O"),
             ("Settings & Languages", "Cmd+,"),
         ];
         let font = FontId::proportional(15.0);

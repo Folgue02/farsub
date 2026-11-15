@@ -13,6 +13,7 @@ mod editor;
 mod encoding;
 mod fallback;
 mod fileops;
+mod fonts;
 mod grammar_install;
 mod grammars;
 mod gui;
@@ -28,6 +29,7 @@ mod menu;
 mod native_menu;
 mod packages;
 mod palette;
+mod paths;
 mod project;
 mod search;
 mod terminal;
@@ -109,6 +111,8 @@ fn main() -> ExitCode {
         return detach(stdin_text.as_deref());
     }
 
+    // Scan installed fonts in the background (Preferences › Select Font, `font_face`).
+    fonts::warm_up();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
@@ -122,6 +126,10 @@ fn main() -> ExitCode {
         Box::new(move |cc| {
             let mut gui = gui::Gui::new(cc, proj, config);
             let app = &mut gui.app;
+            if args.settings {
+                app.settings_window = true;
+                app.open_settings_here();
+            }
             if plan.restore {
                 app.restore_workspace();
             }

@@ -1,4 +1,4 @@
 name = "erlang_ls"
 command = "erlang_ls"
 root_markers = ["rebar.config", "erlang.mk"]
-description = "Erlang language server"
+description = "Erlang language server (its builds match your Erlang/OTP version: install it with your package manager or rebar3)"

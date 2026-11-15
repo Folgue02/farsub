@@ -2,4 +2,4 @@ name = "kotlin"
 title = "Kotlin"
 extensions = ["kt", "kts"]
 comment = "//"
-servers = ["kotlin_language_server"]
+servers = ["kotlin_lsp", "kotlin_language_server"]

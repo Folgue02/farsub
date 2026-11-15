@@ -63,7 +63,12 @@ impl App {
 
     /// Arguments for a new, empty window (same config and data folders as this one).
     pub fn new_window_args(&self) -> Vec<std::ffi::OsString> {
-        let mut args: Vec<std::ffi::OsString> = vec!["--empty".into()];
+        self.window_args("--empty")
+    }
+
+    /// Arguments for another farsub window of this setup (`--empty` or `--settings`).
+    pub fn window_args(&self, kind: &str) -> Vec<std::ffi::OsString> {
+        let mut args: Vec<std::ffi::OsString> = vec![kind.into()];
         if let Some(c) = &self.config.path {
             args.push("--config".into());
             args.push(c.into());
@@ -77,9 +82,26 @@ impl App {
 
     /// File › New Window: start another farsub with a clean window (its own process).
     pub fn open_new_window(&mut self) {
+        let args = self.new_window_args();
+        self.spawn_window(args);
+    }
+
+    /// Start another farsub process with these arguments, detached from this one.
+    pub(super) fn spawn_window(&mut self, args: Vec<std::ffi::OsString>) {
+        #[cfg(test)]
+        {
+            self.spawned.push(args);
+            return;
+        }
+        #[cfg(not(test))]
+        self.spawn_detached(args);
+    }
+
+    #[cfg(not(test))]
+    fn spawn_detached(&mut self, args: Vec<std::ffi::OsString>) {
         let exe = std::env::current_exe().unwrap_or_else(|_| "farsub".into());
         let mut cmd = std::process::Command::new(exe);
-        cmd.args(self.new_window_args())
+        cmd.args(args)
             .env("FARSUB_DETACHED", "1")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -295,7 +317,8 @@ impl App {
     pub(super) fn save_current(&mut self) {
         let Some(b) = self.buf_mut() else { return };
         if b.path.is_none() {
-            self.prompt("Save as", "", PromptKind::SaveAs);
+            let id = b.id;
+            self.file_request = Some(FileRequest::SaveAs(id));
             return;
         }
         // Changed on disk since we read it (and not asked about yet): don't clobber it
@@ -402,6 +425,10 @@ impl App {
             }
             if self.layout != v.prev_layout {
                 self.set_layout(v.prev_layout);
+            }
+            // The settings window is only for the settings: closing them closes it.
+            if self.settings_window && self.buffers.iter().all(|b| !b.modified) {
+                self.quit = true;
             }
         }
     }

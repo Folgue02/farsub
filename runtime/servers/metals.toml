@@ -1,4 +1,22 @@
 name = "metals"
 command = "metals"
 root_markers = ["build.sbt", "build.sc", "build.mill"]
-description = "Scala language server (install with Coursier: cs install metals)"
+description = "Scala language server (needs Java; installed with Coursier)"
+
+# Coursier's launcher is downloaded first, then it installs Metals next to itself.
+[install]
+needs = ["java"]
+needs_hint = "install a JDK (e.g. adoptium.net), then try again"
+bin_windows = "metals.bat"
+[install.github]
+repo = "coursier/coursier"
+file = "cs"
+[install.github.assets]
+macos-aarch64 = "cs-aarch64-apple-darwin.gz"
+macos-x86_64 = "cs-x86_64-apple-darwin.gz"
+linux-x86_64 = "cs-x86_64-pc-linux.gz"
+linux-aarch64 = "cs-aarch64-pc-linux.gz"
+windows-x86_64 = "cs-x86_64-pc-win32.zip"
+[[install.run]]
+command = "{dir}/cs*"
+args = ["install", "metals", "--install-dir", "{dir}"]

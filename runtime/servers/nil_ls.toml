@@ -1,4 +1,4 @@
 name = "nil_ls"
 command = "nil"
 root_markers = ["flake.nix"]
-description = "Nix language server (nil)"
+description = "Nix language server (nil; install with: nix profile install nixpkgs#nil)"

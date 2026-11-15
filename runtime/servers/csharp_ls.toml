@@ -1,4 +1,11 @@
 name = "csharp_ls"
 command = "csharp-ls"
 root_markers = ["*.sln", "*.csproj"]
-description = "C# language server (install with: dotnet tool install --global csharp-ls)"
+description = "C# language server (needs the .NET SDK)"
+
+[install]
+needs = ["dotnet"]
+needs_hint = "install the .NET SDK (dotnet.microsoft.com/download), then try again"
+[[install.run]]
+command = "dotnet"
+args = ["tool", "install", "csharp-ls", "--tool-path", "{dir}"]

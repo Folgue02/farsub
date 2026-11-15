@@ -246,10 +246,7 @@ pub fn parse_where(
                     exc.push(x.trim().trim_end_matches('/').to_string());
                     continue;
                 }
-                let expanded = match tok.strip_prefix("~/") {
-                    Some(rest) => dirs_home().map(|h| h.join(rest)),
-                    None => Some(PathBuf::from(tok)),
-                };
+                let expanded = crate::paths::expand_tilde(tok).or_else(|| Some(PathBuf::from(tok)));
                 let path = expanded.map(|p| match (&base, p.is_absolute()) {
                     (Some(b), false) => b.join(p),
                     _ => p,
@@ -279,12 +276,6 @@ pub fn parse_where(
     w.includes = glob_set(&inc)?;
     w.excludes = glob_set(&exc)?;
     Ok(w)
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
 }
 
 /// One line of a file's results: a match line (with byte ranges) or a context line.

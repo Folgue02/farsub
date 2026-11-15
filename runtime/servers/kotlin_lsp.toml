@@ -1,0 +1,16 @@
+name = "kotlin_lsp"
+command = "kotlin-lsp"
+args = ["--stdio"]
+root_markers = ["settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle", "pom.xml"]
+description = "Kotlin language server by JetBrains (brings its own Java runtime; a ~370 MB download)"
+
+# JetBrains publishes it inside its VS Code extension (.vsix, a zip), one per platform.
+[install]
+bin = "intellij-server"
+[install.url.assets]
+macos-aarch64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-mac-aarch64.vsix"
+macos-x86_64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-mac-amd64.vsix"
+linux-x86_64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-linux-amd64.vsix"
+linux-aarch64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-linux-aarch64.vsix"
+windows-x86_64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-win-amd64.vsix"
+windows-aarch64 = "https://download.jetbrains.com/language-server/kotlin-server/271.2085.0/kotlin-server-0.0.86-win-aarch64.vsix"

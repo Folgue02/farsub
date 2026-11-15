@@ -325,7 +325,22 @@ fn settings_add_language_and_theme() {
     let d = project("cfg", &[("init.lua", "local x = 1\n")]);
     let mut h = harness(&d);
     steps(&mut h, 2);
-    // Cmd+, creates and opens the config from the template.
+    // Cmd+, opens the settings in a window of their own (another farsub process)...
+    press(&mut h, CMD, Key::Comma);
+    let spawned = h.state().app.spawned.clone();
+    assert_eq!(spawned.len(), 1);
+    assert_eq!(spawned[0][0], "--settings");
+    assert!(
+        spawned[0].iter().any(|a| a == "--config"),
+        "same config: {spawned:?}"
+    );
+    assert!(
+        h.state().app.buffers.is_empty(),
+        "this window stays as it was"
+    );
+    // ...which shows them (this test plays that window now). It creates the config from
+    // the template.
+    h.state_mut().app.settings_window = true;
     press(&mut h, CMD, Key::Comma);
     let cfg = d.join(".farsub-test-config.toml");
     assert!(cfg.is_file());
@@ -997,12 +1012,12 @@ fn switch_save_and_edit_projects() {
     assert_eq!(h.state().app.buf().unwrap().name(), "x.txt");
 
     // Save Project As writes a project file with a relative folder; Add Folder updates it.
+    // (The system's save dialog is answered by the test hook.)
+    h.state_mut().app.test_pick = Some(d.join("one/One"));
     h.state_mut()
         .app
         .run(crate::commands::Command::SaveProjectAs);
-    press(&mut h, CMD, Key::A); // select the input; typing replaces it
-    typ(&mut h, &d.join("one/One").display().to_string());
-    press(&mut h, Modifiers::NONE, Key::Enter);
+    steps(&mut h, 2);
     let file = d.join("one/One.farsub-project");
     assert!(file.is_file(), "{:?}", h.state().app.status);
     assert!(
@@ -1011,10 +1026,9 @@ fn switch_save_and_edit_projects() {
             .contains("path = \".\"")
     );
     assert!(d.join("one/One.farsub-workspace").is_file());
+    h.state_mut().app.test_pick = Some(d.join("extra"));
     h.state_mut().app.run(crate::commands::Command::AddFolder);
-    press(&mut h, CMD, Key::A); // select the input; typing replaces it
-    typ(&mut h, &d.join("extra").display().to_string());
-    press(&mut h, Modifiers::NONE, Key::Enter);
+    steps(&mut h, 2);
     assert_eq!(h.state().app.project.folders.len(), 2);
     assert!(std::fs::read_to_string(&file).unwrap().contains("../extra"));
     // Edit Project, change settings, save → applied without reopening.
@@ -3016,4 +3030,130 @@ fn find_in_files_results_open_and_replace() {
         "fn needle() {}\n// a needle\n",
         "nothing written until saved"
     );
+}
+
+#[test]
+fn powershell_without_its_grammar_still_gets_colors() {
+    // As on a machine that can't compile grammars (no C compiler): the regex fallback.
+    let d = project(
+        "ps1",
+        &[(
+            "a.ps1",
+            "# comment\nfunction Get-Thing { param($Name) Write-Output \"hi $Name\" }\n",
+        )],
+    );
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.ps1"), true);
+    assert!(wait(&mut h, 5, |g| g
+        .app
+        .buf()
+        .unwrap()
+        .hl
+        .line(1)
+        .is_some_and(|s| s.len() > 2)));
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.hl.syntax, "powershell");
+    let colors: std::collections::HashSet<_> =
+        b.hl.line(1).unwrap().iter().map(|s| s.2.fg).collect();
+    assert!(colors.len() >= 3, "several colors: {colors:?}");
+}
+
+#[test]
+fn open_and_save_go_through_the_system_file_picker() {
+    let d = project("picker", &[("a.txt", "hello\n")]);
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    // Cmd+O asks the system picker (answered by the test hook) and opens the file.
+    h.state_mut().app.test_pick = Some(d.join("a.txt"));
+    press(&mut h, CMD, Key::O);
+    assert_eq!(h.state().app.buf().unwrap().name(), "a.txt");
+    assert!(h.state().app.modal.is_none(), "no typed prompt");
+    // Saving an untitled file asks where, then writes it there.
+    h.state_mut().app.untitled_for_test("new text");
+    h.state_mut().app.test_pick = Some(d.join("sub/new.txt"));
+    press(&mut h, CMD, Key::S);
+    assert_eq!(
+        std::fs::read_to_string(d.join("sub/new.txt")).unwrap(),
+        "new text"
+    );
+    assert_eq!(h.state().app.buf().unwrap().name(), "new.txt");
+    // Cancelling the dialog changes nothing.
+    h.state_mut().app.untitled_for_test("x");
+    press(&mut h, CMD, Key::S);
+    assert!(h.state().app.buf().unwrap().path.is_none());
+}
+
+#[test]
+fn settings_saved_in_another_window_apply_here() {
+    let d = project("cfgwatch", &[("a.txt", "x\n")]);
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    // The settings window (another process) saves the file; this window notices.
+    std::fs::write(
+        d.join(".farsub-test-config.toml"),
+        "[editor]\ntab_size = 7\nword_wrap = false\n",
+    )
+    .unwrap();
+    assert!(wait(&mut h, 5, |g| g.app.config.editor.tab_size == 7));
+}
+
+#[test]
+fn select_font_previews_and_keeps_it_in_the_settings() {
+    use crate::palette::Action;
+    let d = project("font", &[("a.txt", "some text\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    let width = |h: &Harness<'static, Gui>| h.state().text_metrics_for_test().0;
+    let before = width(&h);
+    h.state_mut().app.run(crate::commands::Command::SelectFont);
+    steps(&mut h, 2);
+    // Installed monospaced fonts are listed first. Pick one this machine has.
+    let (mono, pick) = {
+        let Some(Modal::Palette(p)) = &h.state().app.modal else {
+            panic!("font list")
+        };
+        let mono: Vec<String> = p
+            .items
+            .iter()
+            .filter(|i| i.detail == "monospace")
+            .map(|i| i.label.clone())
+            .collect();
+        let pick = [
+            "Courier New",
+            "Menlo",
+            "Consolas",
+            "DejaVu Sans Mono",
+            "Courier",
+        ]
+        .into_iter()
+        .find(|f| {
+            p.items
+                .iter()
+                .any(|i| matches!(&i.action, Action::Font(n) if n == f))
+        });
+        (mono, pick.map(String::from))
+    };
+    assert!(mono.len() >= 2, "{mono:?}");
+    let Some(pick) = pick else {
+        eprintln!("no known monospaced font installed; skipping the rest");
+        return;
+    };
+    typ(&mut h, &pick);
+    steps(&mut h, 3);
+    assert_eq!(h.state().app.config.editor.font_face, pick, "previewed");
+    assert_ne!(width(&h), before, "the editor text uses it");
+    steps(&mut h, 10);
+    shot(&mut h, "select_font");
+    // Esc puts the old font back; Enter keeps the new one in the settings file.
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert_eq!(h.state().app.config.editor.font_face, "");
+    h.state_mut().app.run(crate::commands::Command::SelectFont);
+    typ(&mut h, &pick);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let cfg = std::fs::read_to_string(d.join(".farsub-test-config.toml")).unwrap();
+    assert!(cfg.contains(&format!("font_face = \"{pick}\"")), "{cfg}");
+    steps(&mut h, 3);
+    assert_eq!(h.state().app.config.editor.font_face, pick);
+    shot(&mut h, "font_applied");
 }

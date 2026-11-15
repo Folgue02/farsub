@@ -23,6 +23,9 @@ include!(concat!(env!("OUT_DIR"), "/runtime_files.rs"));
 #[serde(default)]
 pub struct EditorConfig {
     pub font_size: f32,
+    /// The editor font: an installed font family ("" = the built-in one). Preferences ›
+    /// Select Font picks it.
+    pub font_face: String,
     /// Scale for the whole interface (all fonts, widgets, spacing), like browser zoom.
     /// 1.0 = 100%. Separate from font_size, which only sizes the editor text.
     pub ui_scale: f32,
@@ -37,6 +40,8 @@ pub struct EditorConfig {
     pub indent_guides: bool,
     /// Highlight the line the cursor is on (off by default).
     pub highlight_current_line: bool,
+    /// Enter on a line holding only indentation empties it (Sublime's setting).
+    pub trim_automatic_white_space: bool,
     /// Wrap long lines at the pane width (View: Toggle Word Wrap changes it per file).
     pub word_wrap: bool,
     /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
@@ -67,6 +72,7 @@ impl Default for EditorConfig {
     fn default() -> Self {
         EditorConfig {
             font_size: 14.0,
+            font_face: String::new(),
             ui_scale: 1.0,
             tab_size: 4,
             use_tabs: false,
@@ -77,6 +83,7 @@ impl Default for EditorConfig {
             animations: true,
             indent_guides: true,
             highlight_current_line: false,
+            trim_automatic_white_space: true,
             word_wrap: true,
             terminal_shell: None,
             auto_install: true,
@@ -191,9 +198,77 @@ pub struct InstallSpec {
     /// A prebuilt binary from a GitHub release (like Mason's github source).
     #[serde(default)]
     pub github: Option<GithubSource>,
+    /// A download from a fixed URL per platform (`[install.url.assets]`).
+    #[serde(default)]
+    pub url: Option<UrlSource>,
+    /// Commands run after the download (or on their own), without a shell so they work
+    /// the same everywhere: `[[install.run]] command = "gem", args = [..]`. In args, `{dir}`
+    /// is the install folder (`{dir/}` with forward slashes, for R / Ruby strings).
+    #[serde(default)]
+    pub run: Vec<RunStep>,
+    /// Programs the install (or the server) needs on PATH, e.g. `["java"]`.
+    #[serde(default)]
+    pub needs: Vec<String>,
+    /// What to tell the user when one of `needs` is missing.
+    #[serde(default)]
+    pub needs_hint: Option<String>,
     /// Executable name if it differs from the server's `command`.
     #[serde(default)]
     pub bin: Option<String>,
+    /// The executable's file name on Windows when it isn't `<bin>.exe` (e.g. a `.bat`).
+    #[serde(default)]
+    pub bin_windows: Option<String>,
+    /// Generate a launcher script that runs a program with fixed arguments and
+    /// environment (Java servers, `R`, gems with their own GEM_HOME); it becomes the
+    /// server's executable.
+    #[serde(default)]
+    pub wrapper: Option<Wrapper>,
+}
+
+/// `[[install.run]]`: one command of an install.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct RunStep {
+    /// A program on PATH, or a path under the install folder (`{dir}/cs`).
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// `[install.url]`: download URLs keyed by platform, like the github source's assets.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct UrlSource {
+    #[serde(default)]
+    pub assets: HashMap<String, String>,
+    /// Name to save a single-file download as (it isn't an archive).
+    #[serde(default)]
+    pub file: Option<String>,
+}
+
+/// `[install.wrapper]`: the launcher farsub writes into the install folder.
+#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+pub struct Wrapper {
+    /// A program on PATH (resolved when installing), or a path under the install folder
+    /// (`{dir}/bin/ruby-lsp`, may contain `*`).
+    pub command: String,
+    /// `command` on Windows, when it differs.
+    #[serde(default)]
+    pub command_windows: Option<String>,
+    /// Arguments before the server's own: `{dir}`, `{os}` (mac, linux, win), `{arm}`
+    /// ("_arm" on ARM CPUs), `{root_id}` (a per-project id), `*` globs (the last match).
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+}
+
+/// The entry for this OS/CPU in an assets map: "<os>-<arch>", then "<os>", then "all".
+pub fn platform_asset(assets: &HashMap<String, String>) -> Option<&str> {
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    assets
+        .get(&format!("{os}-{arch}"))
+        .or_else(|| assets.get(os))
+        .or_else(|| assets.get("all"))
+        .map(String::as_str)
 }
 
 /// `[install.github]`: download a release asset, extract it, find the executable.
@@ -208,26 +283,30 @@ pub struct GithubSource {
     /// x86_64, aarch64) or just "<os>" for any architecture.
     #[serde(default)]
     pub assets: HashMap<String, String>,
+    /// Name to save a single-file download as (e.g. `cs` for coursier's `.gz`).
+    #[serde(default)]
+    pub file: Option<String>,
 }
 
 impl GithubSource {
     /// The asset glob for this machine, if the project ships one.
     pub fn asset_for_this_platform(&self) -> Option<&str> {
-        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
-        self.assets
-            .get(&format!("{os}-{arch}"))
-            .or_else(|| self.assets.get(os))
-            .map(String::as_str)
+        platform_asset(&self.assets)
     }
 }
 
 impl InstallSpec {
     /// Whether this recipe can install on the current OS/CPU.
     pub fn supported_here(&self) -> bool {
-        match &self.github {
-            Some(g) => g.asset_for_this_platform().is_some(),
-            None => true,
-        }
+        let gh = self
+            .github
+            .as_ref()
+            .is_none_or(|g| g.asset_for_this_platform().is_some());
+        let url = self
+            .url
+            .as_ref()
+            .is_none_or(|u| platform_asset(&u.assets).is_some());
+        gh && url
     }
 
     pub fn source(&self) -> String {
@@ -241,6 +320,16 @@ impl InstallSpec {
             format!("go: {g}")
         } else if let Some(g) = &self.github {
             format!("github: {}", g.repo)
+        } else if let Some(u) = &self.url {
+            let url = platform_asset(&u.assets).unwrap_or("");
+            let host = url.split('/').nth(2).unwrap_or(url);
+            format!("download: {host}")
+        } else if let Some(r) = self.run.first() {
+            format!(
+                "{}: {}",
+                r.command,
+                r.args.last().map(String::as_str).unwrap_or("")
+            )
         } else if self.script.is_some() {
             "script".into()
         } else {
@@ -432,22 +521,63 @@ pub fn config_path() -> Option<PathBuf> {
     if let Some(x) = std::env::var_os("FARSUB_CONFIG") {
         return Some(PathBuf::from(x));
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("farsub").join("config.toml"))
+    Some(crate::paths::config_dir()?.join("config.toml"))
+}
+
+/// Set `key = value` (value already in TOML syntax) under `[editor]` in the user's config
+/// file, keeping everything else in it as it is.
+pub fn set_editor_setting(path: &Path, key: &str, value: &str) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(path).unwrap_or_else(|_| TEMPLATE.to_string());
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let new = format!("{key} = {value}");
+    let header = lines.iter().position(|l| l.trim() == "[editor]");
+    match header {
+        Some(h) => {
+            let end = lines[h + 1..]
+                .iter()
+                .position(|l| l.trim_start().starts_with('['))
+                .map_or(lines.len(), |i| h + 1 + i);
+            let existing = (h + 1..end).find(|&i| {
+                let t = lines[i].trim_start();
+                t.strip_prefix(key)
+                    .is_some_and(|r| r.trim_start().starts_with('='))
+            });
+            match existing {
+                Some(i) => lines[i] = new,
+                None => lines.insert(h + 1, new),
+            }
+        }
+        None => {
+            lines.push(String::new());
+            lines.push("[editor]".into());
+            lines.push(new);
+        }
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, lines.join("\n") + "\n")
+}
+
+/// A string as a TOML value.
+pub fn toml_string(s: &str) -> String {
+    toml::Value::String(s.to_string()).to_string()
+}
+
+/// Create `path` (and its folder) with the starter settings if it doesn't exist yet.
+/// Failing is fine: the defaults apply, and Preferences: Settings says what went wrong.
+pub fn ensure_config_file(path: &Path) {
+    if path.exists() {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, TEMPLATE);
 }
 
 pub fn default_data_dir() -> Option<PathBuf> {
-    if let Some(x) = std::env::var_os("FARSUB_DATA") {
-        return Some(PathBuf::from(x));
-    }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
-        })?;
-    Some(base.join("farsub"))
+    crate::paths::data_dir()
 }
 
 fn upsert<T>(list: &mut Vec<T>, item: T, same: impl Fn(&T, &T) -> bool) {
@@ -476,8 +606,14 @@ impl Config {
         c
     }
 
+    /// The user's config (creating the config folder with a starter config.toml on first
+    /// run, so there's always a file to edit).
     pub fn load() -> Config {
-        Self::load_from(config_path())
+        let path = config_path();
+        if let Some(p) = &path {
+            ensure_config_file(p);
+        }
+        Self::load_from(path)
     }
 
     pub fn load_from(path: Option<PathBuf>) -> Config {
@@ -762,6 +898,9 @@ pub const DEFAULT_SETTINGS: &str = r##"# farsub default settings (read-only refe
 
 [editor]
 font_size = 14.0
+# An installed font family for the editor text, e.g. "JetBrains Mono" ("" = built-in).
+# Preferences › Select Font… lists them and sets this for you.
+font_face = ""
 # Scale the whole interface: fonts, sidebar, tabs, menus, panels (1.25 = 125%).
 ui_scale = 1.0
 tab_size = 4
@@ -772,6 +911,8 @@ show_sidebar = true
 animations = true
 indent_guides = true
 highlight_current_line = false
+# Pressing Enter on a line that holds only indentation leaves it empty (no trailing spaces).
+trim_automatic_white_space = true
 # Wrap long lines at the pane width; View › Word Wrap (Alt+Z) toggles it per file.
 word_wrap = true
 # Shell for the terminal panel (default: $SHELL).
@@ -816,6 +957,38 @@ theme = "Monokai Extended"
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pickers_edit_one_setting_and_keep_the_rest() {
+        let d = std::env::temp_dir().join(format!("farsub-setset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let f = d.join("config.toml");
+        // A missing file starts from the template.
+        set_editor_setting(&f, "font_face", &toml_string("Menlo")).unwrap();
+        let t = std::fs::read_to_string(&f).unwrap();
+        assert!(t.contains("[editor]\nfont_face = \"Menlo\""), "{t}");
+        // An existing value is replaced in place; comments, other keys and tables stay.
+        std::fs::write(
+            &f,
+            "# mine\n[editor]\nfont_size = 15.0\nfont_face = \"X\" # old\n\n[[languages]]\nname = \"a\"\n",
+        )
+        .unwrap();
+        set_editor_setting(&f, "font_face", &toml_string("Fira \"Code\"")).unwrap();
+        set_editor_setting(&f, "theme", &toml_string("Nord")).unwrap();
+        let t = std::fs::read_to_string(&f).unwrap();
+        assert_eq!(
+            t,
+            "# mine\n[editor]\ntheme = \"Nord\"\nfont_size = 15.0\nfont_face = 'Fira \"Code\"'\n\n[[languages]]\nname = \"a\"\n"
+        );
+        let c: toml::Value = toml::from_str(&t).unwrap();
+        assert_eq!(c["editor"]["font_face"].as_str(), Some("Fira \"Code\""));
+        // No [editor] table yet: one is added.
+        std::fs::write(&f, "[[languages]]\nname = \"a\"\n").unwrap();
+        set_editor_setting(&f, "theme", &toml_string("Nord")).unwrap();
+        let c: toml::Value = toml::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(c["editor"]["theme"].as_str(), Some("Nord"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn default_settings_reference_matches_the_code() {

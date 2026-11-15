@@ -1,4 +1,13 @@
 name = "kotlin_language_server"
 command = "kotlin-language-server"
 root_markers = ["build.gradle.kts", "build.gradle", "settings.gradle.kts"]
-description = "Kotlin language server (needs a JDK)"
+description = "Kotlin language server by fwcd (needs Java 21 or older: it fails to start on newer Java; kotlin_lsp is the maintained one)"
+
+[install]
+needs = ["java"]
+needs_hint = "install a JDK (e.g. adoptium.net), then try again"
+bin_windows = "kotlin-language-server.bat"
+[install.github]
+repo = "fwcd/kotlin-language-server"
+[install.github.assets]
+all = "server.zip"

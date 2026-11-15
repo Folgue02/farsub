@@ -2,3 +2,15 @@ name = "ols"
 command = "ols"
 root_markers = ["ols.json"]
 description = "Odin language server"
+
+# The zips name the binary per platform (ols-arm64-darwin, …): a launcher finds it.
+[install.github]
+repo = "DanielGavin/ols"
+[install.github.assets]
+macos-aarch64 = "ols-arm64-darwin.zip"
+macos-x86_64 = "ols-x86_64-darwin.zip"
+linux-x86_64 = "ols-x86_64-unknown-linux-gnu.zip"
+linux-aarch64 = "ols-arm64-unknown-linux-gnu.zip"
+windows-x86_64 = "ols-x86_64-pc-windows-msvc.zip"
+[install.wrapper]
+command = "{dir}/ols-*"

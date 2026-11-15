@@ -387,6 +387,14 @@ pub enum FileRequest {
     GrammarFolder,
     /// A folder for the find panel's Where field.
     FindFolder,
+    /// File › Open File… / Open Folder…
+    OpenFile,
+    OpenFolder,
+    OpenProject,
+    AddFolder,
+    /// Save the buffer with this id under a new name.
+    SaveAs(usize),
+    SaveProjectAs,
 }
 
 /// Most editor groups (layout columns).
@@ -451,6 +459,8 @@ pub struct App {
     pub tree: Tree,
     tree_revealed: Option<PathBuf>,
     theme_before: Option<String>,
+    /// The font before Select Font started previewing (Esc puts it back).
+    font_before: Option<String>,
     /// Open menu (menu bar navigation), if any.
     pub menu: Option<MenuState>,
     pub menu_bar_visible: bool,
@@ -474,10 +484,20 @@ pub struct App {
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
     pub settings_view: Option<SettingsView>,
+    /// This process is a settings window (`--settings`).
+    pub settings_window: bool,
+    /// The config file as last loaded (another window may save it).
+    config_stamp: Option<fileops::DiskStamp>,
     /// When open files were last checked against the disk (deleted files).
     last_disk_check: Instant,
     /// Set by commands that need a file/folder from the user; the GUI shows the picker.
     pub file_request: Option<FileRequest>,
+    /// Tests: the path the next system file picker "chooses" (dialogs can't be clicked).
+    #[cfg(test)]
+    pub test_pick: Option<PathBuf>,
+    /// Tests: windows that would have been started (their arguments).
+    #[cfg(test)]
+    pub spawned: Vec<Vec<std::ffi::OsString>>,
     /// Columns the focused editor wraps at (set by the GUI each frame), None if not
     /// wrapping: Up/Down then move by visual rows.
     pub wrap_cols: Option<usize>,
@@ -543,6 +563,7 @@ impl App {
             tree,
             tree_revealed: None,
             theme_before: None,
+            font_before: None,
             menu: None,
             menu_bar_visible: config.editor.show_menu_bar,
             console: Console::default(),
@@ -562,9 +583,15 @@ impl App {
             group_active: [None; MAX_GROUPS],
             group_split: vec![1.0],
             settings_view: None,
+            settings_window: false,
+            config_stamp: None,
             wrap_cols: None,
             last_disk_check: Instant::now(),
             file_request: None,
+            #[cfg(test)]
+            test_pick: None,
+            #[cfg(test)]
+            spawned: vec![],
             keymap: Keymap::default(),
             menus: vec![],
             install_log: HashMap::new(),
@@ -576,6 +603,7 @@ impl App {
             config,
             tx,
         };
+        app.config_stamp = app.config.path.as_deref().and_then(fileops::DiskStamp::of);
         app.apply_project_config();
         app.recent.touch(&app.project);
         app.recent.save(app.config.data_dir.as_deref());
@@ -602,6 +630,9 @@ impl App {
     pub fn tick(&mut self) -> bool {
         if self.last_disk_check.elapsed() >= Duration::from_secs(1) {
             self.last_disk_check = Instant::now();
+            if self.check_config_file() {
+                return true;
+            }
             if self.check_deleted_files() {
                 return true;
             }

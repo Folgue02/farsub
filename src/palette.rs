@@ -27,6 +27,8 @@ pub enum Mode {
     Grammars,
     /// Installed grammars, to remove.
     GrammarsRemove,
+    /// Installed fonts (Preferences › Select Font).
+    Fonts,
 }
 
 /// Items of the Indentation menu.
@@ -47,6 +49,7 @@ pub enum Action {
     Goto(Pos),
     Buffer(usize),
     Theme(String),
+    Font(String),
     Package(String),
     Project(crate::project::Last),
     Syntax(String),
@@ -100,6 +103,7 @@ impl Palette {
                     | Mode::Indentation
                     | Mode::Grammars
                     | Mode::GrammarsRemove
+                    | Mode::Fonts
             ),
             title: String::new(),
             query: crate::lineedit::LineEdit::new(query),

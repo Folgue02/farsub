@@ -2,4 +2,16 @@ name = "r_language_server"
 command = "R"
 args = ["--no-echo", "-e", "languageserver::run()"]
 root_markers = []
-description = "R language server (install in R: install.packages(\"languageserver\"))"
+description = "R language server (needs R)"
+
+# The R package goes into farsub's own folder; the launcher points R at it.
+[install]
+needs = ["Rscript"]
+needs_hint = "install R (cran.r-project.org), then try again"
+bin = "R"
+[[install.run]]
+command = "Rscript"
+args = ["-e", "install.packages('languageserver', lib = '{dir/}', repos = 'https://cloud.r-project.org')"]
+[install.wrapper]
+command = "R"
+env = { R_LIBS = "{dir}" }

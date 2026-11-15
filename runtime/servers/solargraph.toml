@@ -2,4 +2,15 @@ name = "solargraph"
 command = "solargraph"
 args = ["stdio"]
 root_markers = ["Gemfile"]
-description = "Solargraph (install with: gem install solargraph)"
+description = "Solargraph (needs Ruby)"
+
+[install]
+needs = ["gem"]
+needs_hint = "install Ruby (ruby-lang.org), then try again"
+[[install.run]]
+command = "gem"
+args = ["install", "--install-dir", "{dir}", "--bindir", "{dir}/bin", "--no-document", "solargraph"]
+[install.wrapper]
+command = "{dir}/bin/solargraph"
+command_windows = "{dir}/bin/solargraph.bat"
+env = { GEM_HOME = "{dir}" }

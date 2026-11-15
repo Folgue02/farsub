@@ -38,6 +38,10 @@ pub struct Args {
     #[arg(long, conflicts_with_all = ["project", "add"])]
     pub empty: bool,
 
+    /// Open a window with just the settings (Preferences: Settings opens one).
+    #[arg(long, conflicts_with_all = ["project", "add", "empty"])]
+    pub settings: bool,
+
     /// Add the given folders to the last session's project instead of opening them alone.
     #[arg(short, long)]
     pub add: bool,
@@ -205,7 +209,7 @@ pub fn plan(
     {
         return Err(format!("no such project: {}", p.display()));
     }
-    if args.empty {
+    if args.empty || args.settings {
         // A clean window; files given too still open in it.
         return Ok(Plan {
             target: Target::Folders(vec![]),
@@ -499,6 +503,10 @@ mod tests {
         assert_eq!(p.target, Target::Folders(vec![]));
         assert_eq!(p.files.len(), 1);
         assert!(Args::try_parse_from(["farsub", "--empty", "-p", "x.farsub-project"]).is_err());
+        // The settings window starts clean too.
+        let p = plan(&args(&["--settings"]), &d, Some(&last), true).unwrap();
+        assert!(!p.restore);
+        assert!(Args::try_parse_from(["farsub", "--settings", "--empty"]).is_err());
     }
 
     #[test]
