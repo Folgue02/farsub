@@ -152,6 +152,9 @@ pub struct Gui {
     /// Where the keyboard-opened context menu should appear (cursor / selected row).
     pub keyboard_spot: Option<Pos2>,
     sidebar_sel_px: Option<Pos2>,
+    /// Per group: how far its tab strip is scrolled (points), and the tab it last showed
+    /// (the strip follows a newly shown tab; the wheel scrolls it freely otherwise).
+    pub tab_scroll: HashMap<usize, (f32, Option<usize>)>,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
 }
@@ -224,6 +227,7 @@ impl Gui {
             hover_anchor_px: None,
             keyboard_spot: None,
             sidebar_sel_px: None,
+            tab_scroll: HashMap::new(),
             #[cfg(target_os = "macos")]
             native_menu: None,
         }

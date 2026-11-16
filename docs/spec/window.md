@@ -11,6 +11,10 @@
 ├ status bar ──────────────────────────────────────────────────────────────────────┤
 ```
 
+- **Tab strip scrolling**: when the tabs don't fit, the mouse wheel over the strip
+  (vertical or horizontal) scrolls it sideways, stopping at the first and last tab; it
+  doesn't change the active tab or scroll the editor. Switching to a tab that's out of
+  view scrolls the strip to show it.
 - The right end of the (rightmost) tab strip holds the alarm, pomodoro and clock
   widgets; see [Clock, pomodoro and alarm](timers.md).
 

@@ -51,9 +51,24 @@ impl Gui {
             .collect();
         let before: f32 = widths.iter().take(shown_pos).sum();
         let cur_w = widths.get(shown_pos).copied().unwrap_or(0.0);
-        if before + cur_w > r.width() {
-            x -= before + cur_w - r.width();
+        let total: f32 = widths.iter().sum();
+        let (mut off, last) = self.tab_scroll.get(&g).copied().unwrap_or((0.0, None));
+        // A newly shown tab is scrolled into view.
+        if last != shown {
+            if before < off {
+                off = before;
+            } else if before + cur_w > off + r.width() {
+                off = before + cur_w - r.width();
+            }
         }
+        // The wheel (either direction) scrolls the strip sideways when tabs overflow.
+        if ui.rect_contains_pointer(r) {
+            let d = ui.ctx().input(|i| i.smooth_scroll_delta);
+            off -= if d.x.abs() > d.y.abs() { d.x } else { d.y };
+        }
+        off = off.clamp(0.0, (total - r.width()).max(0.0));
+        self.tab_scroll.insert(g, (off, shown));
+        x -= off;
         let clip = p.with_clip_rect(r);
         for (k, &i) in tabs.iter().enumerate() {
             let b = &self.app.buffers[i];

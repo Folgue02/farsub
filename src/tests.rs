@@ -3622,3 +3622,52 @@ fn clock_pomodoro_and_alarm_widgets() {
     assert_eq!(again.app.timers.alarm.time, "18:30");
     assert_eq!(again.app.timers.pomodoro.work, 1);
 }
+
+#[test]
+fn wheel_scrolls_the_tab_strip() {
+    let files: Vec<(String, String)> = (0..14)
+        .map(|i| (format!("file_with_a_long_name_{i:02}.txt"), "x\n".to_string()))
+        .collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = project("tabscroll", &refs);
+    let mut h = harness(&d);
+    for (f, _) in &files {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    steps(&mut h, 3);
+    let off = |h: &Harness<'static, Gui>| h.state().tab_scroll.get(&0).map(|t| t.0).unwrap_or(0.0);
+    // The last tab is active: the strip is scrolled to show it.
+    let end = off(&h);
+    assert!(end > 0.0);
+    let ed = h.state().editor_rect_for_test();
+    let over_tabs = egui::Pos2::new(ed.left() + 200.0, ed.top() - 16.0);
+    let wheel = |h: &mut Harness<'static, Gui>, dy: f32| {
+        h.event(Event::PointerMoved(over_tabs));
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::Vec2::new(0.0, dy),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: Modifiers::NONE,
+        });
+        steps(h, 20);
+    };
+    // Wheel up scrolls back toward the first tabs, without changing the active tab or
+    // scrolling the editor.
+    let cur = h.state().app.cur;
+    wheel(&mut h, 400.0);
+    assert!(off(&h) < end, "{} !< {end}", off(&h));
+    assert_eq!(h.state().app.cur, cur);
+    assert_eq!(h.state().app.buf().unwrap().scroll_y, 0);
+    wheel(&mut h, 100_000.0);
+    assert_eq!(off(&h), 0.0);
+    shot(&mut h, "tabs_scrolled");
+    // Down again: never past the last tab.
+    wheel(&mut h, -100_000.0);
+    assert!((off(&h) - end).abs() < 1.0, "{} vs {end}", off(&h));
+    // Showing a tab out of view brings it back.
+    wheel(&mut h, 100_000.0);
+    h.state_mut().app.run(crate::commands::Command::PrevBuffer);
+    steps(&mut h, 2);
+    assert!(off(&h) > 0.0);
+}
