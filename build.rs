@@ -1,7 +1,10 @@
 //! Embed every file under runtime/ (languages, servers, keymap, menus, themes, highlight
 //! queries) so the binary is self-contained; user files in the config folder and packages
 //! override them at runtime. (The tree-sitter grammars themselves are crates.) Also
-//! precompiles the fallback regex grammars.
+//! precompiles the fallback regex grammars and writes the licenses page (Help › Licenses).
+
+#[path = "build/licenses.rs"]
+mod licenses;
 
 use std::fmt::Write;
 use std::path::Path;
@@ -43,6 +46,15 @@ fn main() {
     let out_dir = Path::new(&std::env::var("OUT_DIR").unwrap()).to_path_buf();
     std::fs::write(out_dir.join("runtime_files.rs"), src).unwrap();
     bundle_syntaxes(&root.join("syntaxes"), &out_dir.join("syntaxes.packdump"));
+    let target = std::env::var("TARGET").unwrap();
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    println!("cargo:rerun-if-changed=Cargo.lock");
+    println!("cargo:rerun-if-changed=build");
+    std::fs::write(
+        out_dir.join("licenses.md"),
+        licenses::generate(manifest_dir, &root, &target),
+    )
+    .unwrap();
     // The target triple, for compiling grammars at runtime (grammar_install.rs).
     println!(
         "cargo:rustc-env=FARSUB_TARGET={}",

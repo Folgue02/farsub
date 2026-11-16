@@ -33,6 +33,7 @@ mod paths;
 mod project;
 mod search;
 mod terminal;
+mod timers;
 #[cfg(test)]
 mod tests;
 mod tree;

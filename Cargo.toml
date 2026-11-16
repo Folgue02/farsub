@@ -78,5 +78,6 @@ muda = "0.21"
 egui_kittest = { version = "0.37", features = ["wgpu", "snapshot"] }
 
 [build-dependencies]
+serde_json = "1"
 syntect = "5"
 two-face = "0.5.2"

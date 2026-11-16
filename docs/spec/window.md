@@ -2,7 +2,7 @@
 
 ```
 ┌ menu bar (in-window on Windows/Linux; system menu bar on macOS) ───────────────┐
-│ sidebar │ tabs                                                                  │
+│ sidebar │ tabs                                     ╲alarm╲pomodoro╲ clock      │
 │ FOLDERS │ editor                                                                │
 │         ├───────────────────────────────────────────────────────────────────────┤
 │         │ bottom panel: TERMINAL n │ CONSOLE  (optional, resizable)              │
@@ -10,15 +10,9 @@
 │ find panel (Find / Replace / Find in Files), or a prompt                        │
 ├ status bar ──────────────────────────────────────────────────────────────────────┤
 ```
-┌ menu bar (in-window on Windows/Linux; system menu bar on macOS) ───────────────┐
-│ sidebar │ tabs                                                                  │
-│ FOLDERS │ editor                                                                │
-│         ├───────────────────────────────────────────────────────────────────────┤
-│         │ bottom panel: TERMINAL n │ CONSOLE  (optional, resizable)              │
-│         ├───────────────────────────────────────────────────────────────────────┤
-│         │ input panel (find, prompts)                                           │
-├ status bar ──────────────────────────────────────────────────────────────────────┤
-```
+
+- The right end of the (rightmost) tab strip holds the alarm, pomodoro and clock
+  widgets; see [Clock, pomodoro and alarm](timers.md).
 
 - `ui_scale` (default 1.0, range 0.5–3) zooms the **whole interface**: every font, widget,
   margin and hit area, like browser zoom. It's separate from `font_size` and from View →

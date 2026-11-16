@@ -32,7 +32,7 @@ items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_colu
 
 [[menu]]
 title = "Tools"
-items = ["show_commands", "-", "completion", "hover", "code_actions", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "install_grammar", "-", "install_package", "install_package_from_file", "install_package_from_folder", "remove_package", "browse_packages", "reload_packages"]
+items = ["show_commands", "-", "completion", "hover", "code_actions", "rename", "format", "-", "restart_lsp", "lsp_info", "manage_servers", "install_grammar", "-", "install_package", "install_package_from_file", "install_package_from_folder", "remove_package", "browse_packages", "reload_packages", "-", "pomodoro", "pomodoro_start_pause", "alarm", "clock_settings"]
 
 [[menu]]
 title = "Project"
@@ -40,7 +40,7 @@ items = ["open_project", "switch_project", "save_project_as", "close_project", "
 
 [[menu]]
 title = "Help"
-items = ["show_keymap", "show_commands"]
+items = ["show_keymap", "show_commands", "-", "show_licenses"]
 
 # Right-click menus (like Sublime's Context.sublime-menu / Side Bar.sublime-menu).
 # Shift+F10 or the Menu key opens the one for the focused pane.

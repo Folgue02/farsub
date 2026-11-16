@@ -20,6 +20,10 @@ impl App {
 
     /// System clipboard text (falls back to the editor's own clipboard).
     pub fn clipboard_text(&self) -> String {
+        // Tests never read the real clipboard: what's on it would leak into their results.
+        if cfg!(test) {
+            return self.clip.clone();
+        }
         arboard::Clipboard::new()
             .and_then(|mut c| c.get_text())
             .unwrap_or_else(|_| self.clip.clone())

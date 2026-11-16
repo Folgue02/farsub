@@ -397,6 +397,10 @@ impl Syntax {
             .editor_color("gutter")
             .unwrap_or(Color32::from_rgb(117, 113, 94))
     }
+    /// Any other `[editor]` color of the theme (the clock and timer widgets' keys).
+    pub fn editor_color(&self, key: &str) -> Option<Color32> {
+        self.theme.editor_color(key)
+    }
 }
 
 // ---------------------------------------------------------------- per-buffer state
@@ -777,6 +781,13 @@ mod tests {
         assert!(s.theme_names().len() >= 25);
         assert_eq!(s.theme.name, "Monokai Extended");
         assert!(s.theme.style_for("keyword").is_some() && s.theme.style_for("string").is_some());
+        let ts = Syntax::load("Tsoding");
+        assert_eq!(ts.theme.name, "Tsoding");
+        assert_eq!(ts.bg(), Color32::from_rgb(0x18, 0x18, 0x18));
+        assert_eq!(
+            ts.theme.style_for("keyword.repeat").unwrap().fg,
+            Color32::from_rgb(0xFF, 0xDD, 0x33)
+        );
     }
 
     #[test]

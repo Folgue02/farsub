@@ -30,3 +30,7 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
   LSP Info
 - [Text input boxes](spec/inputs.md): every one-line input edits like the editor
 - [Menus and keys](spec/menus-and-keys.md): menu bars, platform key defaults, the keymap
+- [Clock, pomodoro and alarm](spec/timers.md): the tab-strip widgets, their dialogs,
+  alerts and theme colors
+- [Licenses and attribution](spec/licenses.md): the Help page listing every crate and
+  bundled data in the build, with license texts

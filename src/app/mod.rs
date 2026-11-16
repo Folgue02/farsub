@@ -28,6 +28,7 @@ use crate::project::{self, Last, Project, Recent};
 use crate::tree::Tree;
 use crate::workspace::{BufferState, Workspace};
 
+pub use timers::{FieldKind, TimerDialog, TimerKind};
 pub use find::{FindField, FindMode, FindOpt, FindPanel, opt_command, opt_name};
 use helpers::*;
 
@@ -46,6 +47,7 @@ mod lsp_client;
 mod menus;
 mod modal;
 mod palettes;
+mod timers;
 mod panel;
 mod run;
 mod servers;
@@ -230,6 +232,8 @@ pub enum Modal {
     Keymap(KeymapView),
     Servers(ServersView),
     LspInfo(LspInfoView),
+    /// Setup for the clock, pomodoro or alarm widget.
+    Timers(TimerDialog),
 }
 
 /// LSP Info (like Neovim's :LspInfo).
@@ -521,6 +525,8 @@ pub struct App {
     pub install_failed: HashMap<String, String>,
     /// Installed packages (folder names in Packages/).
     pub packages: Vec<String>,
+    /// The clock, pomodoro and alarm at the right of the tab strip.
+    pub timers: crate::timers::Timers,
     tx: EventTx,
 }
 
@@ -531,6 +537,8 @@ impl App {
         tree.anim = Duration::from_millis(if config.editor.animations { 160 } else { 0 });
         tree.set_roots(project.folders.clone(), false);
         let recent = Recent::load(config.data_dir.as_deref());
+        let wake = tx.clone();
+        let timers = crate::timers::Timers::load(config.data_dir.as_deref(), move || wake.wake());
         let mut app = App {
             project,
             recent,
@@ -611,6 +619,7 @@ impl App {
             grammar_hinted: HashSet::new(),
             install_failed: HashMap::new(),
             packages: vec![],
+            timers,
             config,
             tx,
         };
@@ -639,6 +648,9 @@ impl App {
 
     /// Expire the status message; returns true if the UI needs a repaint.
     pub fn tick(&mut self) -> bool {
+        if self.timers.tick(crate::timers::now()) {
+            return true;
+        }
         if self.last_disk_check.elapsed() >= Duration::from_secs(1) {
             self.last_disk_check = Instant::now();
             if self.check_config_file() {

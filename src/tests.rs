@@ -3444,3 +3444,181 @@ fn lsp_code_actions_and_format_on_save() {
         "clangd's default style (2 spaces)"
     );
 }
+
+#[test]
+fn licenses_page_lists_what_is_in_the_build() {
+    let d = project("licenses", &[]);
+    let mut h = harness(&d);
+    h.state_mut().app.run(crate::commands::Command::ShowLicenses);
+    steps(&mut h, 3);
+    let n = h.state().app.buffers.len();
+    {
+        let b = h.state().app.buf().unwrap();
+        assert_eq!(b.title.as_deref(), Some("Licenses and Attribution"));
+        assert!(b.read_only && b.path.is_none());
+        let t = b.text();
+        // Crates linked in, bundled data, and the license texts.
+        for s in [
+            "| egui | ",
+            "| tree-sitter | ",
+            "| two-face | ",
+            "Color theme \"Tsoding\" — MIT",
+            "Copyright 2023 JoaoAJMatos",
+            "SIL Open Font License",
+            "END OF TERMS AND CONDITIONS",
+        ] {
+            assert!(t.contains(s), "missing {s:?}");
+        }
+        // Not in the binary: compile-time proc-macros and dev-dependencies.
+        for s in ["| serde_derive | ", "| egui_kittest | "] {
+            assert!(!t.contains(s), "shouldn't list {s:?}");
+        }
+        // Every bracketed reference points at a license text that exists.
+        let texts = t.matches("\n### [").count();
+        let listing = t.split("\n## License texts").next().unwrap();
+        for r in listing.split('[').skip(1).filter_map(|s| s.split(']').next()?.parse::<usize>().ok()) {
+            assert!(r >= 1 && r <= texts, "dangling reference [{r}]");
+        }
+    }
+    // Read-only: typing changes nothing; opening it again reuses the tab.
+    typ(&mut h, "x");
+    assert!(!h.state().app.buf().unwrap().text().starts_with('x'));
+    h.state_mut().app.run(crate::commands::Command::ShowLicenses);
+    assert_eq!(h.state().app.buffers.len(), n);
+    shot(&mut h, "licenses");
+}
+
+#[test]
+fn diagnostic_under_the_cursor_shows_in_the_status_bar() {
+    let d = project("diag-status", &[("a.rs", "let x = 1;\nlet y = 2;\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.rs"), true);
+    steps(&mut h, 2);
+    let diag = |l: usize, a: usize, b: usize, sev: u8, m: &str| crate::app::Diag {
+        start: Pos { line: l, col: a },
+        end: Pos { line: l, col: b },
+        severity: sev,
+        message: m.into(),
+        raw: serde_json::Value::Null,
+    };
+    h.state_mut().app.diagnostics.insert(
+        d.join("a.rs"),
+        vec![
+            diag(0, 4, 5, 2, "unused variable: `x`\nhelp: prefix it with _"),
+            diag(0, 8, 9, 1, "mismatched types"),
+        ],
+    );
+    let at = |h: &mut Harness<'static, Gui>, line: usize, col: usize| {
+        h.state_mut().app.buf_mut().unwrap().set_cursor(Pos { line, col }, false);
+        h.state().app.diagnostic_at_cursor()
+    };
+    // Under the caret wins over a more severe one elsewhere on the line; one line of text.
+    assert_eq!(
+        at(&mut h, 0, 4),
+        Some((2, "warning: unused variable: `x` help: prefix it with _".into()))
+    );
+    assert_eq!(at(&mut h, 0, 9), Some((1, "error: mismatched types".into())));
+    // Elsewhere on the line: the most severe on the line; another line: nothing.
+    assert_eq!(at(&mut h, 0, 0).map(|d| d.0), Some(1));
+    assert_eq!(at(&mut h, 1, 0), None);
+}
+
+#[test]
+fn clock_pomodoro_and_alarm_widgets() {
+    use crate::app::TimerKind;
+    use crate::commands::Command;
+    let d = project("timers", &[("a.txt", "hello\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 3);
+    let kind = |h: &Harness<'static, Gui>| match &h.state().app.modal {
+        Some(Modal::Timers(d)) => Some(d.kind),
+        _ => None,
+    };
+    // The clock sits at the right end of the tab strip: clicking it opens its dialog.
+    let ed = h.state().editor_rect_for_test();
+    let at = egui::Pos2::new(ed.right() - 20.0, ed.top() - 16.0);
+    h.event(Event::PointerMoved(at));
+    steps(&mut h, 1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        steps(&mut h, 1);
+    }
+    steps(&mut h, 1);
+    assert_eq!(kind(&h), Some(TimerKind::Clock));
+    // Space flips "24-hour clock"; Enter applies and closes.
+    typ(&mut h, " ");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(kind(&h), None);
+    assert!(!h.state().app.timers.clock.hour24);
+
+    // Pomodoro: set work to 1 minute, then Start (the 6th row).
+    h.state_mut().app.run(Command::Pomodoro);
+    steps(&mut h, 1);
+    assert_eq!(kind(&h), Some(TimerKind::Pomodoro));
+    press(&mut h, CMD, Key::A);
+    typ(&mut h, "1");
+    for _ in 0..5 {
+        press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    }
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    {
+        let p = &h.state().app.timers.pomodoro;
+        assert_eq!(p.work, 1);
+        assert!(p.is_running());
+        assert_eq!(p.remaining(crate::timers::now()).map(|s| s <= 60), Some(true));
+    }
+    // A bad number is refused with a message; the dialog stays.
+    press(&mut h, Modifiers::NONE, Key::ArrowUp); // back to "auto" toggle
+    for _ in 0..4 {
+        press(&mut h, Modifiers::NONE, Key::ArrowUp);
+    }
+    press(&mut h, CMD, Key::A);
+    typ(&mut h, "0");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    match &h.state().app.modal {
+        Some(Modal::Timers(d)) => assert!(d.error.as_deref().unwrap().starts_with("Work")),
+        _ => panic!("dialog closed on a bad value"),
+    }
+    shot(&mut h, "timers_pomodoro_dialog");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert_eq!(h.state().app.timers.pomodoro.work, 1);
+
+    // Alarm: type a time, then "Set alarm" (4th row).
+    h.state_mut().app.run(Command::Alarm);
+    steps(&mut h, 1);
+    typ(&mut h, "18:30");
+    for _ in 0..3 {
+        press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    }
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(h.state().app.timers.alarm.at.is_some());
+    assert_eq!(h.state().app.timers.alarm.time, "18:30");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    shot(&mut h, "timers_widgets");
+
+    // A phase ends: the pomodoro flashes; clicking it only stops the flash.
+    let n = crate::timers::now();
+    h.state_mut().app.timers.pomodoro.run = crate::timers::Run::Running { ends: n - 1 };
+    h.state_mut().app.tick();
+    assert!(h.state().app.timers.flash.0);
+    assert_eq!(
+        h.state().app.timers.pomodoro.phase,
+        crate::timers::Phase::ShortBreak
+    );
+    // Draw it in both halves of the blink.
+    steps(&mut h, 1);
+    shot(&mut h, "timers_flash");
+    h.state_mut().app.timer_widget_clicked(TimerKind::Pomodoro);
+    assert!(!h.state().app.timers.flash.0);
+    assert_eq!(kind(&h), None);
+    // Saved: a new window has the same state.
+    let again = Gui::headless(d.clone(), test_config(&d));
+    assert_eq!(again.app.timers.alarm.time, "18:30");
+    assert_eq!(again.app.timers.pomodoro.work, 1);
+}

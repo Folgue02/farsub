@@ -455,6 +455,23 @@ impl App {
                 self.reload_config();
                 self.msg(format!("Reloaded {} package(s)", self.packages.len()));
             }
+            ShowLicenses => self.show_licenses(),
+            Pomodoro => self.open_timer_dialog(TimerKind::Pomodoro),
+            Alarm => self.open_timer_dialog(TimerKind::Alarm),
+            ClockSettings => self.open_timer_dialog(TimerKind::Clock),
+            PomodoroStartPause => {
+                let n = crate::timers::now();
+                self.timers.pomodoro.toggle(n);
+                self.timers.flash.0 = false;
+                self.timers.changed();
+                let p = &self.timers.pomodoro;
+                let left = crate::timers::countdown(p.remaining(n).unwrap_or(0));
+                self.msg(if p.is_running() {
+                    format!("Pomodoro: {} — {left} left", p.position())
+                } else {
+                    format!("Pomodoro paused — {left} left")
+                });
+            }
             ShowKeymap => {
                 self.completion = None;
                 self.hover = None;

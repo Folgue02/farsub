@@ -1,0 +1,76 @@
+# Converted from the Tsoding Color Theme for VS Code (v1.2.0),
+# https://github.com/JoaoAJMatos/Tsoding-Color-Theme, itself an adaptation of
+# https://github.com/BasisDeveloper/Tsoding-Color-Theme-unofficial.
+#
+# MIT License
+#
+# Copyright 2023 JoaoAJMatos
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this
+# software and associated documentation files (the "Software"), to deal in the Software
+# without restriction, including without limitation the rights to use, copy, modify,
+# merge, publish, distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to the following
+# conditions:
+#
+# The above copyright notice and this permission notice shall be included in all copies
+# or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+# PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+# HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+# CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+# THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+# The VS Code colors with alpha (selection, word highlight) are flattened onto the
+# background; gutter and guides are not in the original and were picked to match.
+name = "Tsoding"
+
+[editor]
+background = "#181818"
+foreground = "#E8E8E8"
+selection = "#3D2F2F"
+line_highlight = "#202020"
+find_highlight = "#2D2D2D"
+gutter = "#555555"
+guide = "#282828"
+active_guide = "#383838"
+caret = "#AFADAD"
+
+[syntax]
+"comment"               = { fg = "#FF9B21" }
+"comment.documentation" = { fg = "#FF9B21" }
+"string"                = { fg = "#79BF46" }
+"string.escape"         = { fg = "#BFC5BF" }
+"character"             = { fg = "#79BF46" }
+"number"                = { fg = "#BFC5BF" }
+"boolean"               = { fg = "#BFC5BF" }
+"constant"              = { fg = "#BFC5BF" }
+"keyword"               = { fg = "#EAE2B9" }
+"keyword.conditional"   = { fg = "#FFDD33" }
+"keyword.repeat"        = { fg = "#FFDD33" }
+"keyword.return"        = { fg = "#FFDD33" }
+"keyword.exception"     = { fg = "#FFDD33" }
+"keyword.coroutine"     = { fg = "#FFDD33" }
+"keyword.control"       = { fg = "#FFDD33" }
+"keyword.type"          = { fg = "#FFDD33" }
+"keyword.operator"      = { fg = "#BFC5BF" }
+"operator"              = { fg = "#BFC5BF" }
+"type"                  = { fg = "#BFC5BF" }
+"type.builtin"          = { fg = "#FFDD33" }
+"function.macro"        = { fg = "#BFC5BF" }
+"variable.parameter"    = { fg = "#E2E2E2" }
+"variable.builtin"      = { fg = "#BFC5BF" }
+"namespace"             = { fg = "#919191" }
+"module"                = { fg = "#919191" }
+"punctuation"           = { fg = "#BFC5BF" }
+"embedded"              = { fg = "#BD9393" }
+"markup.heading"        = { fg = "#FFDD33", bold = true }
+"markup.bold"           = { bold = true }
+"markup.italic"         = { italic = true }
+"markup.raw"            = { fg = "#79BF46" }
+"markup.link"           = { fg = "#7BA092" }
+"diff.plus"             = { fg = "#79BF46" }
+"diff.minus"            = { fg = "#C22121" }
+"diff.delta"            = { fg = "#C2AA21" }

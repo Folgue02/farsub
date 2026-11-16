@@ -155,6 +155,7 @@ impl App {
             match &mut self.modal {
                 Some(Modal::Servers(_)) => self.servers_char(c),
                 Some(Modal::LspInfo(_)) => self.lsp_info_char(c),
+                Some(Modal::Timers(_)) => self.timers_char(c),
                 // Modals with an input were handled above.
                 Some(Modal::Prompt(_) | Modal::Palette(_) | Modal::Keymap(_)) => {}
                 Some(Modal::Confirm(_)) => {
@@ -253,6 +254,7 @@ impl App {
             Some(Modal::Prompt(p)) => Some(&mut p.input),
             Some(Modal::Palette(p)) => Some(&mut p.query),
             Some(Modal::Keymap(v)) => Some(&mut v.query),
+            Some(Modal::Timers(d)) => d.input(),
             Some(_) => None,
             None if console => Some(&mut self.console.input),
             None if self.focus == Focus::Find && self.find.open => {
@@ -318,6 +320,9 @@ impl App {
     pub fn has_input(&self) -> bool {
         match &self.modal {
             Some(Modal::Prompt(_) | Modal::Palette(_) | Modal::Keymap(_)) => true,
+            Some(Modal::Timers(d)) => {
+                matches!(d.fields.get(d.sel).map(|f| &f.kind), Some(FieldKind::Text(_)))
+            }
             Some(_) => false,
             None => {
                 (self.focus == Focus::Console && self.console_shown())

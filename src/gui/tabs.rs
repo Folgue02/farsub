@@ -23,6 +23,13 @@ impl Gui {
         g: usize,
     ) {
         p.rect_filled(r, 0.0, c.chrome);
+        // The clock, pomodoro and alarm take the right end of the rightmost strip.
+        let r = if g + 1 == self.app.layout.max(1) {
+            let w = self.draw_timers(ui, p, r, c);
+            Rect::from_min_max(r.min, Pos2::new(r.right() - w, r.bottom()))
+        } else {
+            r
+        };
         let font = FontId::proportional(UI_SIZE);
         let mut x = r.left();
         let mut click: Option<(usize, bool)> = None;

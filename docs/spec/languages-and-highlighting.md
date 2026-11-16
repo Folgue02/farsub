@@ -15,10 +15,14 @@
   grammar crates, licenses in `runtime/queries/LICENSES.md`), overridable per grammar
   from a package or `~/.config/farsub/queries/<grammar>/highlights.scm`.
 - Themes are TOML (`themes/*.toml`): `[editor]` colors (background, foreground,
-  selection, line_highlight, gutter, guide, active_guide, caret) and `[syntax]` styles
+  selection, line_highlight, gutter, guide, active_guide, caret, find_highlight, and the
+  [timer widget](timers.md) colors) and `[syntax]` styles
   per capture (`"#RRGGBB"` or `{ fg, bold, italic, underline }`), looked up from specific to
-  general (`function.builtin` → `function`). The 29 bundled themes were converted once from
-  the color schemes farsub used before.
+  general (`function.builtin` → `function`). 29 of the bundled themes were converted once
+  from the color schemes farsub used before. "Tsoding" was converted from the MIT-licensed
+  [Tsoding Color Theme](https://github.com/JoaoAJMatos/Tsoding-Color-Theme) for VS Code;
+  a theme taken from elsewhere carries its source and license notice in a comment at the
+  top of its file.
 - A language names its grammar with `grammar = "…"` (default: its name); `grammar = ""`
   means no tree-sitter grammar (the regex fallback below still applies). Languages with no
   tree-sitter grammar at all yet: AWK, BibTeX, Clojure, Crystal,

@@ -25,6 +25,7 @@ impl App {
             Some(Modal::Keymap(v)) => self.keymap_key(k, v),
             Some(Modal::Servers(v)) => self.servers_key(k, v),
             Some(Modal::LspInfo(v)) => self.lsp_info_key(k, v),
+            Some(Modal::Timers(d)) => self.timers_key(k, d),
             Some(Modal::Confirm(c)) => match k.code {
                 KeyCode::Enter => self.confirm(c.kind),
                 KeyCode::Esc => {}

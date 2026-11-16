@@ -54,6 +54,10 @@
 - LSP Info (Cmd+Alt+I / status bar): this file's language/syntax, configured servers and
   their status, attached server details (command, root, pid, sync, capabilities, stderr),
   all running servers; `i` install, `r` restart, `s` manager.
+- **Diagnostic in the status bar**: with the caret on a diagnostic (inside its range, or
+  just at its end), the status bar shows it on one line as "error: …" / "warning: …",
+  colored by severity; elsewhere on a line with diagnostics, the line's most severe one.
+  A status message (shown for a few seconds) takes the place first.
 - A server that fails `initialize` is shown as failed with its reason (never stuck on
   "starting").
 - **Code actions** (decided 2026-11-15; Cmd+. / Ctrl+., LSP › Code Actions, or the

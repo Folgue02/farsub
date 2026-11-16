@@ -29,6 +29,7 @@ mod popups;
 mod sidebar;
 mod status;
 mod tabs;
+mod timers;
 
 use crate::palette::Mode;
 use icons::*;
@@ -552,6 +553,7 @@ impl Gui {
             Some(Modal::Keymap(_)) => self.draw_keymap(ui, &over, full, &c),
             Some(Modal::Servers(_)) => self.draw_servers(ui, &over, full, &c),
             Some(Modal::LspInfo(_)) => self.draw_lsp_info(ui, &over, full, &c),
+            Some(Modal::Timers(_)) => self.draw_timer_dialog(ui, &over, full, &c),
             _ => {}
         }
         if let Some(r) = bar {

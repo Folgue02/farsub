@@ -40,14 +40,22 @@ impl Gui {
             font.clone(),
             c.dim,
         );
-        let msg = app.status.as_ref().map(|s| s.0.clone()).or_else(|| {
-            let b = app.buf()?;
-            let ds = app.diagnostics.get(b.path.as_ref()?)?;
-            ds.iter()
-                .filter(|d| d.start.line <= b.cursor.line && d.end.line >= b.cursor.line)
-                .min_by_key(|d| d.severity)
-                .map(|d| d.message.lines().next().unwrap_or("").to_string())
-        });
+        // A status message, else the diagnostic under the cursor (else on its line), the
+        // most severe first, colored by severity.
+        let msg = app
+            .status
+            .as_ref()
+            .map(|s| (s.0.clone(), c.accent))
+            .or_else(|| {
+                let (sev, text) = app.diagnostic_at_cursor()?;
+                let col = match sev {
+                    1 => c.err,
+                    2 => c.warn,
+                    3 => c.info,
+                    _ => c.dim,
+                };
+                Some((text, col))
+            });
         // Right side, Sublime style: each item is clickable.
         let mut right: Vec<(String, Option<crate::commands::Command>)> = vec![];
         if let Some(b) = app.buf() {
@@ -121,7 +129,7 @@ impl Gui {
         if let Some(cmd) = clicked {
             self.app.run(cmd);
         }
-        if let Some(m) = msg {
+        if let Some((m, col)) = msg {
             let clip = p.with_clip_rect(Rect::from_min_max(
                 Pos2::new(x.right() + 24.0, r.top()),
                 Pos2::new(rr.left() - 24.0, r.bottom()),
@@ -131,7 +139,7 @@ impl Gui {
                 Align2::LEFT_CENTER,
                 m,
                 font,
-                c.accent,
+                col,
             );
         }
     }
