@@ -495,11 +495,13 @@ pub struct App {
     /// Width of each group as a fraction of the editor area (sums to 1).
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
-    pub settings_view: Option<SettingsView>,
+    /// Open two-pane views (Preferences: Settings, Key Bindings).
+    pub settings_view: Vec<SettingsView>,
     /// This process is a settings window (`--settings`).
     pub settings_window: bool,
     /// The config file as last loaded (another window may save it).
-    config_stamp: Option<fileops::DiskStamp>,
+    /// The settings file and keymap.toml as last loaded (to notice either changing).
+    config_stamp: [Option<fileops::DiskStamp>; 2],
     /// When open files were last checked against the disk (deleted files).
     last_disk_check: Instant,
     /// Set by commands that need a file/folder from the user; the GUI shows the picker.
@@ -536,6 +538,7 @@ impl App {
         let mut tree = Tree::new();
         tree.anim = Duration::from_millis(if config.editor.animations { 160 } else { 0 });
         tree.set_roots(project.folders.clone(), false);
+        let has_folders = !project.folders.is_empty();
         let recent = Recent::load(config.data_dir.as_deref());
         let wake = tx.clone();
         let timers = crate::timers::Timers::load(config.data_dir.as_deref(), move || wake.wake());
@@ -544,7 +547,8 @@ impl App {
             recent,
             last_autosave: Instant::now(),
             focus: Focus::Editor,
-            sidebar_visible: config.editor.show_sidebar,
+            // A window with no folder has nothing for the sidebar: it starts hidden.
+            sidebar_visible: config.editor.show_sidebar && has_folders,
             show_hidden: false,
             buffers: vec![],
             cur: 0,
@@ -601,9 +605,9 @@ impl App {
             group: 0,
             group_active: [None; MAX_GROUPS],
             group_split: vec![1.0],
-            settings_view: None,
+            settings_view: Vec::new(),
             settings_window: false,
-            config_stamp: None,
+            config_stamp: [None, None],
             wrap_cols: None,
             last_disk_check: Instant::now(),
             file_request: None,
@@ -623,7 +627,7 @@ impl App {
             config,
             tx,
         };
-        app.config_stamp = app.config.path.as_deref().and_then(fileops::DiskStamp::of);
+        app.config_stamp = app.config_stamp_now();
         app.apply_project_config();
         app.recent.touch(&app.project);
         app.recent.save(app.config.data_dir.as_deref());

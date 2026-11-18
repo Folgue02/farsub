@@ -48,7 +48,7 @@ impl Gui {
         }
         let t = &mut self.app.tree;
         // Follow keyboard selection; leave mouse-wheel scrolling alone otherwise.
-        if self.last_tree_sel != Some(t.sel) {
+        if self.last_tree_sel != Some(t.sel) || std::mem::take(&mut t.follow) {
             if t.sel < t.scroll {
                 t.scroll = t.sel;
                 self.side_px = 0.0;

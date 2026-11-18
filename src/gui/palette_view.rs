@@ -70,6 +70,7 @@ impl Gui {
             8.0,
             Color32::from_black_alpha(90),
         );
+        block(ui, r, "palette");
         p.rect_filled(r, 6.0, c.pop);
         p.rect_stroke(r, 6.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
         let input = Rect::from_min_size(r.min + Vec2::new(10.0, 10.0), Vec2::new(w - 20.0, 32.0));

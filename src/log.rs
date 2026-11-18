@@ -57,10 +57,15 @@ pub fn set_waker(f: impl Fn() + Send + Sync + 'static) {
     let _ = WAKE.set(Box::new(f));
 }
 
-/// Also append everything to a file (truncated at startup).
+/// Also append everything to a file (started afresh each launch; the last launch's log
+/// is kept beside it as `<name>.previous.log`, so a crash's panic message survives the
+/// restart).
 pub fn set_file(path: &std::path::Path) {
     if let Some(d) = path.parent() {
         let _ = std::fs::create_dir_all(d);
+    }
+    if path.exists() {
+        let _ = std::fs::rename(path, path.with_extension("previous.log"));
     }
     if let Ok(f) = std::fs::File::create(path) {
         LOG.lock().unwrap().file = Some(f);

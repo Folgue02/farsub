@@ -24,6 +24,9 @@ pub struct Tree {
     pub nodes: Vec<Node>,
     pub sel: usize,
     pub scroll: usize,
+    /// Set by `reveal`: the sidebar scrolls the selection into view even if its row
+    /// number didn't change.
+    pub follow: bool,
     pub expanded: HashSet<PathBuf>,
     /// Multi-selection for file operations.
     pub marked: HashSet<PathBuf>,
@@ -48,6 +51,7 @@ impl Tree {
             nodes: vec![],
             sel: 0,
             scroll: 0,
+            follow: false,
             expanded: HashSet::new(),
             marked: HashSet::new(),
             cache: HashMap::new(),
@@ -405,6 +409,7 @@ impl Tree {
         self.rebuild();
         if let Some(i) = self.nodes.iter().position(|n| n.path == path) {
             self.sel = i;
+            self.follow = true;
         }
     }
 

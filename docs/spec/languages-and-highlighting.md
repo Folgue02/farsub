@@ -18,7 +18,13 @@
   selection, line_highlight, gutter, guide, active_guide, caret, find_highlight, and the
   [timer widget](timers.md) colors) and `[syntax]` styles
   per capture (`"#RRGGBB"` or `{ fg, bold, italic, underline }`), looked up from specific to
-  general (`function.builtin` → `function`). 29 of the bundled themes were converted once
+  general (`function.builtin` → `function`). Markup a theme doesn't style borrows a color
+  every theme has (decided 2026-11-18): `markup.raw` (code) uses `string`, `markup.link`
+  uses `constant`, `markup.heading` uses `keyword`, so Markdown shows its structure in
+  every theme. Highlight queries use the `markup.*` names themes style, not
+  nvim-treesitter's old `@text.*` ones (a test checks). Tree-sitter grammars don't
+  get language injections yet (Markdown's inline grammar, code in HTML/Svelte/Vue), which
+  is why Markdown uses the regex highlighter by default (see below). 29 of the bundled themes were converted once
   from the color schemes farsub used before. "Tsoding" was converted from the MIT-licensed
   [Tsoding Color Theme](https://github.com/JoaoAJMatos/Tsoding-Color-Theme) for VS Code;
   a theme taken from elsewhere carries its source and license notice in a comment at the
@@ -74,6 +80,15 @@
   the edited line, work is capped per frame like tree-sitter's, and lines over 4,000 bytes
   aren't highlighted. A test checks every language without a built-in tree-sitter grammar
   has a fallback.
+- **Choosing the highlighter** (decided 2026-11-18): a language file's `highlighter` is
+  `"tree-sitter"` (the default: its tree-sitter grammar, the regex one while there's
+  none) or `"regex"` (always the regex grammar, even with a tree-sitter one). The
+  settings' `highlighter` map overrides it per language without copying the language
+  file: `highlighter = { markdown = "tree-sitter" }`; open files switch when it's saved.
+  Markdown defaults to `"regex"`: bat's Markdown grammar colors bold, italic, inline
+  code, links and fenced code by its language, which tree-sitter would need injections
+  for. Nothing else depends on the tree-sitter parse, so regex mode loses nothing but
+  its precision. No per-file switch: the setting applies live.
 - 37 recipes ship: Batch, C#, CMake, CUDA, Dart, Dockerfile, Elixir, Elm, Erlang, Fish,
   F#, Gleam, GLSL, Groovy, Haskell, Julia, KDL, Kotlin, Less, nginx, Nix, OCaml, Odin, PowerShell, Prisma,
   Protocol Buffers, R, Scala, SCSS, Solidity, SQL, Starlark, Svelte, Swift, Vim script,

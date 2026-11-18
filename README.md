@@ -114,7 +114,8 @@ letter jumps to an item, and Esc closes.
 applies, with a search box; Enter runs the selected command.
 
 Custom keys in `keymap.toml` (`context` is `global`, `editor` or `sidebar`;
-`command = ""` unbinds; `platforms` limits an entry):
+`command = ""` unbinds; `platforms` limits an entry). Preferences: Key Bindings
+(File › Key Bindings…) opens it beside the defaults, which list every command id:
 
 ```toml
 [[keys]]
@@ -427,7 +428,7 @@ the Menu key opens it from the keyboard). The items are data: edit `[context.edi
 "View: Show Console" in the command palette (or View → Show Console) shows the app log: status
 messages, language-server output (`window/logMessage`, start/exit with exit codes,
 initialize failures), server install output, package loading errors, and panics. The
-same log is written to `<data>/logs/farsub.log`. The input line takes:
+same log is written to `<data>/logs/farsub.log` (the previous launch's is kept as `farsub.previous.log`). The input line takes:
 
 - `help`, `clear`, `debug` (also show servers' raw stderr), `filter TEXT`, `log` (open the
   log file), `lsp` (print LSP Info)

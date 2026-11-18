@@ -68,6 +68,13 @@ struct Palette {
 
 /// The primary button went down on this widget this frame. Tabs, sidebar rows and the
 /// menu bar react to the press (like Sublime / VS Code); buttons keep acting on release.
+/// Keep the mouse off what's under a popup or dialog. Called with its box (or the whole
+/// window, for a dialog that dims it) before its own widgets: it takes the hover and
+/// clicks there, so the editor or terminal below doesn't show its I-beam or react.
+fn block(ui: &egui::Ui, r: Rect, what: &'static str) {
+    ui.interact(r, Id::unique(("block", what)), Sense::click_and_drag());
+}
+
 fn pressed(ui: &egui::Ui, resp: &egui::Response) -> bool {
     resp.hovered() && ui.input(|i| i.pointer.primary_pressed())
 }
@@ -155,6 +162,8 @@ pub struct Gui {
     /// Per group: how far its tab strip is scrolled (points), and the tab it last showed
     /// (the strip follows a newly shown tab; the wheel scrolls it freely otherwise).
     pub tab_scroll: HashMap<usize, (f32, Option<usize>)>,
+    /// The buffer whose tab × the last press on a tab landed on.
+    close_press: Option<usize>,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
 }
@@ -228,6 +237,7 @@ impl Gui {
             keyboard_spot: None,
             sidebar_sel_px: None,
             tab_scroll: HashMap::new(),
+            close_press: None,
             #[cfg(target_os = "macos")]
             native_menu: None,
         }
@@ -553,7 +563,7 @@ impl Gui {
         }
         match &self.app.modal {
             Some(Modal::Palette(_)) => self.draw_palette(ui, &over, full, &c),
-            Some(Modal::Confirm(_)) => self.draw_confirm(&over, full, &c),
+            Some(Modal::Confirm(_)) => self.draw_confirm(ui, &over, full, &c),
             Some(Modal::Keymap(_)) => self.draw_keymap(ui, &over, full, &c),
             Some(Modal::Servers(_)) => self.draw_servers(ui, &over, full, &c),
             Some(Modal::LspInfo(_)) => self.draw_lsp_info(ui, &over, full, &c),
@@ -589,6 +599,9 @@ impl Gui {
         let (cw, rh) = ui
             .ctx()
             .fonts_mut(|f| (f.glyph_width(&font, 'M'), f.row_height(&font)));
+        // A font with broken metrics (NaN, zero) must not break the layout math.
+        let sane = |v: f32, k: f32| if v.is_finite() && v > 0.0 { v } else { font.size * k };
+        let (cw, rh) = (sane(cw, 0.6), sane(rh, 1.2));
         let lh = (rh * 1.35).round();
         (cw, lh, rh)
     }
@@ -714,52 +727,71 @@ fn line_job(
 /// Completion kind icon: a small tinted tile with a letter, colored like VS Code's symbol
 /// icons (purple = callables, blue = values, orange = types). Drawn as shapes + ASCII so it
 /// never depends on icon-font coverage.
-fn kind_icon(p: &Painter, center: Pos2, kind: &str, bg: Color32) {
+/// The font family holding the Codicons icons.
+fn icon_family() -> egui::FontFamily {
+    egui::FontFamily::Name("codicon".into())
+}
+
+/// A completion item's kind as VS Code shows it: a Codicons symbol icon, colored by group
+/// (purple: callables; blue: values and members; orange: types; grey: the rest).
+fn kind_icon(p: &Painter, center: Pos2, kind: &str) {
     let purple = Color32::from_rgb(0xB1, 0x80, 0xD7);
     let blue = Color32::from_rgb(0x75, 0xBE, 0xFF);
     let orange = Color32::from_rgb(0xEE, 0x9D, 0x28);
     let grey = Color32::from_rgb(0xA0, 0xA0, 0xA8);
-    let (glyph, col) = match kind {
-        "fn" => ("f", purple),
-        "meth" => ("m", purple),
-        "ctor" => ("c", purple),
-        "var" => ("v", blue),
-        "field" => ("F", blue),
-        "prop" => ("p", blue),
-        "const" => ("K", blue),
-        "val" | "unit" => ("1", blue),
-        "iface" => ("I", blue),
-        "class" => ("C", orange),
-        "struct" => ("S", orange),
-        "enum" => ("E", orange),
-        "variant" => ("e", orange),
-        "type" => ("T", orange),
-        "event" => ("!", orange),
-        "mod" => ("M", grey),
-        "kw" => ("k", grey),
-        "snip" => ("s", grey),
-        "file" => ("d", grey),
-        "dir" => ("D", grey),
-        "ref" => ("r", grey),
-        "op" => ("+", grey),
-        "color" => ("#", grey),
-        _ => ("t", grey),
+    let (icon, col) = kind_codicon(kind);
+    let col = match col {
+        KindGroup::Callable => purple,
+        KindGroup::Value => blue,
+        KindGroup::Type => orange,
+        KindGroup::Other => grey,
     };
-    let r = Rect::from_center_size(center, Vec2::splat(16.0));
-    p.rect_filled(r, 3.0, mix(bg, col, 0.22));
-    p.rect_stroke(
-        r,
-        3.0,
-        Stroke::new(1.0, mix(bg, col, 0.55)),
-        StrokeKind::Inside,
-    );
     p.text(
-        r.center(),
+        center,
         Align2::CENTER_CENTER,
-        glyph,
-        FontId::monospace(11.0),
+        icon,
+        FontId::new(16.0, icon_family()),
         col,
     );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum KindGroup {
+    Callable,
+    Value,
+    Type,
+    Other,
+}
+
+/// The Codicons glyph (codepoints from the package's codicon.csv) for a completion kind,
+/// following VS Code's choices.
+pub(crate) fn kind_codicon(kind: &str) -> (&'static str, KindGroup) {
+    use KindGroup::*;
+    match kind {
+        "fn" | "meth" | "ctor" => ("\u{EA8C}", Callable), // symbol-method
+        "var" => ("\u{EA88}", Value),                     // symbol-variable
+        "field" => ("\u{EB5F}", Value),                   // symbol-field
+        "prop" => ("\u{EB65}", Value),                    // symbol-property
+        "const" => ("\u{EB5D}", Value),                   // symbol-constant
+        "val" => ("\u{EA95}", Value),                     // symbol-enum (VS Code's "value")
+        "unit" => ("\u{EA96}", Value),                    // symbol-ruler
+        "variant" => ("\u{EB5E}", Value),                 // symbol-enum-member
+        "iface" => ("\u{EB61}", Type),                    // symbol-interface
+        "class" => ("\u{EB5B}", Type),                    // symbol-class
+        "struct" => ("\u{EA91}", Type),                   // symbol-structure
+        "enum" => ("\u{EA95}", Type),                     // symbol-enum
+        "type" => ("\u{EA92}", Type),                     // symbol-parameter (type parameter)
+        "event" => ("\u{EA86}", Type),                    // symbol-event
+        "mod" => ("\u{EA8B}", Other),                     // symbol-namespace
+        "kw" => ("\u{EB62}", Other),                      // symbol-keyword
+        "snip" => ("\u{EB66}", Other),                    // symbol-snippet
+        "file" => ("\u{EA7B}", Other),                    // symbol-file
+        "dir" => ("\u{EA83}", Other),                     // folder
+        "ref" => ("\u{EB36}", Other),                     // references
+        "op" => ("\u{EB64}", Other),                      // symbol-operator
+        "color" => ("\u{EB5C}", Other),                   // symbol-color
+        _ => ("\u{EA93}", Other),                         // symbol-key (VS Code's "text")
+    }
 }
 
 /// Folder disclosure triangle (drawn, so it never depends on font coverage).
@@ -908,6 +940,16 @@ impl Gui {
     /// The built-in font stays behind it for characters the chosen one lacks.
     fn apply_font(&mut self, ctx: &egui::Context, name: &str) {
         let mut defs = egui::FontDefinitions::default();
+        // Codicons (VS Code's icons, CC BY 4.0; credited in Help › Licenses): a family of
+        // its own, for the completion-kind icons.
+        defs.font_data.insert(
+            "codicon".into(),
+            std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                "../../runtime/fonts/codicon.ttf"
+            ))),
+        );
+        defs.families
+            .insert(icon_family(), vec!["codicon".into()]);
         if !name.is_empty() {
             match crate::fonts::load(name) {
                 Some((bytes, index)) => {
@@ -921,7 +963,7 @@ impl Gui {
                         .insert(0, "farsub-editor".into());
                 }
                 None => self.app.msg(format!(
-                    "The font \"{name}\" isn't installed; using the built-in one"
+                    "The font \"{name}\" isn't installed or can't be drawn; using the built-in one"
                 )),
             }
         }

@@ -33,7 +33,8 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
   View menu. It is a tab of the bottom panel.
 - Shows the app log: status messages, language-server log messages/start/exit/initialize
   failures, server install output, package errors, panics. Also written to
-  `<data>/logs/farsub.log`.
+  `<data>/logs/farsub.log`; the previous launch's log is kept as `farsub.previous.log`
+  (so a crash's panic message survives reopening farsub).
 - Text is **selectable**: drag to select, double-click selects a word, Cmd+A selects all,
   Cmd+C copies.
 - Long lines **wrap** by default; `wrap` in the console input toggles wrapping, and with

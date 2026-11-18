@@ -9,9 +9,11 @@
 - `--empty` opens a clean window: no folder, no project, no session (files given too still
   open in it). File › New Window (Cmd+Shift+N, as in Sublime) starts one as a separate
   farsub process, with the same `--config` / `--data-dir`. An empty window doesn't
-  replace the "last session" and keeps no workspace; its sidebar says "No folder open".
+  replace the "last session" and keeps no workspace; it starts without the sidebar (see
+  [Sidebar](sidebar.md)).
 - `--settings` opens a window with just the two settings panes (Preferences: Settings
   starts one); closing them closes the window. Like `--empty`, it keeps no workspace.
+  `--keymap` is the same for the key bindings panes (Preferences: Key Bindings).
 - What opens: a project file → that project; folders → those folders (or added to the last
   session with `-a`); files only → the last session (or the file's project root if there
   is none); nothing → the last session, else the current folder. `-n` skips the session.

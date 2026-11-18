@@ -45,6 +45,7 @@ impl Gui {
             6.0,
             Color32::from_black_alpha(80),
         );
+        block(ui, r, "completion");
         p.rect_filled(r, 4.0, c.pop);
         p.rect_stroke(r, 4.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
         let first = comp.sel.unwrap_or(0).saturating_sub(rows - 1);
@@ -66,12 +67,7 @@ impl Gui {
             if Some(i) == comp.sel {
                 clip.rect_filled(rr, 3.0, c.pop_sel);
             }
-            kind_icon(
-                &clip,
-                Pos2::new(rr.left() + 15.0, rr.center().y),
-                it.kind,
-                c.pop,
-            );
+            kind_icon(&clip, Pos2::new(rr.left() + 15.0, rr.center().y), it.kind);
             clip.text(
                 Pos2::new(rr.left() + 40.0, rr.center().y),
                 Align2::LEFT_CENTER,

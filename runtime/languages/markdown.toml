@@ -2,3 +2,6 @@ name = "markdown"
 title = "Markdown"
 extensions = ["md", "markdown", "mdown", "mkd"]
 servers = ["marksman"]
+# The regex grammar (bat's Markdown) colors bold, italic, inline code, links and fenced
+# code by its language; the tree-sitter one would need language injections for those.
+highlighter = "regex"

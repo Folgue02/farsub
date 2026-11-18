@@ -1,10 +1,12 @@
-;; From tree-sitter-md 0.5.4: tree-sitter-markdown/queries/highlights.scm
+;; From tree-sitter-md 0.5.4: tree-sitter-markdown/queries/highlights.scm, with the old
+;; nvim-treesitter capture names (@text.title, @text.literal, …) renamed to the
+;; markup.* names themes style.
 ;From nvim-treesitter/nvim-treesitter
 (atx_heading
-  (inline) @text.title)
+  (inline) @markup.heading)
 
 (setext_heading
-  (paragraph) @text.title)
+  (paragraph) @markup.heading)
 
 [
   (atx_h1_marker)
@@ -21,15 +23,15 @@
   (link_title)
   (indented_code_block)
   (fenced_code_block)
-] @text.literal
+] @markup.raw
 
 (fenced_code_block_delimiter) @punctuation.delimiter
 
 (code_fence_content) @none
 
-(link_destination) @text.uri
+(link_destination) @markup.link.url
 
-(link_label) @text.reference
+(link_label) @markup.link
 
 [
   (list_marker_plus)

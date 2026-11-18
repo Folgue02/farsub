@@ -361,6 +361,7 @@ impl App {
     pub(super) fn hint_grammar(&mut self, l: &crate::config::LanguageConfig) {
         let g = l.grammar_name().to_string();
         if g.is_empty()
+            || self.config.highlighter_for(l) == crate::config::Highlighter::Regex
             || self.config.grammar_recipe(&g).is_none()
             || !self.grammar_hinted.insert(g.clone())
         {
@@ -381,8 +382,12 @@ impl App {
         self.msg(m);
     }
 
-    /// A language's tree-sitter grammar, if farsub has it.
+    /// A language's tree-sitter grammar, if farsub has it and the language uses it
+    /// (`highlighter`; with "regex" it's highlighted with the regex grammar instead).
     pub(super) fn grammar_of(&self, l: &crate::config::LanguageConfig) -> Option<String> {
+        if self.config.highlighter_for(l) == crate::config::Highlighter::Regex {
+            return None;
+        }
         let g = l.grammar_name();
         (!g.is_empty() && self.syn.has_grammar(g)).then(|| g.to_string())
     }

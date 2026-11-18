@@ -30,6 +30,8 @@ serde_json = "1.0.154"
 syntect = "5"
 tar = "0.4.46"
 toml = "1"
+# Checks a font has outlines before it is offered (fontdb already uses it).
+ttf-parser = "0.25"
 trash = "5.3.0"
 tree-sitter = "0.27"
 tree-sitter-bash = "0.25.1"

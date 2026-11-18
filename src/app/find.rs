@@ -419,7 +419,8 @@ impl App {
             .or_else(|| self.search.clone())
             .filter(|q| !q.is_empty());
         let Some(q) = q else {
-            return self.msg("Nothing to find (Cmd+F)");
+            let k = self.keymap.shortcut(Command::Find);
+            return self.msg(format!("Nothing to find ({k})"));
         };
         let m = match self.matcher_for(&q) {
             Ok(m) => m,
@@ -808,7 +809,8 @@ impl App {
     /// F4 / Shift+F4: the next / previous match line of Find Results.
     fn step_result(&mut self, forward: bool) {
         let Some(i) = self.buffers.iter().position(|b| b.results.is_some()) else {
-            return self.msg("No find results (Find in Files: Cmd+Shift+F)");
+            let k = self.keymap.shortcut(Command::FindInFiles);
+            return self.msg(format!("No find results (Find in Files: {k})"));
         };
         let b = &self.buffers[i];
         let r = b.results.as_ref().expect("results");

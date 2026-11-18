@@ -307,6 +307,36 @@ fn bundled_data(runtime: &Path) -> Vec<Item> {
             )],
         });
     }
+    // Fonts in runtime/fonts/: each <name>.ttf comes with <name>-LICENSE.txt (its source
+    // in the first lines, then the license).
+    let mut fonts: Vec<_> = std::fs::read_dir(runtime.join("fonts"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.to_string_lossy().ends_with("-LICENSE.txt"))
+        .collect();
+    fonts.sort();
+    for p in fonts {
+        let Ok(text) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let file = p.file_name().unwrap().to_string_lossy().into_owned();
+        let font = file.trim_end_matches("-LICENSE.txt");
+        let license = if text.contains("Attribution 4.0 International") {
+            "CC-BY-4.0".to_string()
+        } else {
+            license_of(&text)
+        };
+        // Named by the notice's first words ("Codicons icon font (codicon.ttf), …").
+        let title = text.lines().next().and_then(|l| l.split(" (").next());
+        out.push(Item {
+            name: title.map_or_else(|| format!("Font {font}.ttf"), str::to_string),
+            version: String::new(),
+            license,
+            texts: vec![(format!("fonts/{file}"), text)],
+        });
+    }
     // two-face (bat's set): the fallback syntaxes, and the themes most bundled themes
     // were converted from.
     let ack = two_face::acknowledgement::listing();

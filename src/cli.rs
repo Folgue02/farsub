@@ -42,6 +42,10 @@ pub struct Args {
     #[arg(long, conflicts_with_all = ["project", "add", "empty"])]
     pub settings: bool,
 
+    /// Open a window with just the key bindings (Preferences: Key Bindings opens one).
+    #[arg(long, conflicts_with_all = ["project", "add", "empty", "settings"])]
+    pub keymap: bool,
+
     /// Add the given folders to the last session's project instead of opening them alone.
     #[arg(short, long)]
     pub add: bool,
@@ -209,7 +213,7 @@ pub fn plan(
     {
         return Err(format!("no such project: {}", p.display()));
     }
-    if args.empty || args.settings {
+    if args.empty || args.settings || args.keymap {
         // A clean window; files given too still open in it.
         return Ok(Plan {
             target: Target::Folders(vec![]),

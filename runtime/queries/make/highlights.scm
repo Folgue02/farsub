@@ -130,15 +130,15 @@
 
 (function_call
   function: "error"
-  (arguments (text) @text.danger))
+  (arguments (text) @string))
 
 (function_call
   function: "warning"
-  (arguments (text) @text.warning))
+  (arguments (text) @string))
 
 (function_call
   function: "info"
-  (arguments (text) @text.note))
+  (arguments (text) @string))
 
 ;; Install Command Categories
 ;; Others special variables

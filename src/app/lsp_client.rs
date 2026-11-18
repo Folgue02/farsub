@@ -797,12 +797,9 @@ impl App {
                     .into_iter()
                     .filter(|a| a.get("disabled").is_none())
                     .collect();
-                if list.is_empty() {
-                    return self.msg("No code actions here");
-                }
                 // The server's preferred fix first.
                 list.sort_by_key(|a| !a.get("isPreferred").and_then(Value::as_bool).unwrap_or(false));
-                let items: Vec<Item> = list
+                let mut items: Vec<Item> = list
                     .iter()
                     .enumerate()
                     .map(|(i, a)| Item {
@@ -820,13 +817,8 @@ impl App {
                     })
                     .collect();
                 self.code_actions = list.into_iter().map(|a| (cid, buf, a)).collect();
-                let mut p = Palette::new(Mode::CodeActions, "");
-                p.title = match items.len() {
-                    1 => "1 code action".to_string(),
-                    n => format!("{n} code actions"),
-                };
-                p.set_items(items);
-                self.modal = Some(Modal::Palette(p));
+                items.extend(self.editor_actions(cid));
+                self.show_code_actions(items);
             }
             Pending::ResolveAction { buf } => {
                 if result.is_object() {
@@ -905,8 +897,10 @@ impl App {
             return;
         };
         if c.ready && !c.has_cap("codeActionProvider") {
-            let name = c.server.clone();
-            return self.msg(format!("{name} has no code actions"));
+            // Nothing to ask: just the editor's own actions.
+            self.code_actions.clear();
+            let items = self.editor_actions(cid);
+            return self.show_code_actions(items);
         }
         c.request(
             "textDocument/codeAction",
@@ -914,6 +908,45 @@ impl App {
                    "context": {"diagnostics": diags, "triggerKind": 1}}),
             Pending::CodeActions { buf: id },
         );
+    }
+
+    /// After the server's actions, the editor's own for the symbol at the cursor (the ones
+    /// this server can do), like VS Code's context menu: rename, go to definition, …
+    fn editor_actions(&self, cid: usize) -> Vec<Item> {
+        use crate::commands::Command::*;
+        let c = self.lsp.clients.get(&cid);
+        [
+            (Rename, "renameProvider"),
+            (GotoDefinition, "definitionProvider"),
+            (FindReferences, "referencesProvider"),
+            (Hover, "hoverProvider"),
+            (Format, "documentFormattingProvider"),
+        ]
+        .into_iter()
+        // Until the server says what it can do, offer them all.
+        .filter(|(_, cap)| c.is_none_or(|c| !c.ready || c.has_cap(cap)))
+        .map(|(cmd, _)| Item {
+            label: crate::commands::name(cmd)
+                .trim_start_matches("LSP: ")
+                .to_string(),
+            detail: self.keymap.shortcut(cmd),
+            action: Action::Command(cmd),
+        })
+        .collect()
+    }
+
+    fn show_code_actions(&mut self, items: Vec<Item>) {
+        if items.is_empty() {
+            return self.msg("No code actions here");
+        }
+        let mut p = Palette::new(Mode::CodeActions, "");
+        p.title = match self.code_actions.len() {
+            0 => "Actions".to_string(),
+            1 => "1 code action".to_string(),
+            n => format!("{n} code actions"),
+        };
+        p.set_items(items);
+        self.modal = Some(Modal::Palette(p));
     }
 
     /// The code action picked from the list.

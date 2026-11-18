@@ -427,9 +427,13 @@ impl App {
                         .map(|c| format!(" (exit code {c})"))
                         .unwrap_or_default();
                     crate::log::warn(&format!("lsp:{name}"), format!("server exited{why}"));
-                    self.msg(format!(
-                        "{name} exited{why} — see the console (Ctrl+`) or LSP Info"
-                    ));
+                    let k = self.keymap.shortcut(Command::ToggleConsole);
+                    let console = if k.is_empty() {
+                        "View: Show Console".to_string()
+                    } else {
+                        k
+                    };
+                    self.msg(format!("{name} exited{why} — see the console ({console}) or LSP Info"));
                 }
             }
             AppEvent::Install(name, ev) => self.on_install(name, ev),

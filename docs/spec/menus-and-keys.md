@@ -16,4 +16,10 @@
 - On macOS, Cmd and Ctrl are different keys in bindings (`Cmd+A` ≠ `Ctrl+A`); on
   Windows/Linux both mean Ctrl.
 - Keymap viewer: Cmd+Shift+/ lists all bindings; user overrides in `keymap.toml`
-  (`command = ""` unbinds, `platforms` limits).
+  (`command = ""` unbinds, `platforms` limits), edited with Preferences: Key Bindings
+  (File › Key Bindings…) beside the defaults; see [Editor](editor.md).
+- **Every shortcut shown comes from the keymap** (decided 2026-11-16): menus, context
+  menus, the palette, the find panel, the empty window's hints, the menu bar's hint and
+  status messages. They show this platform's names ("Cmd" becomes Ctrl on Windows and
+  Linux) and follow rebinding; a hint for an unbound command is left out. No key label is
+  written into the code.

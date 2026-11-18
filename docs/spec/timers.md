@@ -6,6 +6,10 @@ segments; one not in use (no alarm set, pomodoro not started) is a thin empty st
 widens to show its time when used. They're hidden when the strip is too narrow
 (< 320 points).
 
+- When tabs overflow, they slide under the widgets along a diagonal edge matching the
+  segments' slant (not a straight cut). The middle of that slant is the one boundary
+  between them: left of it the mouse goes to the tabs, right of it to the widgets
+  (no dead band), and a tab scrolled into view stops there.
 - **Hover** highlights a segment (like sidebar rows) and shows a tooltip with its state;
   **click** opens its setup dialog. A segment that's **flashing** after an alert stops
   on a click instead (the next click opens the dialog).

@@ -66,8 +66,12 @@
   are listed like Goto Anything, the server's preferred fix first, with their kind
   (quickfix, refactor…) on the right; disabled ones are left out. Choosing one applies
   its edits (in any file) and runs its command. An action the server sends without its
-  edit is resolved first (`codeAction/resolve`). "No code actions here" when there are
-  none. A diagnostic often sits on the token after the mistake (clangd puts a missing `;`
+  edit is resolved first (`codeAction/resolve`). After the server's actions come the
+  editor's own for the symbol at the cursor (decided 2026-11-18, like VS Code's context
+  menu): Rename Symbol, Goto Definition, Find References, Show Hover Info and Format
+  Document, each with its shortcut on the right, only those the server supports. A server
+  without code actions shows just those. "No code actions here" when there's nothing at
+  all. A diagnostic often sits on the token after the mistake (clangd puts a missing `;`
   on the next line), so the cursor goes on the squiggle.
 - **Format Document** (LSP › Format Document, also in the right-click menu) applies the
   server's formatting as one undo step.

@@ -131,6 +131,10 @@ fn main() -> ExitCode {
                 app.settings_window = true;
                 app.open_settings_here();
             }
+            if args.keymap {
+                app.settings_window = true;
+                app.open_keymap_here();
+            }
             if plan.restore {
                 app.restore_workspace();
             }

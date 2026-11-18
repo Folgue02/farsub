@@ -15,6 +15,7 @@ impl App {
             if focus {
                 self.set_cur(i);
                 self.focus = Focus::Editor;
+                self.reveal_opened(&path);
             }
             return Some(i);
         }
@@ -44,21 +45,33 @@ impl App {
         if !encoding.is_utf8() {
             self.msg(format!("Opened as {}", encoding.label()));
         }
-        self.set_buffer_path(i, path);
+        self.set_buffer_path(i, path.clone());
         if std::fs::metadata(&self.buffers[i].path.clone().unwrap())
             .is_ok_and(|m| m.permissions().readonly())
         {
             self.buffers[i].read_only = true;
         }
-        if self.buffers[i].path.as_deref() == Some(self.defaults_settings_path().as_path()) {
+        if [self.defaults_settings_path(), self.defaults_keymap_path()]
+            .iter()
+            .any(|d| self.buffers[i].path.as_deref() == Some(d.as_path()))
+        {
             self.buffers[i].read_only = true;
         }
         if focus {
             self.set_cur(i);
             self.focus = Focus::Editor;
+            self.reveal_opened(&path);
         }
         self.lsp_open(i);
         Some(i)
+    }
+
+    /// Select an opened file in the sidebar and scroll to it (`reveal_opened_file`).
+    fn reveal_opened(&mut self, path: &Path) {
+        if self.config.editor.reveal_opened_file {
+            self.tree.reveal(path);
+            self.tree_revealed = Some(path.to_path_buf());
+        }
     }
 
     /// Arguments for a new, empty window (same config and data folders as this one).
@@ -420,10 +433,10 @@ impl App {
         // Closing either side of the settings view closes the view (like closing
         // Sublime's settings window): the other side goes too unless it has unsaved
         // changes, and the previous layout comes back.
-        if let Some(v) = self
-            .settings_view
-            .take_if(|v| v.defaults_id == b.id || v.user_id == b.id)
+        if let Some(k) = (self.settings_view.iter())
+            .position(|v| v.defaults_id == b.id || v.user_id == b.id)
         {
+            let v = self.settings_view.remove(k);
             let other = if v.defaults_id == b.id {
                 v.user_id
             } else {
@@ -433,6 +446,9 @@ impl App {
                 && !self.buffers[oi].modified
             {
                 self.close_buffer_at(oi);
+            }
+            if !self.settings_view.is_empty() {
+                return;
             }
             if self.layout != v.prev_layout {
                 self.set_layout(v.prev_layout);

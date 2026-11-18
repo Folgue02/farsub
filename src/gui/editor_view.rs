@@ -959,16 +959,27 @@ impl Gui {
         cursor_px
     }
 
+    /// The empty window's hints: (what, its key). Keys come from the keymap, so they're
+    /// right on each platform and after rebinding; unbound ones are left out.
+    pub fn welcome_lines(&self) -> Vec<(&'static str, String)> {
+        use crate::commands::Command::*;
+        [
+            ("Goto Anything", GotoFile),
+            ("Command Palette", ShowCommands),
+            ("Focus Sidebar", FocusSidebar),
+            ("Toggle Sidebar", ToggleSidebar),
+            ("New File", NewFile),
+            ("Open File", OpenFile),
+            ("Settings & Languages", OpenSettings),
+        ]
+        .into_iter()
+        .map(|(a, cmd)| (a, self.app.keymap.shortcut(cmd)))
+        .filter(|(_, k)| !k.is_empty())
+        .collect()
+    }
+
     pub(super) fn draw_welcome(&self, p: &Painter, r: Rect, c: &Palette) {
-        let lines = [
-            ("Goto Anything", "Cmd+P"),
-            ("Command Palette", "Cmd+Shift+P"),
-            ("Focus Sidebar", "Cmd+0"),
-            ("Toggle Sidebar", "Cmd+B"),
-            ("New File", "Cmd+N"),
-            ("Open File", "Cmd+O"),
-            ("Settings & Languages", "Cmd+,"),
-        ];
+        let lines = self.welcome_lines();
         let font = FontId::proportional(15.0);
         let top = r.center().y - lines.len() as f32 * 15.0;
         for (i, (a, k)) in lines.iter().enumerate() {
@@ -983,7 +994,7 @@ impl Gui {
             p.text(
                 Pos2::new(r.center().x + 12.0, y),
                 Align2::LEFT_CENTER,
-                *k,
+                k,
                 font.clone(),
                 c.fg,
             );

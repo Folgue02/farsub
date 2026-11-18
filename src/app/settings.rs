@@ -14,6 +14,23 @@ impl App {
             .join("Default Settings.toml")
     }
 
+    /// Where the read-only default key bindings reference is written.
+    pub fn defaults_keymap_path(&self) -> PathBuf {
+        self.defaults_settings_path()
+            .with_file_name("Default Key Bindings.toml")
+    }
+
+    /// The settings file and keymap.toml on disk now.
+    pub(super) fn config_stamp_now(&self) -> [Option<fileops::DiskStamp>; 2] {
+        let Some(p) = self.config.path.as_deref() else {
+            return [None, None];
+        };
+        [
+            fileops::DiskStamp::of(p),
+            fileops::DiskStamp::of(&config::keymap_path(p)),
+        ]
+    }
+
     /// Preferences: Settings — like Sublime: a window of its own (another farsub process,
     /// `--settings`) with the defaults on the left and your file on the right. Saving there
     /// applies to every window (each one notices the file changed).
@@ -25,22 +42,23 @@ impl App {
         self.spawn_window(args);
     }
 
-    /// The config file changed on disk (saved in the settings window, or by hand): reload
-    /// it. True if it did.
+    /// The settings file or keymap.toml changed on disk (saved in the settings window, or
+    /// by hand): reload the config. True if it did.
     pub(super) fn check_config_file(&mut self) -> bool {
         let Some(path) = self.config.path.clone() else {
             return false;
         };
-        let now = fileops::DiskStamp::of(&path);
+        let now = self.config_stamp_now();
         if now == self.config_stamp {
             return false;
         }
         self.config_stamp = now;
         // An open, edited copy is saved by this window itself: leave it alone.
+        let files = [config::keymap_path(&path), path];
         if self
             .buffers
             .iter()
-            .any(|b| b.path.as_deref() == Some(path.as_path()) && b.modified)
+            .any(|b| b.modified && b.path.as_ref().is_some_and(|p| files.contains(p)))
         {
             return false;
         }
@@ -57,41 +75,72 @@ impl App {
         match config::set_editor_setting(&path, key, &config::toml_string(value)) {
             Ok(()) => {
                 // Already applied here: don't reload it as someone else's change.
-                self.config_stamp = fileops::DiskStamp::of(&path);
+                self.config_stamp = self.config_stamp_now();
                 self.msg(format!("{label} (saved in your settings)"));
             }
             Err(e) => self.msg(format!("{label}; couldn't save it: {e}")),
         }
     }
 
+    /// Preferences: Key Bindings: like Preferences: Settings, a window of its own
+    /// (`--keymap`) with the default bindings on the left and your keymap.toml on the right.
+    pub(super) fn open_keymap(&mut self) {
+        if self.settings_window {
+            return self.open_keymap_here();
+        }
+        let args = self.window_args("--keymap");
+        self.spawn_window(args);
+    }
+
     /// The two-pane settings view in this window (the settings window shows it).
     pub fn open_settings_here(&mut self) {
         let Some(path) = self.config.path.clone().or_else(config::config_path) else {
-            return self.msg(
-                "No config location: no home folder found (set FARSUB_CONFIG to a file path)",
-            );
+            return self.no_config_location();
         };
+        let defaults = self.defaults_settings_path();
+        self.open_two_panes(path, config::TEMPLATE, defaults, config::DEFAULT_SETTINGS);
+    }
+
+    /// The two-pane key bindings view in this window (the key bindings window shows it).
+    pub fn open_keymap_here(&mut self) {
+        let Some(path) = self.config.path.clone().or_else(config::config_path) else {
+            return self.no_config_location();
+        };
+        let defaults = self.defaults_keymap_path();
+        let reference = config::default_keymap_reference();
+        self.open_two_panes(
+            config::keymap_path(&path),
+            config::KEYMAP_TEMPLATE,
+            defaults,
+            &reference,
+        );
+    }
+
+    fn no_config_location(&mut self) {
+        self.msg("No config location: no home folder found (set FARSUB_CONFIG to a file path)")
+    }
+
+    /// A read-only reference on the left, the user's file on the right (created from
+    /// `template` if missing). Closing either side closes both.
+    fn open_two_panes(&mut self, path: PathBuf, template: &str, defaults: PathBuf, text: &str) {
         if !path.exists() {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(&path, config::TEMPLATE) {
+            if let Err(e) = std::fs::write(&path, template) {
                 return self.msg(format!("Could not create {}: {e}", path.display()));
             }
         }
-        let defaults = self.defaults_settings_path();
         if let Some(parent) = defaults.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         // Always rewritten, so it matches this version of farsub.
-        if let Err(e) = std::fs::write(&defaults, config::DEFAULT_SETTINGS) {
+        if let Err(e) = std::fs::write(&defaults, text) {
             return self.msg(format!("Could not write {}: {e}", defaults.display()));
         }
-        let prev_layout = self
-            .settings_view
-            .take()
-            .map(|v| v.prev_layout)
-            .unwrap_or(self.layout);
+        // With another pair already open (settings and key bindings), closing the last
+        // one brings back the layout from before the first.
+        let prev_layout = self.settings_view.first().map_or(self.layout, |v| v.prev_layout);
         if self.layout < 2 {
             self.set_layout(2);
         }
@@ -112,11 +161,13 @@ impl App {
             return;
         };
         self.focus = Focus::Editor;
-        self.settings_view = Some(SettingsView {
-            defaults_id,
-            user_id,
-            prev_layout,
-        });
+        if !self.settings_view.iter().any(|v| v.user_id == user_id) {
+            self.settings_view.push(SettingsView {
+                defaults_id,
+                user_id,
+                prev_layout,
+            });
+        }
     }
 
     pub(super) fn reload_config(&mut self) {
@@ -134,7 +185,7 @@ impl App {
             new.languages != self.config.languages || new.servers != self.config.servers;
         let data = self.config.data_dir.clone();
         self.config = new;
-        self.config_stamp = self.config.path.as_deref().and_then(fileops::DiskStamp::of);
+        self.config_stamp = self.config_stamp_now();
         if self.config.data_dir.is_none() {
             self.config.data_dir = data;
         }
@@ -155,8 +206,16 @@ impl App {
             if let Some(p) = self.buffers[i].path.clone() {
                 let first = self.buffers[i].lines[0].clone();
                 let lang = self.config.language_for(&p, &first).cloned();
+                // The highlighter (or the grammar) may have changed.
+                let grammar = lang.as_ref().and_then(|l| self.grammar_of(l));
                 let b = &mut self.buffers[i];
                 b.apply_language(lang.as_ref(), &self.config.editor);
+                if let Some(l) = &lang
+                    && !b.syntax_override
+                    && b.hl.grammar != grammar
+                {
+                    b.hl.reset(l.name.clone(), grammar);
+                }
             }
         }
         if langs_changed {

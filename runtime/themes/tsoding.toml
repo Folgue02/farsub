@@ -25,6 +25,8 @@
 #
 # The VS Code colors with alpha (selection, word highlight) are flattened onto the
 # background; gutter and guides are not in the original and were picked to match.
+# Keywords are all yellow: VS Code's grammars tag most of them keyword.control /
+# storage.type (yellow there); tree-sitter tags most of them plain `keyword`.
 name = "Tsoding"
 
 [editor]
@@ -47,7 +49,7 @@ caret = "#AFADAD"
 "number"                = { fg = "#BFC5BF" }
 "boolean"               = { fg = "#BFC5BF" }
 "constant"              = { fg = "#BFC5BF" }
-"keyword"               = { fg = "#EAE2B9" }
+"keyword"               = { fg = "#FFDD33" }
 "keyword.conditional"   = { fg = "#FFDD33" }
 "keyword.repeat"        = { fg = "#FFDD33" }
 "keyword.return"        = { fg = "#FFDD33" }

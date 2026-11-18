@@ -132,6 +132,7 @@ pub fn default_label(cmd: Command) -> String {
         SelectTheme => Some("Color Theme…"),
         SelectFont => Some("Font…"),
         OpenSettings => Some("Settings & Languages…"),
+        OpenKeymap => Some("Key Bindings…"),
         ManageServers => Some("Language Servers…"),
         RevealInFileManager if cfg!(target_os = "macos") => Some("Reveal in Finder"),
         RevealInFileManager if cfg!(windows) => Some("Reveal in File Explorer"),

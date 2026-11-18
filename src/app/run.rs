@@ -123,6 +123,7 @@ impl App {
                 );
             }
             OpenSettings => self.open_settings(),
+            OpenKeymap => self.open_keymap(),
             ReopenClosed => {
                 while let Some(p) = self.closed.pop() {
                     if p.is_file() {

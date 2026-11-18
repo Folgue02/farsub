@@ -23,12 +23,22 @@ impl Gui {
         g: usize,
     ) {
         p.rect_filled(r, 0.0, c.chrome);
-        // The clock, pomodoro and alarm take the right end of the rightmost strip.
-        let r = if g + 1 == self.app.layout.max(1) {
-            let w = self.draw_timers(ui, p, r, c);
-            Rect::from_min_max(r.min, Pos2::new(r.right() - w, r.bottom()))
+        // The clock, pomodoro and alarm take the right end of the rightmost strip. Their
+        // left edge is slanted: tabs are drawn under it (its background covers them along
+        // the diagonal) and the middle of the slant is where tabs end, for the mouse and
+        // for scrolling a tab into view.
+        let strip = r;
+        let timers = if g + 1 == self.app.layout.max(1) {
+            self.draw_timers(ui, p, r, c, false)
         } else {
-            r
+            None
+        };
+        let (r, clip_right) = match timers {
+            Some((x, s)) => (
+                Rect::from_min_max(r.min, Pos2::new(x + s / 2.0, r.bottom())),
+                x + s,
+            ),
+            None => (r, r.right()),
         };
         let font = FontId::proportional(UI_SIZE);
         let mut x = r.left();
@@ -69,7 +79,10 @@ impl Gui {
         off = off.clamp(0.0, (total - r.width()).max(0.0));
         self.tab_scroll.insert(g, (off, shown));
         x -= off;
-        let clip = p.with_clip_rect(r);
+        let clip = p.with_clip_rect(Rect::from_min_max(
+            r.min,
+            Pos2::new(clip_right, r.bottom()),
+        ));
         for (k, &i) in tabs.iter().enumerate() {
             let b = &self.app.buffers[i];
             let w = widths[k];
@@ -122,23 +135,37 @@ impl Gui {
                 Pos2::new(tr.right() - 16.0, tr.center().y),
                 Vec2::splat(16.0),
             );
-            let resp = ui.interact(tr, Id::unique(("tab", b.id)), Sense::click());
-            let hovered_close = resp.hover_pos().is_some_and(|p| close.contains(p));
+            // Only the part of the tab inside the strip takes the mouse.
+            let hit = tr.intersect(r);
+            let resp = hit
+                .is_positive()
+                .then(|| ui.interact(hit, Id::unique(("tab", b.id)), Sense::click()));
+            let hovered_close = resp
+                .as_ref()
+                .and_then(|r| r.hover_pos())
+                .is_some_and(|p| close.contains(p));
+            let hovered = resp.as_ref().is_some_and(|r| r.hovered());
             if b.modified && !hovered_close {
                 clip.circle_filled(close.center(), 4.0, c.dim);
-            } else if active || resp.hovered() {
+            } else if active || hovered {
                 let k = 4.0;
                 let o = close.center();
                 let st = Stroke::new(1.3, if hovered_close { c.fg } else { c.dim });
                 clip.line_segment([o + Vec2::new(-k, -k), o + Vec2::new(k, k)], st);
                 clip.line_segment([o + Vec2::new(-k, k), o + Vec2::new(k, -k)], st);
             }
-            // The tab switches on press; its × closes on release (so it can be cancelled).
-            if pressed(ui, &resp) && !hovered_close {
-                click = Some((i, false));
-            } else if resp.clicked() && hovered_close {
-                click = Some((i, true));
-            } else if resp.middle_clicked() {
+            let Some(resp) = resp else { continue };
+            // The tab switches on press. Its × closes on release, and only if the press
+            // was on the × too: switching can scroll the tab and slide its × under the
+            // mouse, and that release isn't a click on the ×.
+            if pressed(ui, &resp) {
+                self.close_press = hovered_close.then_some(b.id);
+                if !hovered_close {
+                    click = Some((i, false));
+                }
+            } else if (resp.clicked() && hovered_close && self.close_press == Some(b.id))
+                || resp.middle_clicked()
+            {
                 click = Some((i, true));
             }
             if resp.secondary_clicked()
@@ -146,6 +173,9 @@ impl Gui {
             {
                 tab_menu = Some((i, pos));
             }
+        }
+        if timers.is_some() {
+            self.draw_timers(ui, p, strip, c, true);
         }
         if let Some((i, pos)) = tab_menu {
             self.app.set_cur(i);

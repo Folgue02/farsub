@@ -205,11 +205,12 @@ pub fn parse(spec: &str) -> Option<Spec> {
 
 /// How a spec is shown on this platform.
 pub fn display(spec: &str) -> String {
-    let primary = if cfg!(target_os = "macos") {
-        "Cmd"
-    } else {
-        "Ctrl"
-    };
+    display_on(spec, cfg!(target_os = "macos"))
+}
+
+/// How a spec is shown on macOS (`mac`) or elsewhere: "Cmd" is Ctrl off macOS.
+fn display_on(spec: &str, mac: bool) -> String {
+    let primary = if mac { "Cmd" } else { "Ctrl" };
     spec.split('+')
         .map(|p| if p == "Cmd" { primary } else { p })
         .collect::<Vec<_>>()
@@ -262,6 +263,18 @@ mod tests {
     use super::*;
     use crate::commands::Command::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn shortcuts_say_ctrl_off_macos() {
+        assert_eq!(display_on("Cmd+Shift+P", false), "Ctrl+Shift+P");
+        assert_eq!(display_on("Cmd+Shift+P", true), "Cmd+Shift+P");
+        assert_eq!(display_on("Ctrl+`", true), "Ctrl+`");
+        // No default binding shows "Cmd" on Windows or Linux.
+        let (km, _) = Keymap::from_config(&crate::config::Config::default());
+        for b in &km.bindings {
+            assert!(!display_on(&b.keys, false).contains("Cmd"), "{}", b.keys);
+        }
+    }
 
     #[test]
     fn defaults_parse_without_conflicts() {

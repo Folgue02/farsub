@@ -15,6 +15,7 @@ impl Gui {
             return;
         };
         let lines = self.app.lsp_info();
+        block(ui, full, "lsp-info");
         p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
         let r = Rect::from_center_size(
             full.center(),
@@ -97,6 +98,7 @@ impl Gui {
         let rows = self.app.server_rows();
         let sel = v.sel.min(rows.len().saturating_sub(1));
         let details = v.details;
+        block(ui, full, "servers");
         p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
         let r = Rect::from_center_size(
             full.center(),
@@ -288,10 +290,11 @@ impl Gui {
         }
     }
 
-    pub(super) fn draw_confirm(&self, p: &Painter, full: Rect, c: &Palette) {
+    pub(super) fn draw_confirm(&self, ui: &egui::Ui, p: &Painter, full: Rect, c: &Palette) {
         let Some(Modal::Confirm(cf)) = &self.app.modal else {
             return;
         };
+        block(ui, full, "confirm");
         p.rect_filled(full, 0.0, Color32::from_black_alpha(80));
         let font = FontId::proportional(14.0);
         let tw = p.ctx().fonts_mut(|f| {

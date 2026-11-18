@@ -22,5 +22,8 @@ license texts. Running it again goes to the tab already open.
   bundled themes were converted from those), and every `runtime/themes/*.toml` whose
   leading comment holds a copyright notice (themes taken from elsewhere keep their source
   and license notice there).
+- Bundled fonts: each `runtime/fonts/<name>.ttf` comes with `<name>-LICENSE.txt` (its
+  source in the first lines, then the license), listed under that first line's name
+  (Codicons, CC BY 4.0).
 - Language servers and grammars farsub downloads at runtime aren't part of the build and
   aren't listed.

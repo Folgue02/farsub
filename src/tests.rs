@@ -3426,6 +3426,29 @@ fn lsp_code_actions_and_format_on_save() {
     );
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert!(wait(&mut h, 5, |g| g.app.buf().unwrap().lines[1] == "    int x = 1;"));
+    // Cmd+. also offers the editor's actions for the symbol (after the server's own):
+    // rename, go to definition, … Going to the definition of the `x` in `return x;`.
+    h.state_mut().app.buf_mut().unwrap().goto(Pos::new(2, 11));
+    press(&mut h, CMD, Key::Period);
+    assert!(wait(&mut h, 10, |g| matches!(&g.app.modal,
+        Some(Modal::Palette(p)) if p.mode == crate::palette::Mode::CodeActions)));
+    let labels: Vec<String> = match &h.state().app.modal {
+        Some(Modal::Palette(p)) => p.shown.iter().map(|(i, _)| p.items[*i].label.clone()).collect(),
+        _ => unreachable!(),
+    };
+    for want in ["Rename Symbol", "Goto Definition", "Find References"] {
+        assert!(labels.iter().any(|l| l == want), "{want} missing: {labels:?}");
+    }
+    let k = labels.iter().position(|l| l == "Goto Definition").unwrap();
+    for _ in 0..k {
+        press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    }
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        wait(&mut h, 10, |g| g.app.buf().unwrap().cursor.line == 1),
+        "went to the definition: {:?}",
+        h.state().app.buf().unwrap().cursor
+    );
     // Format on save: the file is formatted, then saved.
     h.state_mut().app.config.editor.format_on_save = true;
     {
@@ -3451,6 +3474,12 @@ fn licenses_page_lists_what_is_in_the_build() {
     let mut h = harness(&d);
     h.state_mut().app.run(crate::commands::Command::ShowLicenses);
     steps(&mut h, 3);
+    // It's Markdown: the title gets the heading color once it's parsed.
+    let heading = h.state().app.syn.theme.style_for("markup.heading");
+    assert!(wait(&mut h, 10, |g| g.app.buf().unwrap().hl.line(0).is_some_and(|l| l
+        .iter()
+        .any(|sp| sp.0 <= 3 && 3 < sp.1 && Some(sp.2) == heading))));
+    shot(&mut h, "licenses_page");
     let n = h.state().app.buffers.len();
     {
         let b = h.state().app.buf().unwrap();
@@ -3670,4 +3699,365 @@ fn wheel_scrolls_the_tab_strip() {
     h.state_mut().app.run(crate::commands::Command::PrevBuffer);
     steps(&mut h, 2);
     assert!(off(&h) > 0.0);
+}
+
+/// Preview every installed font in Select Font, rendering each (the real GPU path).
+/// Slow; run with --ignored.
+#[test]
+#[ignore]
+fn select_font_previews_every_installed_font() {
+    let d = project("fontcrawl", &[("a.rs", "fn main() { let x = \"½ → ✓\"; }\n")]);
+    let mut h = harness(&d);
+    // Like the app: a character no font has draws as a box (the harness panics).
+    h.ctx.set_missing_glyph_policy(egui::epaint::text::MissingGlyphPolicy::Tofu);
+    h.state_mut().app.open_file(&d.join("a.rs"), true);
+    steps(&mut h, 2);
+    h.state_mut().app.run(crate::commands::Command::SelectFont);
+    steps(&mut h, 2);
+    let n = match &h.state().app.modal {
+        Some(Modal::Palette(p)) => p.shown.len(),
+        _ => panic!("no palette"),
+    };
+    for i in 0..n {
+        let name = h.state().app.config.editor.font_face.clone();
+        eprintln!("font {i}/{n}: {name:?}");
+        press(&mut h, Modifiers::NONE, Key::ArrowDown);
+        let _ = h.render();
+    }
+}
+
+#[test]
+fn widgets_take_clicks_over_overflowing_tabs() {
+    let files: Vec<(String, String)> = (0..14)
+        .map(|i| (format!("file_with_a_long_name_{i:02}.txt"), "x\n".to_string()))
+        .collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = project("tabsunder", &refs);
+    let mut h = harness(&d);
+    for (f, _) in &files {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    // Show a tab in the middle, so others run under the widgets.
+    let want = d.join(&files[6].0);
+    let mid = (h.state().app.buffers.iter())
+        .position(|b| b.path.as_deref() == Some(want.as_path()))
+        .unwrap();
+    h.state_mut().app.set_cur(mid);
+    steps(&mut h, 3);
+    let cur = h.state().app.cur;
+    let ed = h.state().editor_rect_for_test();
+    let at = egui::Pos2::new(ed.right() - 20.0, ed.top() - 16.0);
+    h.event(Event::PointerMoved(at));
+    steps(&mut h, 1);
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        steps(&mut h, 1);
+    }
+    assert_eq!(h.state().app.cur, cur, "a tab under the clock took the click");
+    assert!(matches!(
+        &h.state().app.modal,
+        Some(Modal::Timers(t)) if t.kind == crate::app::TimerKind::Clock
+    ));
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    h.event(Event::PointerMoved(egui::Pos2::new(ed.left() + 300.0, ed.top() + 200.0)));
+    steps(&mut h, 2);
+    shot(&mut h, "tabs_under_widgets");
+}
+
+/// Pressing a tab half hidden under the widgets switches to it and scrolls it into view,
+/// which slides its × under the mouse: the release must not close it.
+#[test]
+fn clicking_a_half_hidden_tab_does_not_close_it() {
+    let files: Vec<(String, String)> = (0..14)
+        .map(|i| (format!("f{i:02}.txt"), "x\n".to_string()))
+        .collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = project("tabhalf", &refs);
+    let mut h = harness(&d);
+    for (f, _) in &files {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    h.state_mut().app.set_cur(0);
+    steps(&mut h, 3);
+    let ed = h.state().editor_rect_for_test();
+    // Click every few points from the widgets leftwards over the last tabs, starting
+    // from the first tab each time, so some click lands on a tab half under the widgets.
+    let mut switched = 0;
+    let mut x = ed.right() - 10.0;
+    while x > ed.right() - 250.0 {
+        h.state_mut().app.set_cur(0);
+        steps(&mut h, 2);
+        let at = egui::Pos2::new(x, ed.top() - 16.0);
+        h.event(Event::PointerMoved(at));
+        steps(&mut h, 1);
+        let button = |pressed| Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        h.event(button(true));
+        steps(&mut h, 1);
+        let opened = h.state().app.cur != 0;
+        let n = h.state().app.buffers.len();
+        h.event(button(false));
+        steps(&mut h, 1);
+        if opened {
+            switched += 1;
+            assert_eq!(h.state().app.buffers.len(), n, "the tab closed right after opening (x {x})");
+        }
+        if h.state().app.modal.is_some() {
+            press(&mut h, Modifiers::NONE, Key::Escape);
+            steps(&mut h, 1);
+        }
+        x -= 3.0;
+    }
+    assert!(switched > 0, "no click switched tabs");
+}
+
+/// Opening a file selects it in the sidebar (expanding its folders) and scrolls to it;
+/// `reveal_opened_file = false` leaves the sidebar alone.
+#[test]
+fn opening_a_file_reveals_it_in_the_sidebar() {
+    let mut files: Vec<(String, String)> =
+        (0..80).map(|i| (format!("a/f{i:02}.txt"), String::new())).collect();
+    files.push(("z/deep/target.txt".into(), "x\n".into()));
+    files.push(("z/other.txt".into(), "x\n".into()));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+    let d = project("reveal", &refs);
+    let mut h = harness(&d);
+    let a = d.canonicalize().unwrap().join("a");
+    h.state_mut().app.tree.expand_path(&a);
+    h.state_mut().app.tree.rebuild();
+    steps(&mut h, 2);
+    let target = d.canonicalize().unwrap().join("z/deep/target.txt");
+    h.state_mut().app.open_file(&target, true);
+    steps(&mut h, 2);
+    let t = &h.state().app.tree;
+    assert_eq!(t.selected_path(), Some(target.as_path()));
+    assert!(t.sel >= t.scroll && t.scroll > 0, "the sidebar didn't scroll to it");
+    assert_eq!(h.state().app.focus, Focus::Editor);
+    // Off: the selection stays where it was.
+    h.state_mut().app.config.editor.reveal_opened_file = false;
+    h.state_mut().app.open_file(&d.join("z/other.txt"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.tree.selected_path(), Some(target.as_path()));
+}
+
+/// The welcome screen's hints come from the keymap (right per platform, and rebindable).
+#[test]
+fn welcome_screen_shows_the_keymaps_shortcuts() {
+    let d = project("welcome", &[]);
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+    let lines = h.state().welcome_lines();
+    assert_eq!(lines.len(), 7, "{lines:?}");
+    let km = &h.state().app.keymap;
+    assert!(lines.contains(&(
+        "Command Palette",
+        km.shortcut(crate::commands::Command::ShowCommands)
+    )));
+    if !cfg!(target_os = "macos") {
+        assert!(lines.iter().all(|(_, k)| !k.contains("Cmd")), "{lines:?}");
+    }
+}
+
+/// Preferences: Key Bindings, like Preferences: Settings: the default bindings (with every
+/// command listed) on the left, your keymap.toml on the right. Saving applies it; so does
+/// changing the file outside the app.
+#[test]
+fn key_bindings_window() {
+    use crate::commands::Command;
+    let d = project("keymapwin", &[]);
+    let mut h = harness(&d);
+    h.state_mut().app.settings_window = true;
+    h.state_mut().app.run(Command::OpenKeymap);
+    steps(&mut h, 2);
+    let user = d.join("keymap.toml");
+    assert!(user.is_file(), "keymap.toml is created from the template");
+    {
+        let app = &h.state().app;
+        assert_eq!((app.layout, app.group), (2, 1));
+        assert_eq!(app.buf().unwrap().name(), "keymap.toml");
+        let left = &app.buffers[app.group_shown(0).unwrap()];
+        assert_eq!(left.name(), "Default Key Bindings.toml");
+        assert!(left.read_only);
+        for &(c, _, _) in crate::commands::COMMANDS {
+            let id = crate::commands::id(c);
+            assert!(
+                left.lines.iter().any(|l| l.starts_with(&format!("#   {id} "))),
+                "{id} isn't listed"
+            );
+        }
+        assert!(left.lines.iter().any(|l| l == "command = \"goto_file\""));
+    }
+    shot(&mut h, "key_bindings_side_by_side");
+    // Bind a key in the right pane and save.
+    {
+        let b = h.state_mut().app.buf_mut().unwrap();
+        b.move_doc(true, false);
+        b.insert_text("\n[[keys]]\nkeys = \"Cmd+Alt+J\"\ncommand = \"goto_symbol\"\n");
+    }
+    press(&mut h, CMD, Key::S);
+    let bound = |g: &Gui, k: &str| {
+        (g.app.keymap.keys_for(Command::GotoSymbol)).contains(&crate::keymap::display(k))
+    };
+    assert!(bound(h.state(), "Cmd+Alt+J"));
+    // Changed outside the app (another window, a text editor): picked up too.
+    let text = std::fs::read_to_string(&user).unwrap().replace("Cmd+Alt+J", "Cmd+Alt+K");
+    std::fs::write(&user, text).unwrap();
+    assert!(wait(&mut h, 5, |g| bound(g, "Cmd+Alt+K")), "the edit wasn't picked up");
+    // Settings open in the same window too; closing the key bindings leaves them open.
+    h.state_mut().app.run(Command::OpenSettings);
+    steps(&mut h, 2);
+    let keymap_tab = (h.state().app.buffers.iter())
+        .position(|b| b.name() == "keymap.toml")
+        .unwrap();
+    h.state_mut().app.set_cur(keymap_tab);
+    press(&mut h, CMD, Key::W);
+    let names: Vec<String> = h.state().app.buffers.iter().map(|b| b.name()).collect();
+    assert!(!h.state().app.quit, "{names:?}");
+    assert!(names.iter().any(|n| n == ".farsub-test-config.toml"), "{names:?}");
+    assert!(!names.iter().any(|n| n.contains("Key Bindings") || n == "keymap.toml"), "{names:?}");
+}
+
+/// A window with no folder starts without the sidebar (nothing to show); Toggle Sidebar
+/// still opens it, and opening a folder shows it.
+#[test]
+fn empty_window_starts_without_the_sidebar() {
+    use crate::commands::Command;
+    let d = project("nosidebar", &[("a.txt", "x\n")]);
+    let mut h = project_harness(crate::project::Project::from_folders(vec![]), test_config(&d));
+    steps(&mut h, 2);
+    assert!(!h.state().app.sidebar_visible);
+    h.state_mut().app.run(Command::ToggleSidebar);
+    assert!(h.state().app.sidebar_visible, "it can still be opened");
+    h.state_mut().app.run(Command::ToggleSidebar);
+    // A folder window shows it.
+    let h2 = harness(&d);
+    assert!(h2.state().app.sidebar_visible);
+}
+
+/// Popups and dialogs keep the mouse to themselves: no I-beam from the editor under a
+/// context menu's padding or under a dialog's dimmed backdrop.
+#[test]
+fn popups_and_dialogs_hide_the_editor_cursor() {
+    let text = "some text on a line\n".repeat(40);
+    let d = project("popcursor", &[("a.txt", text.as_str())]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    let ed = h.state().editor_rect_for_test();
+    let icon_at = |h: &mut Harness<'static, Gui>, at: egui::Pos2| {
+        h.event(Event::PointerMoved(at));
+        steps(h, 2);
+        h.output().platform_output.cursor_icon
+    };
+    let at = egui::Pos2::new(ed.left() + 120.0, ed.top() + 60.0);
+    assert_eq!(icon_at(&mut h, at), egui::CursorIcon::Text, "over plain text");
+    // A context menu there: its top padding (no item under it) isn't the editor.
+    h.state_mut()
+        .app
+        .open_context_menu(crate::menu::ContextKind::Editor, (at.x, at.y));
+    steps(&mut h, 2);
+    let pad = egui::Pos2::new(at.x + 20.0, at.y + 2.0);
+    assert_ne!(icon_at(&mut h, pad), egui::CursorIcon::Text, "context menu padding");
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    assert_eq!(icon_at(&mut h, at), egui::CursorIcon::Text);
+    // A dialog dims the window: the editor behind it doesn't take the mouse.
+    h.state_mut().app.open_timer_dialog(crate::app::TimerKind::Clock);
+    steps(&mut h, 2);
+    assert_ne!(icon_at(&mut h, at), egui::CursorIcon::Text, "behind a dialog");
+}
+
+/// Every completion kind gets a Codicons icon that's really in the bundled font.
+#[test]
+fn completion_kinds_have_codicons() {
+    const KINDS: &[&str] = &[
+        "txt", "meth", "fn", "ctor", "field", "var", "class", "iface", "mod", "prop", "unit",
+        "val", "enum", "kw", "snip", "color", "file", "ref", "dir", "variant", "const",
+        "struct", "event", "op", "type",
+    ];
+    let font = include_bytes!("../runtime/fonts/codicon.ttf");
+    let face = ttf_parser::Face::parse(font, 0).unwrap();
+    for k in KINDS {
+        let (icon, _) = crate::gui::kind_codicon(k);
+        let ch = icon.chars().next().unwrap();
+        assert!(face.glyph_index(ch).is_some(), "{k}: U+{:04X} isn't in the font", ch as u32);
+    }
+    // The list, drawn (for a look with FARSUB_SHOTS).
+    let d = project("kindicons", &[("a.rs", "fn main() {}\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.rs"), true);
+    steps(&mut h, 2);
+    let id = h.state().app.buf().unwrap().id;
+    let items: Vec<crate::app::CompItem> = KINDS
+        .iter()
+        .map(|k| crate::app::CompItem {
+            label: format!("item_{k}"),
+            detail: (*k).to_string(),
+            kind: k,
+            insert: String::new(),
+            edit_start: None,
+            filter: format!("item_{k}"),
+            sort: String::new(),
+            additional: vec![],
+        })
+        .collect();
+    let shown = (0..items.len()).collect();
+    h.state_mut().app.completion = Some(crate::app::Completion {
+        buf_id: id,
+        start: crate::editor::Pos::new(0, 0),
+        items,
+        shown,
+        sel: Some(0),
+    });
+    steps(&mut h, 3);
+    assert!(h.state().app.completion.is_some());
+    shot(&mut h, "completion_kind_icons");
+}
+
+/// Markdown uses the regex grammar by default (it colors inline markup and fenced code by
+/// its language); `highlighter = { markdown = "tree-sitter" }` switches it, live.
+#[test]
+fn markdown_file_is_highlighted() {
+    let md = "# Title\n\nSome **bold** and `code`.\n\n```rust\nfn main() {}\n```\n";
+    let d = project("mdhl", &[("a.md", md)]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.md"), true);
+    let style = |g: &Gui, c: &str| g.app.syn.theme.style_for(c);
+    let at = |g: &Gui, ln: usize, col: usize| {
+        let b = g.app.buf().unwrap();
+        b.hl.line(ln)
+            .and_then(|l| l.iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2))
+    };
+    let ok = wait(&mut h, 5, |g| {
+        at(g, 0, 3) == style(g, "markup.heading")
+            && at(g, 2, 8).is_some_and(|s| s.bold)
+            && at(g, 5, 0).is_some() // `fn`, colored as Rust
+    });
+    let b = h.state().app.buf().unwrap();
+    assert!(
+        ok,
+        "grammar {:?} fallback {:?}: {:?}",
+        b.hl.grammar,
+        b.hl.fallback_name(),
+        (0..7).map(|l| b.hl.line(l).cloned()).collect::<Vec<_>>()
+    );
+    assert_eq!(b.hl.grammar, None, "regex, not tree-sitter");
+    assert!(at(h.state(), 2, 20).is_some(), "inline code is colored");
+    shot(&mut h, "markdown_file");
+    // Tree-sitter instead, from the settings file: the open file switches.
+    let cfg = d.join(".farsub-test-config.toml");
+    std::fs::write(&cfg, "[editor]\nhighlighter = { markdown = \"tree-sitter\" }\n").unwrap();
+    assert!(
+        wait(&mut h, 5, |g| g.app.buf().unwrap().hl.grammar.as_deref() == Some("markdown")),
+        "switched to tree-sitter"
+    );
+    assert!(wait(&mut h, 5, |g| at(g, 0, 3) == style(g, "markup.heading")));
 }

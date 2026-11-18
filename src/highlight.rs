@@ -120,8 +120,18 @@ impl Theme {
     }
 
     /// Style for a capture name, falling back through its parents
-    /// (`function.builtin.static` → `function.builtin` → `function`).
+    /// (`function.builtin.static` → `function.builtin` → `function`), then, for the
+    /// markup names many themes leave out, to a color every theme has.
     pub fn style_for(&self, capture: &str) -> Option<Style> {
+        self.own_style(capture).or_else(|| {
+            MARKUP_FALLBACKS
+                .iter()
+                .find(|(m, _)| capture == *m || capture.starts_with(&format!("{m}.")))
+                .and_then(|(_, other)| self.own_style(other))
+        })
+    }
+
+    fn own_style(&self, capture: &str) -> Option<Style> {
         let mut name = capture;
         loop {
             if let Some(s) = self.syntax.get(name) {
@@ -135,6 +145,14 @@ impl Theme {
         self.editor.get(key).copied()
     }
 }
+
+/// Markup a theme doesn't style borrows another color, so Markdown (and similar) still
+/// shows its structure: code like strings, links like constants, headings like keywords.
+const MARKUP_FALLBACKS: &[(&str, &str)] = &[
+    ("markup.raw", "string"),
+    ("markup.link", "constant"),
+    ("markup.heading", "keyword"),
+];
 
 // ---------------------------------------------------------------- grammars
 
@@ -788,6 +806,11 @@ mod tests {
             ts.theme.style_for("keyword.repeat").unwrap().fg,
             Color32::from_rgb(0xFF, 0xDD, 0x33)
         );
+        // Plain `keyword` (most grammars' only keyword capture) is the yellow too.
+        assert_eq!(
+            ts.theme.style_for("keyword").unwrap().fg,
+            Color32::from_rgb(0xFF, 0xDD, 0x33)
+        );
     }
 
     #[test]
@@ -803,6 +826,43 @@ mod tests {
             }
         }
         assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn markdown_headings_code_and_links_are_colored() {
+        let text = lines("# Title\n\n```\ncode here\n```\n\n[label]: https://x.org\n");
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        // The default theme styles headings and links but not code (it borrows strings').
+        for theme in ["Monokai Extended", "Tsoding", "Nord"] {
+            let s = Syntax::load(theme);
+            let mut hl = HlCache::new("markdown".into());
+            hl.reset("markdown".into(), Some("markdown".into()));
+            assert!(hl.ensure(&s, &text, 0, text.len(), far));
+            let style_at = |ln: usize, col: usize| {
+                hl.line(ln)
+                    .unwrap()
+                    .iter()
+                    .find(|sp| sp.0 <= col && col < sp.1)
+                    .map(|sp| sp.2)
+            };
+            let want = |c: &str| s.theme.style_for(c).unwrap_or_else(|| panic!("{theme}: {c}"));
+            assert_eq!(style_at(0, 3), Some(want("markup.heading")), "{theme}: heading");
+            assert_eq!(style_at(3, 2), Some(want("markup.raw")), "{theme}: code block");
+            assert_eq!(style_at(6, 12), Some(want("markup.link.url")), "{theme}: link url");
+        }
+    }
+
+    /// Queries use the capture names themes style (not nvim-treesitter's old `@text.*`).
+    #[test]
+    fn queries_use_current_capture_names() {
+        let old: Vec<&str> = crate::config::RUNTIME_FILES
+            .iter()
+            .filter(|(n, t)| n.ends_with(".scm") && t.lines().any(|l| {
+                !l.trim_start().starts_with(';') && l.contains("@text.")
+            }))
+            .map(|(n, _)| *n)
+            .collect();
+        assert!(old.is_empty(), "{old:?}");
     }
 
     #[test]

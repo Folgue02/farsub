@@ -80,7 +80,7 @@ impl App {
         self.tree
             .set_roots(self.project.folders.clone(), self.show_hidden);
         self.files.clear();
-        self.sidebar_visible = true;
+        self.sidebar_visible = !self.project.folders.is_empty();
     }
 
     /// The project file was edited in farsub: apply folders and settings in place.
@@ -246,7 +246,7 @@ impl App {
         if active < self.buffers.len() {
             self.set_cur(active);
         }
-        self.sidebar_visible = ws.sidebar_visible;
+        self.sidebar_visible = ws.sidebar_visible && !self.project.folders.is_empty();
         self.show_hidden = ws.show_hidden;
         for e in &ws.expanded {
             let s = e.to_string_lossy();

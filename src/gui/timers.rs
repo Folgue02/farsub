@@ -46,16 +46,20 @@ impl Gui {
         }
     }
 
-    /// Draw the widgets at the right of `r` (a tab strip); returns the width they took.
+    /// The widgets at the right of `r` (a tab strip). Called twice a frame: with
+    /// `paint` false before the tabs, to learn where they start (the x of the slanted
+    /// edge at the top, and the slant), then with `paint` true after the tabs, so they
+    /// cover the tabs that slide under them and take the clicks there.
     pub(super) fn draw_timers(
         &mut self,
         ui: &mut egui::Ui,
         p: &Painter,
         r: Rect,
         c: &Palette,
-    ) -> f32 {
+        paint: bool,
+    ) -> Option<(f32, f32)> {
         if r.width() < 320.0 {
-            return 0.0;
+            return None;
         }
         let tc = self.timer_colors(c);
         let ms = now_ms();
@@ -112,8 +116,23 @@ impl Gui {
             lay.push((i, left, right - left));
             right = left - gap;
         }
-        let used = r.right() - right;
-        let area = Rect::from_min_max(Pos2::new(right, r.top()), r.max);
+        if !paint {
+            return Some((right, s));
+        }
+        // The strip's background behind the widgets, with the same slant on its left
+        // edge: tabs slide under it along the diagonal (not a straight cut).
+        p.add(egui::Shape::convex_polygon(
+            vec![
+                Pos2::new(right, r.top()),
+                Pos2::new(r.right(), r.top()),
+                r.right_bottom(),
+                Pos2::new(right + s, r.bottom()),
+            ],
+            c.chrome,
+            Stroke::NONE,
+        ));
+        // They take the mouse from the middle of the slant, where the tabs stop.
+        let area = Rect::from_min_max(Pos2::new(right + s / 2.0, r.top()), r.max);
         let resp = ui.interact(area, Id::unique("timer-widgets"), Sense::click());
         let hover = resp.hover_pos();
         let inside = |left: f32, w: f32, clock: bool, pt: Pos2| {
@@ -193,7 +212,7 @@ impl Gui {
         }
         ui.ctx()
             .request_repaint_after(self.app.timers.redraw_in(now_ms()));
-        used + 4.0
+        Some((right, s))
     }
 
     pub(super) fn draw_timer_dialog(
@@ -216,6 +235,7 @@ impl Gui {
             full.center() - Vec2::new(0.0, full.height() * 0.08),
             Vec2::new(w, h),
         );
+        block(ui, full, "timer-dialog");
         p.rect_filled(full, 0.0, Color32::from_black_alpha(80));
         p.rect_filled(
             r.translate(Vec2::new(0.0, 5.0)),

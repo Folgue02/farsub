@@ -55,14 +55,11 @@ impl Gui {
         p.text(
             Pos2::new(r.right() - 10.0, r.center().y),
             Align2::RIGHT_CENTER,
-            "F10 menu   ·   Cmd+Shift+/ shortcuts".replace(
-                "Cmd",
-                if cfg!(target_os = "macos") {
-                    "Cmd"
-                } else {
-                    "Ctrl"
-                },
-            ),
+            {
+                use crate::commands::Command::{OpenMenu, ShowKeymap};
+                let k = |c| self.app.keymap.shortcut(c);
+                format!("{} menu   ·   {} shortcuts", k(OpenMenu), k(ShowKeymap))
+            },
             FontId::proportional(11.0),
             c.dim,
         );
@@ -125,6 +122,7 @@ impl Gui {
             6.0,
             Color32::from_black_alpha(90),
         );
+        block(ui, r, "menu-dropdown");
         p.rect_filled(r, 5.0, c.pop);
         p.rect_stroke(r, 5.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
         let mut y = r.top() + 4.0;
@@ -204,6 +202,7 @@ impl Gui {
             return;
         };
         let rows = crate::app::keymap_rows(&self.app.keymap, v.query.text());
+        block(ui, full, "keymap");
         p.rect_filled(full, 0.0, Color32::from_black_alpha(90));
         let r = Rect::from_center_size(
             full.center(),
@@ -426,6 +425,7 @@ impl Gui {
             6.0,
             Color32::from_black_alpha(90),
         );
+        block(ui, r, "context-menu");
         p.rect_filled(r, 5.0, c.pop);
         p.rect_stroke(r, 5.0, Stroke::new(1.0, c.border), StrokeKind::Inside);
         let mut yy = r.top() + 4.0;

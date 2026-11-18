@@ -12,7 +12,7 @@
 //! ~/.local/share/farsub/servers/<name>/   servers installed by the server manager
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,8 @@ pub struct EditorConfig {
     pub show_menu_bar: bool,
     /// Animate sidebar folders opening/closing.
     pub animations: bool,
+    /// Opening a file selects it in the sidebar (expanding its folders) and scrolls to it.
+    pub reveal_opened_file: bool,
     /// Vertical lines at each indentation level (like Sublime's indent guides).
     pub indent_guides: bool,
     /// Highlight the line the cursor is on (off by default).
@@ -68,6 +70,9 @@ pub struct EditorConfig {
     pub hot_exit: bool,
     /// Start without arguments → reopen the last project/folders.
     pub restore_session: bool,
+    /// Per language (by name), which highlighter to use, over the language's own choice:
+    /// `{ markdown = "tree-sitter" }`.
+    pub highlighter: BTreeMap<String, Highlighter>,
 }
 
 impl Default for EditorConfig {
@@ -83,6 +88,7 @@ impl Default for EditorConfig {
             // macOS gets the native menu bar instead.
             show_menu_bar: !cfg!(target_os = "macos"),
             animations: true,
+            reveal_opened_file: true,
             indent_guides: true,
             highlight_current_line: false,
             trim_automatic_white_space: true,
@@ -98,8 +104,22 @@ impl Default for EditorConfig {
             caret_extra_bottom: 1.0,
             hot_exit: true,
             restore_session: true,
+            highlighter: BTreeMap::new(),
         }
     }
+}
+
+/// How a language is highlighted.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub enum Highlighter {
+    /// Its tree-sitter grammar; the regex grammar while there's none (installing, can't
+    /// be compiled, doesn't exist).
+    #[default]
+    #[serde(rename = "tree-sitter")]
+    TreeSitter,
+    /// Always the Sublime-style regex grammar (bat's set), even with a tree-sitter one.
+    #[serde(rename = "regex")]
+    Regex,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
@@ -394,6 +414,9 @@ pub struct LanguageConfig {
     /// Tree-sitter grammar for highlighting (defaults to `name`); see `grammars.rs`.
     #[serde(default)]
     pub grammar: Option<String>,
+    /// "tree-sitter" (default) or "regex"; the settings' `highlighter` map overrides it.
+    #[serde(default)]
+    pub highlighter: Option<Highlighter>,
     /// Sublime-style grammar (by name, e.g. "Bourne Again Shell") for the regex fallback
     /// used while there's no tree-sitter grammar. Default: found by title, name or file
     /// extension; `""` turns the fallback off.
@@ -525,6 +548,50 @@ pub fn config_path() -> Option<PathBuf> {
         return Some(PathBuf::from(x));
     }
     Some(crate::paths::config_dir()?.join("config.toml"))
+}
+
+/// The user's keymap file: keymap.toml next to the settings file.
+pub fn keymap_path(config_file: &Path) -> PathBuf {
+    config_file.with_file_name("keymap.toml")
+}
+
+/// The file a new user keymap starts as.
+pub const KEYMAP_TEMPLATE: &str = r##"# Your key bindings. They're added to the defaults in the other pane (Preferences: Key
+# Bindings); one for the same keys (and context) replaces the default. Save to apply.
+#
+# [[keys]]
+# keys = "Cmd+K"           # Cmd is Cmd on macOS and Ctrl elsewhere; also Ctrl, Shift, Alt
+# command = "hover"        # a command id (all are listed in the other pane); "" unbinds
+# context = "editor"       # optional: "global" (default), "editor" or "sidebar"
+# platforms = ["macos"]    # optional: only on these ("macos", "windows", "linux")
+"##;
+
+/// The read-only "Default Key Bindings" reference: every command id with its name, then
+/// the built-in keymap as it is.
+pub fn default_keymap_reference() -> String {
+    let builtin = RUNTIME_FILES
+        .iter()
+        .find(|(n, _)| *n == "keymap.toml")
+        .map_or("", |(_, t)| *t);
+    let ids: Vec<(String, &str)> = crate::commands::COMMANDS
+        .iter()
+        .map(|&(c, name, _)| (crate::commands::id(c), name))
+        .collect();
+    let w = ids.iter().map(|(i, _)| i.len()).max().unwrap_or(0);
+    let mut s = String::from(
+        "# farsub default key bindings (read-only reference).\n\
+         #\n\
+         # Don't edit this file: copy the bindings you want to change into your keymap (the\n\
+         # other pane) and save it there.\n\
+         #\n\
+         # Every command you can bind (command = \"<id>\"):\n#\n",
+    );
+    for (id, name) in &ids {
+        s.push_str(&format!("#   {id:<w$}  {name}\n"));
+    }
+    s.push_str("\n# ---- The built-in bindings\n\n");
+    s.push_str(builtin);
+    s
 }
 
 /// Set `key = value` (value already in TOML syntax) under `[editor]` in the user's config
@@ -827,6 +894,14 @@ impl Config {
         upsert(&mut self.languages, l, |a, b| a.name == b.name);
     }
 
+    /// The highlighter a language uses: the settings' choice, else its own, else
+    /// tree-sitter.
+    pub fn highlighter_for(&self, l: &LanguageConfig) -> Highlighter {
+        (self.editor.highlighter.get(&l.name).copied())
+            .or(l.highlighter)
+            .unwrap_or_default()
+    }
+
     pub fn language_for(&self, path: &Path, first_line: &str) -> Option<&LanguageConfig> {
         // Later entries (user-added) win over earlier ones on conflicting extensions.
         self.languages
@@ -894,10 +969,11 @@ pub const DEFAULT_SETTINGS: &str = r##"# farsub default settings (read-only refe
 #   languages/<name>.toml   add or replace a language
 #   servers/<name>.toml     add or replace a language server (with optional [install])
 #   keymap.toml             add/override key bindings: [[keys]] keys = "Cmd+K", command = "hover"
+#                           (in key specs, Cmd means Ctrl on Windows and Linux)
 #   menus.toml              replace the menu layout and context menus
 #   themes/*.toml           color themes; queries/<grammar>/highlights.scm  highlight overrides
 #   Packages/               packages adding themes, queries, icons; see "Packages:" commands
-# Manage servers with Tools → Language Servers (Cmd+Shift+P "LSP: Manage Language Servers").
+# Manage servers with Tools → Language Servers (Command Palette: "LSP: Manage Language Servers").
 
 [editor]
 font_size = 14.0
@@ -912,6 +988,8 @@ show_sidebar = true
 # In-window menu bar (macOS uses the system menu bar either way).
 # show_menu_bar = true
 animations = true
+# Opening a file selects it in the sidebar, expanding its folders and scrolling to it.
+reveal_opened_file = true
 indent_guides = true
 highlight_current_line = false
 # Pressing Enter on a line that holds only indentation leaves it empty (no trailing spaces).
@@ -938,6 +1016,11 @@ caret_extra_bottom = 1.0
 # Keep unsaved changes when quitting and reopen the last session on start.
 hot_exit = true
 restore_session = true
+# Highlighter per language (by name): "tree-sitter" (its tree-sitter grammar; the regex one
+# while there's none) or "regex" (Sublime-style regex grammar, always). Each language has
+# its own default; Markdown uses "regex" (it colors bold, italic, inline code and fenced
+# code by language). E.g. { markdown = "tree-sitter", python = "regex" }.
+highlighter = {}
 # Any bundled theme ("Monokai Extended", "OneHalfDark", "Nord", "Dracula", "GitHub",
 # "Solarized (dark)", "Catppuccin Mocha", "gruvbox-dark", …) or one from themes/ or a package.
 theme = "Monokai Extended"
@@ -1135,5 +1218,16 @@ mod tests {
                 .unwrap()
                 .contains("bad.toml")
         );
+    }
+
+    #[test]
+    fn default_keymap_reference_is_valid_toml() {
+        let r = default_keymap_reference();
+        let mut c = Config::default();
+        c.keys.clear();
+        c.merge_file("keymap.toml", &r).unwrap();
+        assert!(!c.keys.is_empty());
+        let mut t = Config::default();
+        t.merge_file("keymap.toml", KEYMAP_TEMPLATE).unwrap();
     }
 }

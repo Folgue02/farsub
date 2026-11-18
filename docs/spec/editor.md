@@ -9,6 +9,14 @@
   window checks the settings file about once a second and reloads it when it changes
   (unless it has the file open with unsaved edits). Closing either pane closes both (the
   other only if it has no unsaved changes) and then the window.
+- **Key Bindings** (Preferences: Key Bindings, decided 2026-11-18): the same kind of
+  window (`--keymap`). Left, `Default Key Bindings.toml`: read-only, every command id you
+  can bind with its name, then the built-in keymap as it is. Right, your `keymap.toml`
+  (next to the settings file), created with a commented example if missing. Your
+  bindings are added to the defaults; one for the same keys replaces it. Saving applies
+  it; every window also checks `keymap.toml` about once a second, like the settings file.
+  Running Settings or Key Bindings inside that window opens the other pair there too;
+  the window closes when the last pair does.
 - **Config folder created on first start** (decided 2026-11-15): if the settings file
   doesn't exist, farsub creates its folder and a starter `config.toml`, so a new user always
   has one to open. Standard places per platform: `%APPDATA%\farsub` on Windows (data in
@@ -20,10 +28,15 @@
   installed fonts, monospaced ones first; moving through the list previews each in the
   editor, Enter keeps it and **writes `font_face` into your settings file** (no editing
   by hand), Esc goes back. It applies to monospace text (the editor, input boxes); the
-  built-in font fills in characters the chosen one lacks. A font that isn't installed
-  falls back to the built-in one with a message. **Not the system font dialog**
-  (decided 2026-11-15): the native pickers only report a font's name, while the editor
-  needs the font file, and macOS's font panel is a floating panel egui can't receive from.
+  built-in font fills in characters the chosen one lacks. Fonts egui can't draw (no
+  glyph outlines, like macOS's bitmap-only "GB18030 Bitmap", whose line height comes
+  out as NaN and crashed the editor) aren't listed; a `font_face` naming one, or a font
+  that isn't installed, falls back to the built-in one with a message. **Not the system
+  font dialog** (decided 2026-11-15): macOS's font panel is a floating panel that reports
+  through the window's responder chain, which egui/winit doesn't expose; Linux has no
+  font chooser portal (only GTK's own dialog); only Windows' ChooseFont would be easy,
+  and a picker on one platform only goes against the same-everywhere principle. The
+  list also previews live in the editor, which the native panels don't.
   Select Color Theme now also keeps the chosen theme in the settings file.
 - **Trailing spaces on blank lines** (`trim_automatic_white_space`, default on, as in
   Sublime): Enter on a line holding only indentation empties that line (the new line
