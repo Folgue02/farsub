@@ -768,7 +768,8 @@ pub(crate) enum KindGroup {
 pub(crate) fn kind_codicon(kind: &str) -> (&'static str, KindGroup) {
     use KindGroup::*;
     match kind {
-        "fn" | "meth" | "ctor" => ("\u{EA8C}", Callable), // symbol-method
+        // Completion kinds, and the symbol kinds Goto Symbol shows ("method", "ns", …).
+        "fn" | "meth" | "method" | "ctor" => ("\u{EA8C}", Callable), // symbol-method
         "var" => ("\u{EA88}", Value),                     // symbol-variable
         "field" => ("\u{EB5F}", Value),                   // symbol-field
         "prop" => ("\u{EB65}", Value),                    // symbol-property
@@ -782,7 +783,11 @@ pub(crate) fn kind_codicon(kind: &str) -> (&'static str, KindGroup) {
         "enum" => ("\u{EA95}", Type),                     // symbol-enum
         "type" => ("\u{EA92}", Type),                     // symbol-parameter (type parameter)
         "event" => ("\u{EA86}", Type),                    // symbol-event
-        "mod" => ("\u{EA8B}", Other),                     // symbol-namespace
+        "mod" | "ns" | "pkg" | "obj" => ("\u{EA8B}", Other), // symbol-namespace
+        "num" => ("\u{EA90}", Value),                     // symbol-numeric
+        "bool" => ("\u{EA8F}", Value),                    // symbol-boolean
+        "arr" => ("\u{EA8A}", Value),                     // symbol-array
+        "null" => ("\u{EB63}", Value),                    // symbol-misc
         "kw" => ("\u{EB62}", Other),                      // symbol-keyword
         "snip" => ("\u{EB66}", Other),                    // symbol-snippet
         "file" => ("\u{EA7B}", Other),                    // symbol-file

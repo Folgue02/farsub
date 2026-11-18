@@ -35,8 +35,12 @@ widens to show its time when used. They're hidden when the strip is too narrow
   pomodoro (its end time) and the alarm, so they survive restarts and keep going by the
   wall clock. A phase that ended or an alarm that rang while farsub was closed alerts on
   the next start ("rang while farsub was closed"). The file is shared by every farsub
-  window; each window loads it at start (a change in one window isn't picked up by
-  windows already open, and each open window alerts).
+  window (decided 2026-11-18): each window checks it about once a second and takes
+  another window's change (starting a pomodoro, setting the alarm). A due alert's
+  notification and sound come from one window only: the first to claim it, by creating
+  a marker file for that alert in `timer-alerts/` in the data folder (creating a file that
+  exists fails, so the others skip it; markers older than a day are removed). Every
+  window still flashes its widget.
 - **Dialog keys**: Up/Down (Tab/Shift+Tab) move between rows, typing edits a field,
   Space flips a toggle or presses a button, Enter presses a button or applies the dialog
   and closes it, Esc closes without applying. A bad value (work length 0, time 25:00) is

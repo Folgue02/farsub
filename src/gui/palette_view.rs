@@ -221,8 +221,18 @@ impl Gui {
                 rr.min,
                 Pos2::new(rr.right() - dw - 20.0, rr.bottom()),
             ));
+            // A symbol's kind icon goes after its indentation, before the name.
+            let mut label_x = rr.left() + 10.0;
+            if let Some(kind) = it.icon {
+                let indent = it.label.len() - it.label.trim_start().len();
+                let indent_w = p.ctx().fonts_mut(|f| {
+                    f.layout_no_wrap(" ".repeat(indent), font.clone(), c.fg).size().x
+                });
+                kind_icon(&label_clip, Pos2::new(label_x + indent_w + 8.0, rr.center().y), kind);
+                label_x += 22.0;
+            }
             label_clip.galley(
-                Pos2::new(rr.left() + 10.0, rr.center().y - g.size().y / 2.0),
+                Pos2::new(label_x, rr.center().y - g.size().y / 2.0),
                 g,
                 c.fg,
             );

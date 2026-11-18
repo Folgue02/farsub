@@ -62,7 +62,10 @@
   halves idle redraws while the window is focused.
 - Goto Symbol (Cmd+R) lists symbol **names only**, as in Sublime: `add`, `Point`,
   `impl Debug for Point<T>`, Markdown headings without `#`. The kind (fn, struct, class…)
-  is shown dimmed on the right; signatures never appear. Nested symbols are indented.
+  is shown dimmed on the right, and (decided 2026-11-18) as its Codicon before the name,
+  the same icons as completion, for symbols from a language server (Goto Symbol and
+  Goto Symbol in Project); signatures never appear. Nested symbols are indented, icon
+  included.
   Results come from the language server when one is attached, otherwise from a built-in
   scan of declaration keywords.
 - **Word wrap** (`word_wrap`, default **on**): long lines wrap at the pane width, breaking

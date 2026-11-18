@@ -30,6 +30,7 @@ impl App {
         for f in self.project.folders.clone() {
             match self.files.get(&f.path) {
                 Some(list) => items.extend(list.iter().map(|rel| Item {
+                    icon: None,
                     label: if multi {
                         format!("{}/{rel}", f.name)
                     } else {
@@ -99,6 +100,7 @@ impl App {
                 .iter()
                 .filter(|c| c.2)
                 .map(|(c, name, _)| Item {
+                    icon: None,
                     label: name.to_string(),
                     detail: self.keymap.shortcut(*c),
                     action: Action::Command(*c),
@@ -125,6 +127,7 @@ impl App {
                 .iter()
                 .enumerate()
                 .map(|(i, b)| Item {
+                    icon: None,
                     label: b.name(),
                     detail: b
                         .path
@@ -138,6 +141,7 @@ impl App {
             Mode::Fonts => {
                 let cur = self.config.editor.font_face.clone();
                 let mut items = vec![Item {
+                    icon: None,
                     label: "Built-in (Hack)".into(),
                     detail: if cur.is_empty() {
                         "current".into()
@@ -147,6 +151,7 @@ impl App {
                     action: Action::Font(String::new()),
                 }];
                 items.extend(crate::fonts::families().into_iter().map(|f| Item {
+                    icon: None,
                     detail: match (f.name == cur, f.mono) {
                         (true, _) => "current".into(),
                         (false, true) => "monospace".into(),
@@ -163,6 +168,7 @@ impl App {
                     .theme_names()
                     .into_iter()
                     .map(|n| Item {
+                        icon: None,
                         detail: if n == cur {
                             "current".into()
                         } else {
@@ -180,6 +186,7 @@ impl App {
                     .iter()
                     .filter(|p| p.is_file())
                     .map(|p| Item {
+                        icon: None,
                         label: p
                             .file_stem()
                             .unwrap_or_default()
@@ -195,6 +202,7 @@ impl App {
                         .iter()
                         .filter(|fs| fs.iter().all(|f| f.is_dir()))
                         .map(|fs| Item {
+                            icon: None,
                             label: fs
                                 .iter()
                                 .map(|f| {
@@ -224,6 +232,7 @@ impl App {
                 let mut v: Vec<Item> = langs
                     .into_iter()
                     .map(|l| Item {
+                        icon: None,
                         label: l.title().to_string(),
                         detail: if l.name == cur {
                             "current".into()
@@ -241,6 +250,7 @@ impl App {
                 v.insert(
                     0,
                     Item {
+                        icon: None,
                         label: "Plain Text".into(),
                         detail: if cur == "Plain Text" {
                             "current".into()
@@ -271,11 +281,13 @@ impl App {
                 };
                 let mut v = vec![
                     Item {
+                        icon: None,
                         label: "Indent Using Spaces".into(),
                         detail: cur(kind != crate::editor::Indent::Tabs),
                         action: Action::Indent(IndentAction::Spaces),
                     },
                     Item {
+                        icon: None,
                         label: "Indent Using Tabs".into(),
                         detail: cur(kind == crate::editor::Indent::Tabs),
                         action: Action::Indent(IndentAction::Tabs),
@@ -283,22 +295,26 @@ impl App {
                 ];
                 for n in 1..=8 {
                     v.push(Item {
+                        icon: None,
                         label: format!("Tab Width: {n}"),
                         detail: cur(b.tab_size == n),
                         action: Action::Indent(IndentAction::Width(n)),
                     });
                 }
                 v.push(Item {
+                    icon: None,
                     label: "Guess Settings From Buffer".into(),
                     detail: guess,
                     action: Action::Indent(IndentAction::Guess),
                 });
                 v.push(Item {
+                    icon: None,
                     label: "Convert Indentation to Spaces".into(),
                     detail: String::new(),
                     action: Action::Indent(IndentAction::ToSpaces),
                 });
                 v.push(Item {
+                    icon: None,
                     label: "Convert Indentation to Tabs".into(),
                     detail: String::new(),
                     action: Action::Indent(IndentAction::ToTabs),
@@ -337,6 +353,7 @@ impl App {
                         r.source_desc()
                     };
                     v.push(Item {
+                        icon: None,
                         label,
                         detail: state,
                         action: if mode == Mode::Grammars {
@@ -353,6 +370,7 @@ impl App {
                 .packages
                 .iter()
                 .map(|n| Item {
+                    icon: None,
                     label: n.clone(),
                     detail: String::new(),
                     action: Action::Package(n.clone()),

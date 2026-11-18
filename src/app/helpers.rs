@@ -166,6 +166,7 @@ pub(super) fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
         if md {
             if t.starts_with('#') {
                 out.push(Item {
+                    icon: None,
                     label: t.trim_start_matches('#').trim().to_string(),
                     detail: String::new(),
                     action: Action::Goto(Pos::new(i, 0)),
@@ -186,6 +187,7 @@ pub(super) fn heuristic_symbols(b: &Buffer) -> Vec<Item> {
                 continue;
             };
             out.push(Item {
+                icon: None,
                 label: format!("{}{}", " ".repeat(indent.min(8)), name),
                 detail: k.trim_end_matches([' ', '<', '!']).to_string(),
                 action: Action::Goto(Pos::new(i, indent)),

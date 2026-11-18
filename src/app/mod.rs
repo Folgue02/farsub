@@ -660,6 +660,9 @@ impl App {
             if self.check_config_file() {
                 return true;
             }
+            if self.timers.reload_if_changed() {
+                return true;
+            }
             if self.check_deleted_files() {
                 return true;
             }

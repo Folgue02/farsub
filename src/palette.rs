@@ -69,6 +69,8 @@ pub struct Item {
     pub label: String,
     pub detail: String,
     pub action: Action,
+    /// A symbol kind ("fn", "class", …) drawn as its Codicon before the label.
+    pub icon: Option<&'static str>,
 }
 
 pub struct Palette {

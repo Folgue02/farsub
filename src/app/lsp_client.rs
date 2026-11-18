@@ -598,6 +598,7 @@ impl App {
                         let preview = self.line_text(&path, pos.line);
                         let rel = self.rel_path(&path);
                         Item {
+                            icon: None,
                             label: format!("{rel}:{}", pos.line + 1),
                             detail: preview.trim().chars().take(80).collect(),
                             action: Action::Open(path, Some(pos)),
@@ -642,6 +643,7 @@ impl App {
                                 s.location.range.start.character,
                             );
                             items.push(Item {
+                                icon: Some(kind_name(kind_num(&s.kind))),
                                 label: s.name,
                                 detail: format!(
                                     "{} {}",
@@ -662,6 +664,7 @@ impl App {
                             for s in v {
                                 let r = s.selection_range.start;
                                 out.push(Item {
+                                    icon: Some(kind_name(kind_num(&s.kind))),
                                     label: format!("{}{}", "  ".repeat(depth), s.name),
                                     // Only the name and its kind, like Sublime (no signature).
                                     detail: kind_name(kind_num(&s.kind)).to_string(),
@@ -696,7 +699,7 @@ impl App {
                     p.loading = false;
                     return;
                 };
-                let mut raw: Vec<(String, String, PathBuf, u32, u32)> = vec![];
+                let mut raw: Vec<(String, &'static str, PathBuf, u32, u32)> = vec![];
                 match resp {
                     lt::WorkspaceSymbolResponse::Flat(v) => {
                         for s in v {
@@ -704,7 +707,7 @@ impl App {
                                 let r = s.location.range.start;
                                 raw.push((
                                     s.name,
-                                    kind_name(kind_num(&s.kind)).into(),
+                                    kind_name(kind_num(&s.kind)),
                                     path,
                                     r.line,
                                     r.character,
@@ -721,7 +724,7 @@ impl App {
                             if let Some(path) = uri_to_path(uri.as_str()) {
                                 raw.push((
                                     s.name,
-                                    kind_name(kind_num(&s.kind)).into(),
+                                    kind_name(kind_num(&s.kind)),
                                     path,
                                     r.line,
                                     r.character,
@@ -736,6 +739,7 @@ impl App {
                         let pos = self.lsp_pos_for(&path, l, c);
                         let rel = self.rel_path(&path);
                         Item {
+                            icon: Some(kind),
                             label: name,
                             detail: format!("{kind}  {rel}:{}", pos.line + 1),
                             action: Action::Open(path, Some(pos)),
@@ -803,6 +807,7 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(i, a)| Item {
+                        icon: None,
                         label: a
                             .get("title")
                             .and_then(Value::as_str)
@@ -926,6 +931,7 @@ impl App {
         // Until the server says what it can do, offer them all.
         .filter(|(_, cap)| c.is_none_or(|c| !c.ready || c.has_cap(cap)))
         .map(|(cmd, _)| Item {
+            icon: None,
             label: crate::commands::name(cmd)
                 .trim_start_matches("LSP: ")
                 .to_string(),

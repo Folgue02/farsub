@@ -7,6 +7,10 @@
 //! Alerts (system notification + sound) are fired by a small background thread when a
 //! deadline passes, so they arrive even while the window is minimized and not drawing;
 //! the GUI flashes the widget on its next frame.
+//!
+//! With several windows open, each one reloads `timers.toml` when another changes it, and
+//! a due alert is sent by only one of them: the first to claim it (by creating a marker
+//! file for it in `timer-alerts/` in the data folder; creating an existing file fails).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -349,6 +353,8 @@ pub struct Timers {
     /// The widgets flashing after an alert, until clicked: (pomodoro, alarm).
     pub flash: (bool, bool),
     file: Option<PathBuf>,
+    /// `file` as this window last read or wrote it (to notice another window's change).
+    stamp: Option<crate::fileops::DiskStamp>,
     deadlines: Arc<Mutex<Vec<Deadline>>>,
 }
 
@@ -357,26 +363,43 @@ impl Timers {
     /// `wake` repaints the GUI after an alert.
     pub fn load(data_dir: Option<&Path>, wake: impl Fn() + Send + 'static) -> Self {
         let file = data_dir.map(|d| d.join("timers.toml"));
-        let saved: Saved = file
-            .as_ref()
-            .and_then(|f| std::fs::read_to_string(f).ok())
-            .and_then(|s| toml::from_str(&s).ok())
-            .unwrap_or_default();
+        let saved = file.as_deref().map(read_saved).unwrap_or_default();
         let deadlines: Arc<Mutex<Vec<Deadline>>> = Arc::default();
         let d = deadlines.clone();
+        let claims = data_dir.map(|d| d.join("timer-alerts"));
         let _ = std::thread::Builder::new()
             .name("timers".into())
-            .spawn(move || alert_thread(d, wake));
+            .spawn(move || alert_thread(d, claims, wake));
         let mut t = Timers {
             clock: saved.clock,
             pomodoro: saved.pomodoro,
             alarm: saved.alarm,
             flash: (false, false),
+            stamp: file.as_deref().and_then(crate::fileops::DiskStamp::of),
             file,
             deadlines,
         };
         t.sync_deadlines();
         t
+    }
+
+    /// Another window changed `timers.toml`: take its clock, pomodoro and alarm. True if
+    /// it did.
+    pub fn reload_if_changed(&mut self) -> bool {
+        let Some(f) = self.file.clone() else {
+            return false;
+        };
+        let now = crate::fileops::DiskStamp::of(&f);
+        if now == self.stamp {
+            return false;
+        }
+        self.stamp = now;
+        let saved = read_saved(&f);
+        self.clock = saved.clock;
+        self.pomodoro = saved.pomodoro;
+        self.alarm = saved.alarm;
+        self.sync_deadlines();
+        true
     }
 
     /// Phase ends and alarms that are due: move on and flash. (The alert thread sends
@@ -411,6 +434,7 @@ impl Timers {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 let _ = std::fs::write(f, text);
+                self.stamp = crate::fileops::DiskStamp::of(f);
             }
         }
     }
@@ -477,7 +501,37 @@ impl Timers {
     }
 }
 
-fn alert_thread(d: Arc<Mutex<Vec<Deadline>>>, wake: impl Fn()) {
+fn read_saved(f: &Path) -> Saved {
+    std::fs::read_to_string(f)
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Claim a due alert for this window: true for the first window to ask (or with no data
+/// folder to share). Claims older than a day are cleaned up.
+fn claim(dir: Option<&Path>, (at, title, _): &Deadline) -> bool {
+    let Some(dir) = dir else { return true };
+    let _ = std::fs::create_dir_all(dir);
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let old = (e.metadata().and_then(|m| m.modified()).ok())
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > day);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    // One file per deadline: its time and which timer (the title's letters).
+    let what: String = title.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dir.join(format!("{at}-{what}")))
+        .is_ok()
+}
+
+fn alert_thread(d: Arc<Mutex<Vec<Deadline>>>, claims: Option<PathBuf>, wake: impl Fn()) {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let now = now();
@@ -490,8 +544,10 @@ fn alert_thread(d: Arc<Mutex<Vec<Deadline>>>, wake: impl Fn()) {
         if due.is_empty() {
             continue;
         }
-        for (_, title, body) in &due {
-            alert(title, body);
+        for x in &due {
+            if claim(claims.as_deref(), x) {
+                alert(&x.1, &x.2);
+            }
         }
         wake();
     }
@@ -737,6 +793,33 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         assert!(FIRED.lock().unwrap().iter().any(|m| m.starts_with("Work is over")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn windows_share_timers_and_alert_once() {
+        let dir = std::env::temp_dir().join(format!("farsub-timers-w-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Two windows on the same data folder.
+        let mut a = Timers::load(Some(&dir), || {});
+        let mut b = Timers::load(Some(&dir), || {});
+        assert!(!b.reload_if_changed(), "nothing changed yet");
+        a.alarm.time = "06:30".into();
+        a.alarm.arm(now());
+        a.pomodoro.start(now());
+        a.changed();
+        assert!(!a.reload_if_changed(), "its own save isn't a change");
+        assert!(b.reload_if_changed());
+        assert_eq!((&b.alarm, &b.pomodoro), (&a.alarm, &a.pomodoro));
+        assert!(!b.reload_if_changed());
+        // A due alert goes out from one window only.
+        let claims = dir.join("timer-alerts");
+        let due: Deadline = (now(), "Alarm 06:30".into(), "x".into());
+        assert!(claim(Some(&claims), &due));
+        assert!(!claim(Some(&claims), &due), "the other window skips it");
+        let other: Deadline = (now() + 1, "Work is over".into(), "x".into());
+        assert!(claim(Some(&claims), &other), "a different alert is its own");
+        assert!(claim(None, &due), "no data folder: nothing to share");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

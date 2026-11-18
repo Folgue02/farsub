@@ -3983,9 +3983,15 @@ fn completion_kinds_have_codicons() {
         "val", "enum", "kw", "snip", "color", "file", "ref", "dir", "variant", "const",
         "struct", "event", "op", "type",
     ];
+    // Goto Symbol's kind names (LSP SymbolKind) too.
+    const SYMBOL_KINDS: &[&str] = &[
+        "file", "mod", "ns", "pkg", "class", "method", "prop", "field", "ctor", "enum",
+        "iface", "fn", "var", "const", "str", "num", "bool", "arr", "obj", "key", "null",
+        "variant", "struct", "event", "op", "type",
+    ];
     let font = include_bytes!("../runtime/fonts/codicon.ttf");
     let face = ttf_parser::Face::parse(font, 0).unwrap();
-    for k in KINDS {
+    for k in KINDS.iter().chain(SYMBOL_KINDS) {
         let (icon, _) = crate::gui::kind_codicon(k);
         let ch = icon.chars().next().unwrap();
         assert!(face.glyph_index(ch).is_some(), "{k}: U+{:04X} isn't in the font", ch as u32);
@@ -4060,4 +4066,35 @@ fn markdown_file_is_highlighted() {
         "switched to tree-sitter"
     );
     assert!(wait(&mut h, 5, |g| at(g, 0, 3) == style(g, "markup.heading")));
+}
+
+/// Goto Symbol shows each symbol's kind as its Codicon (from the language server).
+#[test]
+fn goto_symbol_shows_kind_icons() {
+    if !clangd_available() {
+        eprintln!("clangd not found; skipping");
+        return;
+    }
+    let src = "struct Point { int x; int y; };\nenum Color { Red, Green };\nint add(int a, int b) {\n    return a + b;\n}\nint main() {\n    return add(1, 2);\n}\n";
+    let d = project("symicons", &[("main.c", src)]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("main.c"), true);
+    assert!(wait(&mut h, 20, |g| g.app.buf().unwrap().lsp_client.is_some()));
+    steps(&mut h, 5);
+    h.state_mut().app.run(crate::commands::Command::GotoSymbol);
+    let icons = |g: &Gui| match &g.app.modal {
+        Some(Modal::Palette(p)) if !p.loading => {
+            p.items.iter().map(|i| (i.label.trim().to_string(), i.icon)).collect()
+        }
+        _ => vec![],
+    };
+    assert!(wait(&mut h, 10, |g| icons(g).iter().any(|(l, _)| l == "add")), "{:?}", icons(h.state()));
+    let got = icons(h.state());
+    let icon_of = |n: &str| got.iter().find(|(l, _)| l == n).and_then(|(_, i)| *i);
+    assert_eq!(icon_of("add"), Some("fn"), "{got:?}");
+    // clangd calls a C struct a class.
+    assert_eq!(icon_of("Point"), Some("class"), "{got:?}");
+    assert_eq!(icon_of("x"), Some("field"), "{got:?}");
+    assert_eq!(icon_of("Color"), Some("enum"), "{got:?}");
+    shot(&mut h, "goto_symbol_icons");
 }
