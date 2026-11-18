@@ -6,7 +6,9 @@
 - Items are data: `[context.editor|sidebar|tab|terminal|console] items = [...]` in
   `menus.toml` (command ids, `"-"` separators); user files override per section.
 - Keyboard: arrows move, Enter runs, a letter runs the item starting with it, Esc or a
-  click outside closes. Disabled items are dimmed and skipped.
+  click outside closes. Disabled items are dimmed and skipped; items that apply only to some targets (Open This
+  Project in New Window, for project files) are left out instead, and separators left
+  next to each other or at an end are dropped.
 - egui's own widget focus is never used: every key goes through the app's routing, so Tab
   never moves focus to (and Enter never "clicks") a menu-bar button.
 - **Popups own the mouse** (decided 2026-11-18): a context menu, a menu bar dropdown,

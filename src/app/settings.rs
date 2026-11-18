@@ -92,6 +92,71 @@ impl App {
         self.spawn_window(args);
     }
 
+    /// Project › Edit Project: like Preferences: Settings, a window of its own
+    /// (`--edit-project FILE`) with an example project on the left and the project file on
+    /// the right. Saving it there applies it in the project's window.
+    pub(super) fn open_project_editor(&mut self, file: &Path) {
+        if self.settings_window {
+            return self.open_project_here(file);
+        }
+        let mut args = self.window_args("--edit-project");
+        args.insert(1, file.into());
+        self.spawn_window(args);
+    }
+
+    /// The two-pane project view in this window (the Edit Project window shows it).
+    pub fn open_project_here(&mut self, file: &Path) {
+        let defaults = self.example_project_path();
+        self.open_two_panes(file.to_path_buf(), "", defaults, project::EXAMPLE_PROJECT);
+    }
+
+    /// Project › New Project: the Edit Project window with a new, unsaved project file
+    /// (`--new-project`); saving asks where to put it.
+    pub(super) fn open_new_project(&mut self) {
+        if self.settings_window {
+            return self.open_new_project_here();
+        }
+        let args = self.window_args("--new-project");
+        self.spawn_window(args);
+    }
+
+    pub fn open_new_project_here(&mut self) {
+        let defaults = self.example_project_path();
+        self.open_pair(None, project::NEW_PROJECT, defaults, project::EXAMPLE_PROJECT);
+    }
+
+    /// The unsaved project file of a New Project window.
+    pub(super) fn is_new_project(&self, id: usize) -> bool {
+        self.settings_view.iter().any(|v| v.user_id == id)
+            && self.buf_index(id).is_some_and(|i| self.buffers[i].path.is_none())
+    }
+
+    fn example_project_path(&self) -> PathBuf {
+        self.defaults_settings_path()
+            .with_file_name(format!("Example Project.{}", project::PROJECT_EXT))
+    }
+
+    /// The project file to open in a new window: the one selected in the sidebar (when
+    /// it has focus), else the current file, if it's a `.farsub-project`.
+    pub fn project_file_target(&self) -> Option<PathBuf> {
+        let p = if self.focus == Focus::Sidebar {
+            self.tree.selected_path().map(Path::to_path_buf)
+        } else {
+            self.buf().and_then(|b| b.path.clone())
+        }?;
+        (p.extension().is_some_and(|e| e == project::PROJECT_EXT) && p.is_file()).then_some(p)
+    }
+
+    /// Open This Project in New Window: another farsub window with that project.
+    pub(super) fn open_project_in_new_window(&mut self) {
+        let Some(file) = self.project_file_target() else {
+            return self.msg("Select a .farsub-project file first");
+        };
+        let mut args = self.window_args("--");
+        args[0] = file.into();
+        self.spawn_window(args);
+    }
+
     /// The two-pane settings view in this window (the settings window shows it).
     pub fn open_settings_here(&mut self) {
         let Some(path) = self.config.path.clone().or_else(config::config_path) else {
@@ -123,11 +188,19 @@ impl App {
     /// A read-only reference on the left, the user's file on the right (created from
     /// `template` if missing). Closing either side closes both.
     fn open_two_panes(&mut self, path: PathBuf, template: &str, defaults: PathBuf, text: &str) {
-        if !path.exists() {
+        self.open_pair(Some(path), template, defaults, text);
+    }
+
+    /// `open_two_panes`, or with no `path` an unsaved buffer holding `template` (New
+    /// Project), saved wherever you choose.
+    fn open_pair(&mut self, path: Option<PathBuf>, template: &str, defaults: PathBuf, text: &str) {
+        if let Some(path) = &path
+            && !path.exists()
+        {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Err(e) = std::fs::write(&path, template) {
+            if let Err(e) = std::fs::write(path, template) {
                 return self.msg(format!("Could not create {}: {e}", path.display()));
             }
         }
@@ -157,8 +230,26 @@ impl App {
         if let Some(i) = self.buf_index(defaults_id) {
             self.buffers[i].read_only = true;
         }
-        let Some(user_id) = place(self, &path, 1) else {
-            return;
+        let user_id = match &path {
+            Some(path) => {
+                let Some(id) = place(self, path, 1) else {
+                    return;
+                };
+                id
+            }
+            None => {
+                self.group = 1;
+                let id = self.next_buf_id;
+                self.next_buf_id += 1;
+                let b = Buffer::from_text(id, None, template, HlCache::new("Plain Text".into()));
+                let i = self.push_buffer(b);
+                self.buffers[i].group = 1;
+                self.set_cur(i);
+                self.set_syntax_at(i, "toml");
+                // Ready to add settings under [settings].
+                self.buffers[i].move_doc(true, false);
+                id
+            }
         };
         self.focus = Focus::Editor;
         if !self.settings_view.iter().any(|v| v.user_id == user_id) {

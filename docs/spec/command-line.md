@@ -13,7 +13,9 @@
   [Sidebar](sidebar.md)).
 - `--settings` opens a window with just the two settings panes (Preferences: Settings
   starts one); closing them closes the window. Like `--empty`, it keeps no workspace.
-  `--keymap` is the same for the key bindings panes (Preferences: Key Bindings).
+  `--keymap` is the same for the key bindings panes (Preferences: Key Bindings), and
+  `--edit-project FILE` for a project file beside the example project (Project › Edit
+  Project), and `--new-project` for a new, unsaved one (Project › New Project).
 - What opens: a project file → that project; folders → those folders (or added to the last
   session with `-a`); files only → the last session (or the file's project root if there
   is none); nothing → the last session, else the current folder. `-n` skips the session.

@@ -247,8 +247,12 @@ impl Gui {
         // Mouse: click, drag, wheel.
         let resp = ui.interact(r, Id::unique(("editor-pane", g)), Sense::click_and_drag());
         let to_pos = |b: &Buffer, pt: Pos2| -> Pos {
-            // Below the text: the last row.
-            let Some(row) = row_at(pt).or(hit_rows.last()) else {
+            // Above the text: the first row; below it: the last.
+            let edge = match hit_rows.first() {
+                Some(f) if pt.y < f.y => hit_rows.first(),
+                _ => hit_rows.last(),
+            };
+            let Some(row) = row_at(pt).or(edge) else {
                 return Pos::new(0, 0);
             };
             let target = ((pt.x - row.x0) / cw).max(row.seg.start as f32);
@@ -309,15 +313,105 @@ impl Gui {
             }
         };
         let mut click: Option<(Pos, u32, bool)> = None;
-        let mut drag: Option<Pos> = None;
         // Cmd+Click (Ctrl elsewhere) adds a cursor; Alt+drag selects a column.
         let mut add_caret: Option<(Pos, u32)> = None;
         let mut column: Option<((usize, usize), (usize, usize))> = None;
         if !resp.dragged() && !resp.drag_started() {
             self.col_drag = None;
         }
+        // A plain press places the caret where the button went down (not where egui
+        // notices a drag, a few pixels on) and counts double / triple clicks itself, so
+        // a double-click-and-drag selects by word and a triple one by line.
+        let (m, pressed, primary_down, latest) = ui.ctx().input(|i| {
+            (
+                i.modifiers,
+                i.pointer.primary_pressed(),
+                i.pointer.primary_down(),
+                i.pointer.latest_pos(),
+            )
+        });
+        if !primary_down {
+            self.sel_drag = None;
+            self.drag_pt = None;
+        }
+        let mut press: Option<(Pos, u32, bool)> = None;
+        // (A press and release in one frame only shows up as a click.)
+        if pressed
+            && (resp.is_pointer_button_down_on() || resp.clicked())
+            && !m.command
+            && !m.alt
+            && let Some(at) = ui.ctx().input(|i| i.pointer.press_origin())
+        {
+            let now = Instant::now();
+            let n = match self.last_press {
+                Some((t, p0, n))
+                    if now.duration_since(t) < Duration::from_millis(500)
+                        && p0.distance(at) < 6.0 =>
+                {
+                    n % 3 + 1
+                }
+                _ => 1,
+            };
+            self.last_press = Some((now, at, n));
+            press = Some((to_pos(b, at), n, m.shift && n == 1));
+            self.drag_pt = Some(at);
+        }
+        // Dragging a plain selection, also outside the pane or the window: above or
+        // below the text the view scrolls toward the pointer, faster the further away.
+        let mut drag: Option<(Pos, u32, Pos, Pos)> = None;
+        if primary_down
+            && press.is_none()
+            && let Some((unit, s0, e0)) = self.sel_drag
+        {
+            if latest.is_some() {
+                self.drag_pt = latest;
+            }
+            if let Some(pt) = self.drag_pt {
+                let text_bottom = r.top() + self.app.page as f32 * lh;
+                let (above, below) = (pt.y < r.top(), pt.y >= text_bottom.min(r.bottom()));
+                let pos = if above || below {
+                    let now = Instant::now();
+                    let tick = Duration::from_millis(40);
+                    if now >= self.autoscroll_at {
+                        let far = if above { r.top() - pt.y } else { pt.y - text_bottom };
+                        let step = ((far / lh).ceil() as isize).clamp(1, 30);
+                        let top = (b.scroll_y, b.scroll_row);
+                        (b.scroll_y, b.scroll_row) =
+                            advance(b, wrap, top, if above { -step } else { step });
+                        b.scroll_px = 0.0;
+                        self.autoscroll_at = now + tick;
+                    }
+                    ui.ctx().request_repaint_after(tick);
+                    let rows = build_rows(
+                        b,
+                        wrap,
+                        (b.scroll_y, b.scroll_row),
+                        visible,
+                        r.top(),
+                        lh,
+                        text_left,
+                        cw,
+                    );
+                    let edge = if above {
+                        rows.first()
+                    } else {
+                        rows.get(self.app.page.saturating_sub(1)).or(rows.last())
+                    };
+                    match edge {
+                        Some(row) => {
+                            let target = ((pt.x - row.x0) / cw).max(row.seg.start as f32);
+                            let col = col_in_seg(&b.lines[row.line], tab, &row.seg, target, row.last);
+                            Pos::new(row.line, col)
+                        }
+                        None => to_pos(b, pt),
+                    }
+                } else {
+                    to_pos(b, pt)
+                };
+                drag = Some((pos, unit, s0, e0));
+            }
+        }
         if let Some(pt) = resp.interact_pointer_pos() {
-            let m = ui.ctx().input(|i| i.modifiers);
             let origin = ui.ctx().input(|i| i.pointer.press_origin()).unwrap_or(pt);
             if resp.drag_started() && m.alt {
                 self.col_drag = Some(to_vcol(origin));
@@ -328,14 +422,8 @@ impl Gui {
                 add_caret = Some((to_pos(b, pt), 2));
             } else if m.command && (resp.drag_started() || resp.clicked()) {
                 add_caret = Some((to_pos(b, if resp.drag_started() { origin } else { pt }), 1));
-            } else if resp.triple_clicked() {
-                click = Some((to_pos(b, pt), 3, false));
-            } else if resp.double_clicked() {
-                click = Some((to_pos(b, pt), 2, false));
-            } else if resp.drag_started() || resp.clicked() {
+            } else if m.alt && resp.clicked() {
                 click = Some((to_pos(b, pt), 1, m.shift));
-            } else if resp.dragged() {
-                drag = Some(to_pos(b, pt));
             }
         }
         let mut hscrolled = false;
@@ -905,7 +993,7 @@ impl Gui {
         }
         if !active_group {
             // A click in another group focuses it first, then acts there.
-            if click.is_some() || right_click.is_some() {
+            if press.is_some() || click.is_some() || right_click.is_some() {
                 self.app.set_cur(cur);
                 self.app.focus = Focus::Editor;
                 self.app.completion = None;
@@ -927,14 +1015,21 @@ impl Gui {
                 Some(Pos2::new(row.x0 + d as f32 * cw, row.y))
             });
         self.keyboard_spot = cursor_px.map(|p| p + Vec2::new(0.0, lh));
-        if let Some((pos, n, ext)) = click {
+        if let Some((pos, n, ext)) = press {
             self.app.editor_click(pos, n, ext);
+            // What the press selected (the word, the line), which a drag extends from.
+            self.sel_drag = self.app.buf().map(|b| {
+                let (s, e) = b.selection().unwrap_or((b.cursor, b.cursor));
+                if n == 1 { (1, pos, pos) } else { (n, s, e) }
+            });
             // Double-click on a Find Results line opens its match.
             if n == 2 && self.app.buf().is_some_and(|b| b.results.is_some()) {
                 self.app.open_result_line(pos.line);
             }
-        } else if let Some(pos) = drag {
-            self.app.editor_drag(pos);
+        } else if let Some((pos, unit, s, e)) = drag {
+            self.app.editor_drag(pos, unit, (s, e));
+        } else if let Some((pos, n, ext)) = click {
+            self.app.editor_click(pos, n, ext);
         } else if let Some((pos, n)) = add_caret {
             self.app.editor_add_caret(pos, n);
         } else if let Some((from, to)) = column {

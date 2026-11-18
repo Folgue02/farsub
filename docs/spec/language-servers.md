@@ -11,10 +11,12 @@
   Linux and Windows:
   - npm (needs Node.js): pyright, basedpyright, ts_ls (`typescript@5`, since TypeScript
     7 has no `tsserver`), bashls, yamlls, jsonls / cssls / html_ls
-    (vscode-langservers-extracted), taplo, dockerls, intelephense, svelte, elmls, vimls,
+    (vscode-langservers-extracted), dockerls, intelephense, svelte, elmls, vimls,
     prismals.
   - pip (needs Python): pylsp, cmake_ls. go (needs Go): gopls.
-  - GitHub release binaries: rust_analyzer, clangd, lua_ls, marksman, zls, texlab,
+  - GitHub release binaries: taplo (its npm build has no language server; an older npm
+    install of a server whose recipe dropped npm counts as not installed, so it's
+    installed again), rust_analyzer, clangd, lua_ls, marksman, zls, texlab,
     tinymist, clojure_lsp, gleam, ols, nimlangserver (needs Nim), elixir_ls (needs
     Elixir), kotlin_language_server (needs Java; fwcd's, which fails to start on Java 22+).
   - Direct downloads: jdtls (eclipse.org's latest build, needs Java 21+), terraformls
@@ -80,3 +82,23 @@
   formatting fails). Saving again while it waits saves right away, so a server that
   never answers can't block saving. Files without a server that can format are saved
   directly.
+- **Schemas for farsub's own TOML files** (decided 2026-11-18): there's no TOML-native
+  schema standard; TOML tools use JSON Schema. farsub generates one per kind of file from
+  the structs that read them (so they can't drift; doc comments become the
+  explanations) and writes them to `<data>/schemas/` whenever taplo starts. taplo gets
+  them through its `evenBetterToml.schema.associations` setting: your settings file and
+  `Default Settings.toml`, keymap.toml and `Default Key Bindings.toml`, every
+  `.farsub-project`, and the `languages/` and `servers/` files of your config folder.
+  That gives errors for misspelled or mistyped settings and unknown command ids, key
+  completion, and hover explanations. Your own associations in taplo's settings win.
+  Taplo only checks `*.toml` files unless its config file includes others (a
+  `.farsub-project` would just get "this document has been excluded"), so for a root
+  with no `.taplo.toml` / `taplo.toml` of its own farsub writes `<data>/schemas/taplo.toml`
+  (`include = ["**/*.toml", "**/*.farsub-project"]`) and sets
+  `evenBetterToml.taplo.configFile.path` to it. A root's own Taplo config, or a
+  `configFile.path` in your taplo server settings, wins. An unsaved buffer (New
+  Project's, before its first save) has no language server; checks start once it's
+  saved.
+  taplo learns its settings after the file is already open and doesn't re-check it, so
+  when it reports a new association (`taplo/didChangeSchemaAssociation`) farsub sends
+  the document again.

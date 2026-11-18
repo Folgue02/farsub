@@ -46,6 +46,16 @@ pub struct Args {
     #[arg(long, conflicts_with_all = ["project", "add", "empty", "settings"])]
     pub keymap: bool,
 
+    /// Open a window with just this project file and an example (Project › Edit Project
+    /// opens one).
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["project", "add", "empty", "settings", "keymap"])]
+    pub edit_project: Option<PathBuf>,
+
+    /// Open a window with a new, unsaved project file and an example (Project › New
+    /// Project opens one).
+    #[arg(long, conflicts_with_all = ["project", "add", "empty", "settings", "keymap", "edit_project"])]
+    pub new_project: bool,
+
     /// Add the given folders to the last session's project instead of opening them alone.
     #[arg(short, long)]
     pub add: bool,
@@ -213,7 +223,7 @@ pub fn plan(
     {
         return Err(format!("no such project: {}", p.display()));
     }
-    if args.empty || args.settings || args.keymap {
+    if args.empty || args.settings || args.keymap || args.new_project || args.edit_project.is_some() {
         // A clean window; files given too still open in it.
         return Ok(Plan {
             target: Target::Folders(vec![]),

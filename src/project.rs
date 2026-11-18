@@ -25,15 +25,80 @@ use serde::{Deserialize, Serialize};
 pub const PROJECT_EXT: &str = "farsub-project";
 pub const WORKSPACE_EXT: &str = "farsub-workspace";
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+/// What Project › New Project starts with.
+pub const NEW_PROJECT: &str = r##"# A new project: save it as NAME.farsub-project (the example in the other pane shows
+# everything a project file can hold). Then "Project: Open This Project in New Window"
+# (also when right-clicking the file in the sidebar) opens it.
+
+[[folders]]
+path = "."                    # relative to where you save this file
+
+[settings]
+"##;
+
+/// The read-only sample shown beside a project file (Project › Edit Project).
+pub const EXAMPLE_PROJECT: &str = r##"# farsub example project (read-only reference).
+#
+# A project file (NAME.farsub-project) lists the folders a window shows and settings that
+# apply only in that window. Don't edit this file: copy what you need into your project
+# file (the other pane) and save it there; the project's window picks it up at once.
+
+# ---- folders: one [[folders]] per folder in the sidebar
+[[folders]]
+path = "."                    # relative to the project file, or absolute
+name = "App"                  # optional: the name shown in the sidebar
+# Hidden from the sidebar, Goto Anything and Find in Files (names or globs):
+folder_exclude_patterns = ["target", "node_modules", ".cache"]
+file_exclude_patterns = ["*.min.js", "*.lock"]
+
+[[folders]]
+path = "../shared-lib"        # folders can live anywhere
+# index = false               # a slow (network) folder: Goto Anything only offers the
+                              # files the sidebar has listed, instead of reading it all
+
+# ---- settings: any editor setting (Preferences: Settings lists them), only here
+[settings]
+tab_size = 2
+use_tabs = false
+format_on_save = true
+# theme = "Tsoding"
+# highlighter = { markdown = "tree-sitter" }
+
+# ---- languages and servers for this project only (same format as the files in
+# languages/ and servers/ of your config folder); an entry with the same name as a
+# built-in one replaces it.
+#
+# [[languages]]
+# name = "python"
+# servers = ["basedpyright"]
+#
+# [[servers]]
+# name = "basedpyright"
+# command = "basedpyright-langserver"
+# args = ["--stdio"]
+# [servers.settings.basedpyright.analysis]
+# typeCheckingMode = "strict"
+"##;
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct FolderDef {
+    /// The folder, relative to the project file ("." is the file's own folder) or absolute.
     pub path: String,
+    /// Name shown in the sidebar (default: the folder's name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Folders hidden from the sidebar and Goto Anything, by name or glob: ["target"].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub folder_exclude_patterns: Vec<String>,
+    /// Files hidden from the sidebar and Goto Anything, by name or glob: ["*.min.js"].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub file_exclude_patterns: Vec<String>,
+    /// Index the folder's files in the background for Goto Anything (the default).
+    /// `false` for a slow (network) folder: Goto Anything then offers the files the
+    /// sidebar has listed so far, instead of reading the whole folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<bool>,
 }
 
 /// A resolved project folder.
@@ -84,6 +149,11 @@ impl Folder {
             ..Default::default()
         };
         Folder::new(path, def)
+    }
+
+    /// `index` isn't `false`.
+    pub fn indexed(&self) -> bool {
+        self.def.index != Some(false)
     }
 
     /// Whether an entry (by name) inside this folder is excluded by the project.

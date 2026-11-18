@@ -19,9 +19,11 @@ use serde::{Deserialize, Serialize};
 
 include!(concat!(env!("OUT_DIR"), "/runtime_files.rs"));
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(default)]
+#[schemars(deny_unknown_fields)]
 pub struct EditorConfig {
+    /// Size of the editor text, in points (Cmd+= / Cmd+- change it for the session).
     pub font_size: f32,
     /// The editor font: an installed font family ("" = the built-in one). Preferences ›
     /// Select Font picks it.
@@ -29,10 +31,15 @@ pub struct EditorConfig {
     /// Scale for the whole interface (all fonts, widgets, spacing), like browser zoom.
     /// 1.0 = 100%. Separate from font_size, which only sizes the editor text.
     pub ui_scale: f32,
+    /// Columns per indentation level (a language or the file itself can override it).
     pub tab_size: usize,
+    /// Indent with tabs instead of spaces.
     pub use_tabs: bool,
+    /// Color theme by name (Preferences › Select Theme lists them).
     pub theme: String,
+    /// Show the sidebar in windows that have folders open.
     pub show_sidebar: bool,
+    /// Show the menu bar inside the window (macOS uses the system menu bar instead).
     pub show_menu_bar: bool,
     /// Animate sidebar folders opening/closing.
     pub animations: bool,
@@ -110,7 +117,7 @@ impl Default for EditorConfig {
 }
 
 /// How a language is highlighted.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 pub enum Highlighter {
     /// Its tree-sitter grammar; the regex grammar while there's none (installing, can't
     /// be compiled, doesn't exist).
@@ -122,7 +129,7 @@ pub enum Highlighter {
     Regex,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CaretStyle {
     /// Fades out and back in (Sublime's default "smooth").
@@ -205,14 +212,18 @@ impl Config {
 }
 
 /// How to install a server (like a mason.nvim package). One source is used.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct InstallSpec {
+    /// npm packages installed into the server's folder.
     #[serde(default)]
     pub npm: Vec<String>,
+    /// pip packages installed into a virtualenv in the server's folder.
     #[serde(default)]
     pub pip: Vec<String>,
+    /// A crate installed with `cargo install`.
     #[serde(default)]
     pub cargo: Option<String>,
+    /// A Go package installed with `go install` ("golang.org/x/tools/gopls@latest").
     #[serde(default)]
     pub go: Option<String>,
     /// Shell script run in the install folder ($FARSUB_INSTALL_DIR); `bin` is relative to it.
@@ -249,7 +260,7 @@ pub struct InstallSpec {
 }
 
 /// `[[install.run]]`: one command of an install.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct RunStep {
     /// A program on PATH, or a path under the install folder (`{dir}/cs`).
     pub command: String,
@@ -258,7 +269,7 @@ pub struct RunStep {
 }
 
 /// `[install.url]`: download URLs keyed by platform, like the github source's assets.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct UrlSource {
     #[serde(default)]
     pub assets: HashMap<String, String>,
@@ -268,7 +279,7 @@ pub struct UrlSource {
 }
 
 /// `[install.wrapper]`: the launcher farsub writes into the install folder.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct Wrapper {
     /// A program on PATH (resolved when installing), or a path under the install folder
     /// (`{dir}/bin/ruby-lsp`, may contain `*`).
@@ -295,7 +306,7 @@ pub fn platform_asset(assets: &HashMap<String, String>) -> Option<&str> {
 }
 
 /// `[install.github]`: download a release asset, extract it, find the executable.
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct GithubSource {
     /// "owner/name"
     pub repo: String,
@@ -362,35 +373,46 @@ impl InstallSpec {
 }
 
 /// A language server definition (like an nvim-lspconfig entry).
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct ServerConfig {
+    /// The name languages list in `servers` (servers/<name>.toml: defaults to the file name).
     #[serde(default)]
     pub name: String,
+    /// The executable: a program on PATH, or the one farsub installed (`[install]`).
     pub command: String,
+    /// Arguments; `${root}`, `${root_id}`, `${home}` and `${install_dir}` are replaced.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Extra environment variables for the server.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Files or folders marking the project root (globs allowed: "*.csproj"); the nearest
+    /// folder holding one is the root, else the git root.
     #[serde(default)]
     pub root_markers: Vec<String>,
+    /// One line shown in Tools › Language Servers.
     #[serde(default)]
     pub description: String,
     /// Sent as `initializationOptions`.
     #[serde(default)]
+    #[schemars(with = "Option<serde_json::Value>")]
     pub initialization_options: Option<toml::Value>,
     /// Answers `workspace/configuration`, keyed by section.
     #[serde(default)]
+    #[schemars(with = "Option<serde_json::Value>")]
     pub settings: Option<toml::Value>,
     #[serde(default)]
     pub install: Option<InstallSpec>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct LanguageConfig {
+    /// The language's id (languages/<name>.toml): a same-named entry replaces it.
     pub name: String,
     /// LSP languageId (defaults to `name`).
     #[serde(default)]
     pub language_id: Option<String>,
+    /// File extensions without the dot: ["rs"].
     #[serde(default)]
     pub extensions: Vec<String>,
     /// Exact file names, e.g. "Makefile".
@@ -399,10 +421,13 @@ pub struct LanguageConfig {
     /// Regex matched against the first line (shebangs), e.g. "^#!.*python".
     #[serde(default)]
     pub first_line: Option<String>,
+    /// Line comment marker for Toggle Comment ("//", "#").
     #[serde(default)]
     pub comment: Option<String>,
+    /// Indentation width for this language, over the editor's `tab_size`.
     #[serde(default)]
     pub tab_size: Option<usize>,
+    /// Indent this language with tabs (or not), over the editor's `use_tabs`.
     #[serde(default)]
     pub use_tabs: Option<bool>,
     /// Extra project-root markers (servers have their own).
@@ -460,18 +485,26 @@ impl LanguageConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct KeyBinding {
+    /// The keys: "Cmd+Shift+P", or a chord "Cmd+K Cmd+B". Cmd is Cmd on macOS and Ctrl
+    /// elsewhere; also Ctrl, Shift, Alt.
     pub keys: String,
     /// Command id; "" or "none" unbinds the key in that context.
+    #[schemars(schema_with = "crate::schemas::command_id")]
     pub command: String,
+    /// Where the binding applies: "global" (default), "editor" or "sidebar".
     #[serde(default)]
+    #[schemars(schema_with = "crate::schemas::key_context")]
     pub context: Option<String>,
+    /// Only on these systems: "macos", "windows", "linux".
     #[serde(default)]
+    #[schemars(schema_with = "crate::schemas::platforms")]
     pub platforms: Vec<String>,
 }
 
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct KeyDoc {
     pub section: String,
     pub keys: String,
@@ -484,20 +517,27 @@ pub struct MenuDef {
     pub items: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
-struct FileConfig {
+#[derive(Deserialize, Default, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub(crate) struct FileConfig {
+    /// Editor settings; every one is listed with its default in Preferences: Settings.
     #[serde(default)]
     editor: Option<EditorConfig>,
+    /// Languages to add, or replace by name (also: languages/<name>.toml).
     #[serde(default)]
     languages: Vec<LanguageConfig>,
+    /// Language servers to add, or replace by name (also: servers/<name>.toml).
     #[serde(default)]
     servers: Vec<ServerConfig>,
 }
 
-#[derive(Deserialize, Default)]
-struct KeymapFile {
+#[derive(Deserialize, Default, schemars::JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub(crate) struct KeymapFile {
+    /// Key bindings; one for the same keys and context replaces the default.
     #[serde(default)]
     keys: Vec<KeyBinding>,
+    /// Extra lines for Help › Keyboard Shortcuts (keys the editor handles itself).
     #[serde(default)]
     docs: Vec<KeyDoc>,
 }

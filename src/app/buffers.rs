@@ -136,96 +136,117 @@ impl App {
         }
     }
 
-    /// Notice open files that were deleted on disk (or came back), like Sublime: a deleted
-    /// file counts as unsaved, so closing asks first and hot exit keeps its contents.
-    /// Returns true if anything changed.
-    pub fn check_deleted_files(&mut self) -> bool {
-        let mut changed = false;
+    /// Look at the open files on disk in a background thread (a slow network drive mustn't
+    /// freeze the window); `on_disk_states` handles what it finds. One check at a time.
+    pub(super) fn start_disk_check(&mut self) {
+        if self.disk_check_running {
+            return;
+        }
+        let reqs: Vec<DiskRequest> = (self.buffers.iter())
+            .filter_map(|b| {
+                Some(DiskRequest {
+                    id: b.id,
+                    path: b.path.clone()?,
+                    seen: b.disk,
+                    deleted: b.deleted,
+                })
+            })
+            .collect();
+        if reqs.is_empty() {
+            return;
+        }
+        self.disk_check_running = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let states = reqs.into_iter().map(read_disk_state).collect();
+            let _ = tx.send(AppEvent::Disk(states));
+        });
+    }
+
+    /// Open files that were deleted on disk (or came back), like Sublime: a deleted file
+    /// counts as unsaved, so closing asks first and hot exit keeps its contents. Files
+    /// another program changed: unedited ones reload in place (an undoable edit, like
+    /// Sublime); one with unsaved edits asks first.
+    pub(super) fn on_disk_states(&mut self, states: Vec<DiskState>) {
+        self.disk_check_running = false;
+        let mut deleted_changed = false;
         let mut gone = vec![];
-        for b in &mut self.buffers {
-            let Some(path) = &b.path else { continue };
-            let exists = path.exists();
-            if !exists && !b.deleted {
+        for st in states {
+            let Some(i) = self.buf_index(st.req.id) else {
+                continue;
+            };
+            let b = &mut self.buffers[i];
+            // Saved, renamed or re-read since the check started: what it saw is old.
+            if b.path.as_ref() != Some(&st.req.path)
+                || b.disk != st.req.seen
+                || b.deleted != st.req.deleted
+            {
+                continue;
+            }
+            if !st.exists && !b.deleted {
                 b.deleted = true;
                 b.modified = true;
                 gone.push(b.name());
-                changed = true;
-            } else if exists && b.deleted {
-                b.deleted = false;
-                changed = true;
+                deleted_changed = true;
+                continue;
             }
+            if st.exists && b.deleted {
+                b.deleted = false;
+                deleted_changed = true;
+            }
+            self.disk_changed(i, &st);
         }
-        if changed {
+        if deleted_changed {
             // Like Sublime: the sidebar stops listing it.
             self.refresh_tree();
         }
-        changed |= self.check_changed_files();
         for name in gone {
             crate::log::info("files", format!("{name} was deleted on disk"));
             self.msg(format!(
                 "{name} no longer exists on disk — save to recreate it"
             ));
         }
-        changed
     }
 
-    /// Notice open files that another program changed. Unedited ones reload in place (an
-    /// undoable edit, like Sublime); one with unsaved edits asks first. Returns true if
-    /// anything changed.
-    pub fn check_changed_files(&mut self) -> bool {
-        let mut changed = false;
-        for i in 0..self.buffers.len() {
-            let b = &self.buffers[i];
-            let (Some(path), Some(seen)) = (b.path.clone(), b.disk) else {
-                continue;
-            };
-            if b.deleted {
-                continue;
-            }
-            let Some(now) = crate::fileops::DiskStamp::of(&path) else {
-                continue;
-            };
-            if now == seen {
-                continue;
-            }
-            let Some((text, enc)) = std::fs::read(&path)
-                .ok()
-                .and_then(|bytes| crate::encoding::decode(&bytes))
-            else {
-                self.buffers[i].disk = Some(now);
-                continue;
-            };
-            let b = &mut self.buffers[i];
-            let norm = text.replace("\r\n", "\n");
-            if norm == b.lines.join("\n") {
-                // Only touched (or saved the same text): nothing to do.
-                b.disk = Some(now);
-                continue;
-            }
-            if !b.modified {
-                b.encoding = enc;
-                b.reload_from(&text);
-                let name = b.name();
-                crate::log::info("files", format!("{name} changed on disk: reloaded"));
-                self.msg(format!(
-                    "{name} changed on disk — reloaded (undo to get yours back)"
-                ));
-                changed = true;
-            } else if self.modal.is_none() {
-                // Asked once per change: "no" keeps the edits (saving then overwrites).
-                b.disk = Some(now);
-                let name = b.name();
-                let id = b.id;
-                self.modal = Some(Modal::Confirm(Confirm {
-                    message: format!(
-                        "{name} changed on disk and has unsaved changes here. Reload it and lose them? (y/n)"
-                    ),
-                    kind: ConfirmKind::Reload(id),
-                }));
-                changed = true;
-            }
+    /// The file changed on disk (another program wrote it).
+    fn disk_changed(&mut self, i: usize, st: &DiskState) {
+        let (Some(seen), Some(now)) = (st.req.seen, st.now) else {
+            return;
+        };
+        if now == seen {
+            return;
         }
-        changed
+        let Some((text, enc)) = (st.bytes.as_deref()).and_then(crate::encoding::decode) else {
+            self.buffers[i].disk = Some(now);
+            return;
+        };
+        let b = &mut self.buffers[i];
+        let norm = text.replace("\r\n", "\n");
+        if norm == b.lines.join("\n") {
+            // Only touched (or saved the same text): nothing to do.
+            b.disk = Some(now);
+            return;
+        }
+        if !b.modified {
+            b.encoding = enc;
+            b.reload_from(&text);
+            let name = b.name();
+            crate::log::info("files", format!("{name} changed on disk: reloaded"));
+            self.msg(format!(
+                "{name} changed on disk — reloaded (undo to get yours back)"
+            ));
+        } else if self.modal.is_none() {
+            // Asked once per change: "no" keeps the edits (saving then overwrites).
+            b.disk = Some(now);
+            let name = b.name();
+            let id = b.id;
+            self.modal = Some(Modal::Confirm(Confirm {
+                message: format!(
+                    "{name} changed on disk and has unsaved changes here. Reload it and lose them? (y/n)"
+                ),
+                kind: ConfirmKind::Reload(id),
+            }));
+        }
     }
 
     /// Reload a buffer from disk (its unsaved edits go, but stay undoable).
@@ -458,5 +479,36 @@ impl App {
                 self.quit = true;
             }
         }
+    }
+}
+
+/// What the background disk check looks at for one open file.
+pub struct DiskRequest {
+    pub id: usize,
+    pub path: PathBuf,
+    /// The buffer's last known stamp, and whether it was deleted, when the check started.
+    pub seen: Option<fileops::DiskStamp>,
+    pub deleted: bool,
+}
+
+/// What it found.
+pub struct DiskState {
+    pub req: DiskRequest,
+    pub exists: bool,
+    pub now: Option<fileops::DiskStamp>,
+    /// The new contents, read only when the file changed.
+    pub bytes: Option<Vec<u8>>,
+}
+
+fn read_disk_state(req: DiskRequest) -> DiskState {
+    let now = fileops::DiskStamp::of(&req.path);
+    let exists = now.is_some() || req.path.exists();
+    let changed = req.seen.is_some() && now.is_some() && now != req.seen;
+    let bytes = if changed { std::fs::read(&req.path).ok() } else { None };
+    DiskState {
+        req,
+        exists,
+        now,
+        bytes,
     }
 }

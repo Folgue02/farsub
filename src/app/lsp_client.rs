@@ -17,6 +17,66 @@ impl App {
             .find_map(|s| installer::resolve(data, s).map(|bin| (s.clone(), bin)))
     }
 
+    /// Taplo (the TOML server) gets farsub's schemas for its own files, so they're checked
+    /// and their keys complete with explanations; and, where the project root has no Taplo
+    /// config of its own, farsub's, so `.farsub-project` files are checked at all.
+    fn with_schemas(
+        &self,
+        mut server: crate::config::ServerConfig,
+        lang: &crate::config::LanguageConfig,
+        file: &Path,
+    ) -> crate::config::ServerConfig {
+        if server.name != "taplo" {
+            return server;
+        }
+        // The same root the client is started for (`Manager::client_for`).
+        let mut markers = server.root_markers.clone();
+        markers.extend(lang.roots.iter().cloned());
+        let root = crate::lsp::find_root(file, &markers);
+        let taplo_config = crate::schemas::taplo_config(&self.config, &root);
+        let defaults = [
+            (self.defaults_settings_path(), "settings.json"),
+            (self.defaults_keymap_path(), "keymap.json"),
+        ];
+        let assoc = crate::schemas::associations(&self.config, &defaults);
+        let Ok(toml::Value::Table(assoc)) = toml::Value::try_from(assoc) else {
+            return server;
+        };
+        let mut settings = match server.settings.take() {
+            Some(toml::Value::Table(t)) => t,
+            _ => toml::Table::new(),
+        };
+        let table = |t: &mut toml::Table, k: &str| -> toml::Table {
+            match t.remove(k) {
+                Some(toml::Value::Table(x)) => x,
+                _ => toml::Table::new(),
+            }
+        };
+        let mut ebt = table(&mut settings, "evenBetterToml");
+        let mut schema = table(&mut ebt, "schema");
+        let mut own = table(&mut schema, "associations");
+        // The user's own associations win.
+        for (k, v) in assoc {
+            own.entry(k).or_insert(v);
+        }
+        schema.insert("associations".into(), own.into());
+        ebt.insert("schema".into(), schema.into());
+        // `taplo.configFile.path`, unless the user's server settings already set one.
+        if let Some(path) = taplo_config {
+            let mut taplo = table(&mut ebt, "taplo");
+            let mut file = table(&mut taplo, "configFile");
+            if !file.contains_key("path") {
+                file.insert("path".into(), path.display().to_string().into());
+                file.entry("enabled").or_insert(true.into());
+            }
+            taplo.insert("configFile".into(), file.into());
+            ebt.insert("taplo".into(), taplo.into());
+        }
+        settings.insert("evenBetterToml".into(), ebt.into());
+        server.settings = Some(settings.into());
+        server
+    }
+
     pub(super) fn lsp_open(&mut self, i: usize) {
         let b = &self.buffers[i];
         let (Some(path), Some(lang)) = (b.path.clone(), b.lang.clone()) else {
@@ -79,6 +139,7 @@ impl App {
             .as_deref()
             .filter(|d| installer::installed_bin(d, &server).as_ref() == Some(&bin))
             .map(|d| installer::server_dir(d, &server.name));
+        let server = self.with_schemas(server, &cfg, &path);
         match self
             .lsp
             .client_for(&cfg, &server, &bin, install_dir.as_deref(), &path)
@@ -359,6 +420,19 @@ impl App {
 
     pub(super) fn on_notification(&mut self, cid: usize, method: &str, params: Value) {
         match method {
+            // Taplo found a document's schema (its settings arrive after the file was
+            // opened) but doesn't check it again on its own: send the text again.
+            "taplo/didChangeSchemaAssociation" => {
+                let path = (params.get("documentUri").and_then(|u| u.as_str()))
+                    .and_then(uri_to_path);
+                for b in &mut self.buffers {
+                    if b.lsp_client == Some(cid) && path.is_some() && b.path == path {
+                        b.lsp_dirty = true;
+                        b.lsp_full = true;
+                    }
+                }
+                self.sync_lsp();
+            }
             "textDocument/publishDiagnostics" => {
                 let Ok(p) = serde_json::from_value::<lt::PublishDiagnosticsParams>(params) else {
                     return;

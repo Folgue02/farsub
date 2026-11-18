@@ -152,10 +152,11 @@ mod tests {
             ctx.set_fonts(defs);
             let mut m = (0.0, 0.0);
             for _ in 0..2 {
-                let _ = ctx.run_ui(Default::default(), |ui| {
+                let mut out = ctx.run_ui(Default::default(), |ui| {
                     let font = egui::FontId::monospace(14.0);
                     m = ui.ctx().fonts_mut(|x| (x.glyph_width(&font, 'M'), x.row_height(&font)));
                 });
+                out.textures_delta.clear();
             }
             if !(m.0 > 0.0 && m.0.is_finite() && m.1 > 0.0 && m.1.is_finite()) {
                 bad.push((f.name.clone(), m));

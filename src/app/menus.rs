@@ -45,6 +45,7 @@ impl App {
             JumpBack => !self.jumps.is_empty(),
             SidebarPaste => self.file_clip.is_some(),
             RemovePackage => !self.packages.is_empty(),
+            OpenProjectInNewWindow => self.project_file_target().is_some(),
             _ => true,
         }
     }

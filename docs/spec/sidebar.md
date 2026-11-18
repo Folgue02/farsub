@@ -3,6 +3,16 @@
 - Files and folders matched by `.gitignore` (and `.git/info/exclude`) are listed but
   **dimmed**, as in Sublime 4 / VS Code; everything inside an ignored folder counts as
   ignored. This works whether or not the folder is a git repository.
+- **Slow (network) drives** (decided 2026-11-18, for Samba shares where Sublime freezes):
+  folders are listed in a background thread, one folder at a time as you open it, so
+  the window never waits on the drive. A rebuild of the tree waits up to 60 ms in all for
+  listings (a local folder is done by then, so it shows at once); a folder that takes
+  longer shows a dim "loading…" after its name and fills in when it arrives. Refreshing
+  (after saves and file operations) keeps the old entries on screen until the new
+  listing is in. Revealing a file waits for the folders on the way. Each listing is one
+  request to the drive: entry types come with the listing (only symlinks are looked up,
+  to see whether they point at a folder), and the .gitignore files are read from the
+  listed folder and its parents. A folder whose listing fails closes.
 
 - Every project folder is a top-level node. Keyboard: arrows/hjkl move and fold, Enter
   opens, Space marks, `a` new file, `A` new folder, `r` rename/move, `c`/`x`/`p`

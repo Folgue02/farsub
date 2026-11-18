@@ -222,10 +222,10 @@ impl App {
                     _ => self.msg("Select a project folder in the sidebar first"),
                 }
             }
+            NewProject => self.open_new_project(),
+            OpenProjectInNewWindow => self.open_project_in_new_window(),
             EditProject => match self.project.file.clone() {
-                Some(f) => {
-                    self.open_file(&f, true);
-                }
+                Some(f) => self.open_project_editor(&f),
                 None => {
                     self.msg("This window has no project file yet — Project › Save Project As…")
                 }

@@ -125,6 +125,16 @@ pub struct Gui {
     last_cursor: Option<(usize, Pos, i32)>,
     /// Alt+drag column selection: where it started (line, display column).
     col_drag: Option<(usize, usize)>,
+    /// Mouse selection in progress: the press's click count (1 characters, 2 words,
+    /// 3 lines) and what the press selected, which dragging extends from.
+    sel_drag: Option<(u32, Pos, Pos)>,
+    /// The last press in an editor (when, where, click count): double and triple clicks
+    /// are counted on the press (egui counts them on release, too late to drag by word).
+    last_press: Option<(Instant, Pos2, u32)>,
+    /// Where the pointer last was during a selection drag (it may be outside the window)
+    /// and when the view may next scroll toward it.
+    drag_pt: Option<Pos2>,
+    autoscroll_at: Instant,
     /// Caret position/version and when it last changed: the blink phase restarts there so
     /// the caret is solid while typing or moving.
     caret_mark: (Option<(usize, Pos, i32)>, Instant),
@@ -218,6 +228,10 @@ impl Gui {
             term_scroll_acc: 0.0,
             last_cursor: None,
             col_drag: None,
+            sel_drag: None,
+            last_press: None,
+            drag_pt: None,
+            autoscroll_at: Instant::now(),
             caret_mark: (None, Instant::now()),
             vscroll_grab: None,
             hscroll_grab: None,
@@ -300,6 +314,8 @@ impl Gui {
             self.app.on_app_event(ev);
             any = true;
         }
+        // Sidebar folders listed in the background.
+        any |= self.app.tree.poll();
         self.app.sync_lsp();
         any
     }

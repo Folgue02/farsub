@@ -16,7 +16,12 @@
   bindings are added to the defaults; one for the same keys replaces it. Saving applies
   it; every window also checks `keymap.toml` about once a second, like the settings file.
   Running Settings or Key Bindings inside that window opens the other pair there too;
-  the window closes when the last pair does.
+  the window closes when the last pair does. Project › Edit Project is the same kind of
+  window for a project file (see [Projects](projects.md)).
+- With taplo installed (it installs itself on the first TOML file when `auto_install` is
+  on), these files are checked against farsub's schemas: a misspelled setting or an
+  unknown command id is an error, keys complete, and hovering one explains it (see
+  [Language servers](language-servers.md)).
 - **Config folder created on first start** (decided 2026-11-15): if the settings file
   doesn't exist, farsub creates its folder and a starter `config.toml`, so a new user always
   has one to open. Standard places per platform: `%APPDATA%\farsub` on Windows (data in
@@ -44,6 +49,13 @@
   the cursor off such a line without pressing Enter leaves it as it is (Sublime trims
   then too).
 
+- **Mouse selection** (decided 2026-11-18, as in Sublime and VS Code): the caret goes
+  where the button went down, so a drag can start on a line's first character. Double-
+  click and drag extends by whole words, triple-click and drag by whole lines, always
+  keeping the word or line first clicked (also when dragging backwards). Clicks are
+  counted on the press (within 0.5 s and a few pixels of the last one). Dragging past
+  the top or bottom of the pane, also outside the window, keeps selecting and scrolls
+  toward the pointer, faster the further away it is, until the button is released.
 - Mouse pointer: I-beam over text, normal arrow over selected text (Sublime), arrow over
   the gutter.
 - Indentation: detected per file on open (tabs vs spaces; space width from the most common
@@ -78,7 +90,9 @@
   it per file, remembered in the workspace. **Differs from Sublime**, whose default
   `"auto"` wraps only prose (Markdown, plain text); here the default is on everywhere.
 - **Files deleted on disk** while open (checked about once a second while the window is
-  in use, and when it regains focus): the tab shows a red "(deleted)", the window title
+  in use, and when it regains focus; the check runs in a background thread, so a slow
+  network drive doesn't freeze the window, and a result for a file that was saved or
+  renamed meanwhile is dropped): the tab shows a red "(deleted)", the window title
   says "(deleted)", the status bar says so once, and the sidebar stops listing it. The
   buffer keeps its contents and counts as unsaved (as in Sublime), so hot exit keeps them
   across restarts. Closing it asks "…no longer exists on disk. Close it and lose its

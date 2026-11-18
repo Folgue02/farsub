@@ -2,7 +2,21 @@ name = "taplo"
 command = "taplo"
 args = ["lsp", "stdio"]
 root_markers = [".taplo.toml", "taplo.toml"]
-description = "TOML language server (Taplo)"
+description = "TOML language server (Taplo); checks farsub's own config files against their schemas"
 
-[install]
-npm = ["@taplo/cli"]
+# farsub adds `evenBetterToml.schema.associations` for its own files (settings, key
+# bindings, projects, languages/, servers/) when it starts the server.
+[settings.evenBetterToml.schema]
+enabled = true
+
+# The npm package (@taplo/cli) is built without the language server: use the release
+# binary.
+[install.github]
+repo = "tamasfe/taplo"
+[install.github.assets]
+macos-aarch64 = "taplo-darwin-aarch64.gz"
+macos-x86_64 = "taplo-darwin-x86_64.gz"
+linux-x86_64 = "taplo-linux-x86_64.gz"
+linux-aarch64 = "taplo-linux-aarch64.gz"
+windows-x86_64 = "taplo-windows-x86_64.zip"
+windows-aarch64 = "taplo-windows-aarch64.zip"

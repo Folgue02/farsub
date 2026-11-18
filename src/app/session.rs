@@ -52,6 +52,7 @@ impl App {
         self.tree.expanded.clear();
         self.tree_revealed = None;
         self.project = p;
+        self.project_stamp = self.project_stamp_now();
         // Reload config so the previous project's settings don't leak into this one.
         let data = self.config.data_dir.clone();
         let path = self.config.path.clone();
@@ -77,17 +78,46 @@ impl App {
         {
             self.msg(format!("Couldn't update {}: {e}", f.display()));
         }
+        self.project_stamp = self.project_stamp_now();
         self.tree
             .set_roots(self.project.folders.clone(), self.show_hidden);
         self.files.clear();
         self.sidebar_visible = !self.project.folders.is_empty();
     }
 
-    /// The project file was edited in farsub: apply folders and settings in place.
+    pub(super) fn project_stamp_now(&self) -> Option<fileops::DiskStamp> {
+        self.project.file.as_deref().and_then(fileops::DiskStamp::of)
+    }
+
+    /// The project file changed on disk (saved in the Edit Project window, or by hand):
+    /// apply it. True if it did.
+    pub(super) fn check_project_file(&mut self) -> bool {
+        let Some(f) = self.project.file.clone() else {
+            return false;
+        };
+        let now = self.project_stamp_now();
+        if now == self.project_stamp || now.is_none() {
+            return false;
+        }
+        self.project_stamp = now;
+        // An open, edited copy here is saved (and applied) by this window itself.
+        if self
+            .buffers
+            .iter()
+            .any(|b| b.modified && b.path.as_deref() == Some(f.as_path()))
+        {
+            return false;
+        }
+        self.reload_project_file();
+        true
+    }
+
+    /// The project file was edited: apply folders and settings in place.
     pub(super) fn reload_project_file(&mut self) {
         let Some(f) = self.project.file.clone() else {
             return;
         };
+        self.project_stamp = self.project_stamp_now();
         match Project::load(&f) {
             Ok(p) => {
                 self.project = p;

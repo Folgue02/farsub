@@ -173,13 +173,23 @@ impl Gui {
                 // Matched by .gitignore: listed, but dimmed (like Sublime / VS Code).
                 col = mix(col, c.side, 0.5);
             }
-            row_clip.text(
+            let name_r = row_clip.text(
                 Pos2::new(x + 33.0, full.center().y),
                 Align2::LEFT_CENTER,
                 &n.name,
                 ui_font.clone(),
                 fade(col),
             );
+            if n.is_dir && t.is_loading(&n.path) {
+                // A slow (network) folder still being listed.
+                row_clip.text(
+                    Pos2::new(name_r.right() + 8.0, full.center().y),
+                    Align2::LEFT_CENTER,
+                    "loading…",
+                    FontId::proportional(11.5),
+                    fade(c.dim),
+                );
+            }
             if i == t.sel {
                 self.sidebar_sel_px = Some(Pos2::new(rr.left() + 24.0, rr.bottom()));
             }

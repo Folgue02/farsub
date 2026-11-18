@@ -1031,20 +1031,25 @@ fn switch_save_and_edit_projects() {
     steps(&mut h, 2);
     assert_eq!(h.state().app.project.folders.len(), 2);
     assert!(std::fs::read_to_string(&file).unwrap().contains("../extra"));
-    // Edit Project, change settings, save → applied without reopening.
+    // Edit Project opens its own window (like Preferences: Settings)…
     h.state_mut().app.run(crate::commands::Command::EditProject);
-    assert_eq!(
-        h.state().app.buf().unwrap().path.as_deref(),
-        Some(file.as_path())
-    );
+    let spawned = h.state().app.spawned.last().cloned().unwrap();
+    assert_eq!(spawned[..2], ["--edit-project".into(), file.clone().into_os_string()]);
+    // …where saving it applies it here without reopening.
+    let text = std::fs::read_to_string(&file).unwrap() + "\n[settings]\nfont_size = 18.0\n";
+    std::fs::write(&file, text).unwrap();
+    assert!(wait(&mut h, 5, |g| g.app.font_size == 18.0), "{:?}", h.state().app.status);
+    // Edited and saved in this window works too.
+    h.state_mut().app.open_file(&file, true);
     h.state_mut().app.buf_mut().unwrap().move_doc(true, false);
     h.state_mut()
         .app
         .buf_mut()
         .unwrap()
-        .insert_text("\n[settings]\nfont_size = 18.0\n");
+        .insert_text("tab_size = 3\n");
     press(&mut h, CMD, Key::S);
-    assert_eq!(h.state().app.font_size, 18.0, "{:?}", h.state().app.status);
+    assert_eq!(h.state().app.config.editor.tab_size, 3, "{:?}", h.state().app.status);
+    press(&mut h, CMD, Key::W);
     // Remove Folder (selected in the sidebar) updates the file again.
     let extra = d.join("extra");
     h.state_mut().app.tree.reveal(&extra);
@@ -4097,4 +4102,314 @@ fn goto_symbol_shows_kind_icons() {
     assert_eq!(icon_of("x"), Some("field"), "{got:?}");
     assert_eq!(icon_of("Color"), Some("enum"), "{got:?}");
     shot(&mut h, "goto_symbol_icons");
+}
+
+/// Project › Edit Project's window: the example project (read-only) beside the project
+/// file, both highlighted as TOML.
+#[test]
+fn edit_project_window() {
+    let d = project("editproj", &[("app/x.txt", "x\n")]);
+    let file = d.join("app/My.farsub-project");
+    std::fs::write(&file, "[[folders]]\npath = \".\"\n").unwrap();
+    let mut h = harness(&d);
+    h.state_mut().app.settings_window = true;
+    h.state_mut().app.open_project_here(&file);
+    steps(&mut h, 2);
+    {
+        let app = &h.state().app;
+        assert_eq!((app.layout, app.group), (2, 1));
+        let right = app.buf().unwrap();
+        assert_eq!(right.path.as_deref(), Some(file.as_path()));
+        assert!(!right.read_only);
+        let left = &app.buffers[app.group_shown(0).unwrap()];
+        assert_eq!(left.name(), "Example Project.farsub-project");
+        assert!(left.read_only);
+        assert_eq!(left.lang.as_deref(), Some("toml"));
+        assert_eq!(right.lang.as_deref(), Some("toml"));
+    }
+    shot(&mut h, "edit_project_side_by_side");
+    // Closing the project file closes the pair, and the window with it.
+    press(&mut h, CMD, Key::W);
+    assert!(h.state().app.quit);
+}
+
+fn taplo_available() -> bool {
+    std::process::Command::new("taplo")
+        .arg("--version")
+        .output()
+        .is_ok()
+}
+
+/// Taplo checks the settings file against farsub's schema: a misspelled setting is an
+/// error, and hovering a setting explains it.
+#[test]
+fn taplo_checks_settings_against_the_schema() {
+    if !taplo_available() {
+        eprintln!("taplo not found; skipping");
+        return;
+    }
+    let d = project("taplo", &[]);
+    let cfg = d.join(".farsub-test-config.toml");
+    std::fs::write(&cfg, "[editor]\ntab_size = 2\nfont_sise = 12\n").unwrap();
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&cfg, true);
+    assert!(
+        wait(&mut h, 20, |g| g.app.diagnostics.get(&cfg).is_some_and(|d| d
+            .iter()
+            .any(|x| x.severity == 1 && x.start.line == 2))),
+        "{:?}",
+        h.state().app.diagnostics.get(&cfg)
+    );
+    h.state_mut()
+        .app
+        .buf_mut()
+        .unwrap()
+        .goto(crate::editor::Pos::new(1, 2));
+    h.state_mut().app.run(crate::commands::Command::Hover);
+    assert!(
+        wait(&mut h, 10, |g| g.app.hover.as_ref().is_some_and(|hv| hv
+            .lines
+            .iter()
+            .any(|l| l.contains("Columns per indentation level")))),
+        "{:?}",
+        h.state().app.hover.as_ref().map(|h| &h.lines)
+    );
+    shot(&mut h, "taplo_settings_hover");
+    // A project file isn't `*.toml`, but farsub's Taplo config includes it: it's checked
+    // (not "this document has been excluded").
+    let proj = d.join("App.farsub-project");
+    std::fs::write(&proj, "[[folders]]\npaht = \".\"\n").unwrap();
+    h.state_mut().app.open_file(&proj, true);
+    assert!(
+        wait(&mut h, 20, |g| g.app.diagnostics.get(&proj).is_some_and(|d| d
+            .iter()
+            .any(|x| x.severity == 1 && x.start.line == 1))),
+        "{:?}",
+        h.state().app.diagnostics.get(&proj)
+    );
+}
+
+/// Project › New Project: the example beside a new, unsaved project file; saving it makes
+/// a `.farsub-project`, which then opens in a new window.
+#[test]
+fn new_project_window() {
+    use crate::app::FileRequest;
+    use crate::commands::Command;
+    let d = project("newproj", &[]);
+    let mut h = harness(&d);
+    // From a normal window it's a window of its own.
+    h.state_mut().app.run(Command::NewProject);
+    assert_eq!(h.state().app.spawned.last().unwrap()[0], "--new-project");
+    h.state_mut().app.settings_window = true;
+    h.state_mut().app.run(Command::NewProject);
+    steps(&mut h, 2);
+    let id = {
+        let app = &h.state().app;
+        assert_eq!((app.layout, app.group), (2, 1));
+        let right = app.buf().unwrap();
+        assert!(right.path.is_none());
+        assert_eq!(right.lang.as_deref(), Some("toml"));
+        assert!(right.lines.iter().any(|l| l.starts_with("[[folders]]")));
+        let left = &app.buffers[app.group_shown(0).unwrap()];
+        assert_eq!(left.name(), "Example Project.farsub-project");
+        assert!(left.read_only);
+        right.id
+    };
+    shot(&mut h, "new_project_side_by_side");
+    // Not a project file yet: nothing to open.
+    assert!(!h.state().app.enabled(Command::OpenProjectInNewWindow));
+    let (_, name) = h.state().app.picker_start(FileRequest::SaveAs(id));
+    assert_eq!(name.as_deref(), Some("New Project.farsub-project"));
+    // Saved without the extension: it's added.
+    h.state_mut()
+        .app
+        .path_picked(FileRequest::SaveAs(id), &d.join("Mine"));
+    let file = d.join("Mine.farsub-project");
+    assert!(file.is_file(), "{:?}", h.state().app.status);
+    let p = crate::project::Project::load(&file).unwrap();
+    assert_eq!(p.folders.len(), 1);
+    assert!(h.state().app.status.as_ref().unwrap().0.contains("Open This Project in New Window"));
+    h.state_mut().app.run(Command::OpenProjectInNewWindow);
+    let spawned = h.state().app.spawned.last().unwrap();
+    assert_eq!(spawned[0], file.as_os_str());
+    assert!(spawned.iter().any(|a| a == "--config"));
+}
+
+/// Right-clicking a project file in the sidebar offers to open it in a new window; other
+/// files don't show the item.
+#[test]
+fn open_project_from_the_sidebar() {
+    use crate::commands::Command;
+    let d = project(
+        "sideproj",
+        &[("App.farsub-project", "[[folders]]\npath = \".\"\n"), ("a.txt", "x\n")],
+    );
+    let mut h = harness(&d);
+    let has_item = |h: &mut Harness<'static, Gui>, f: &str| {
+        let app = &mut h.state_mut().app;
+        app.tree.reveal(&d.join(f));
+        app.focus = crate::app::Focus::Sidebar;
+        app.open_context_menu(crate::menu::ContextKind::Sidebar, (100.0, 100.0));
+        let cm = app.context_menu.as_ref().unwrap();
+        let found = cm.items.iter().position(|i| {
+            i.as_ref().is_some_and(|i| i.cmd == Command::OpenProjectInNewWindow)
+        });
+        // Never two separators in a row, or one at an end.
+        assert!(cm.items.first().unwrap().is_some() && cm.items.last().unwrap().is_some());
+        assert!(!cm.items.windows(2).any(|w| w[0].is_none() && w[1].is_none()));
+        found
+    };
+    assert!(has_item(&mut h, "a.txt").is_none());
+    let i = has_item(&mut h, "App.farsub-project").expect("offered for a project file");
+    steps(&mut h, 2);
+    shot(&mut h, "open_project_context_menu");
+    h.state_mut().app.context_activate(i);
+    assert_eq!(
+        h.state().app.spawned.last().unwrap()[0],
+        d.join("App.farsub-project").canonicalize().unwrap().as_os_str()
+    );
+}
+
+/// `index = false` on a project folder: Goto Anything offers what the sidebar has listed
+/// instead of reading the whole folder.
+#[test]
+fn unindexed_folder_offers_listed_files() {
+    let d = project(
+        "noindex",
+        &[("top.txt", "x\n"), ("sub/inner.txt", "y\n")],
+    );
+    let file = d.join("Share.farsub-project");
+    std::fs::write(&file, "[[folders]]\npath = \".\"\nindex = false\n").unwrap();
+    let p = crate::project::Project::load(&file).unwrap();
+    assert!(!p.folders[0].indexed());
+    let mut h = project_harness(p, test_config(&d));
+    press(&mut h, CMD, Key::P);
+    let labels = |h: &Harness<'static, Gui>| -> Vec<String> {
+        match &h.state().app.modal {
+            Some(Modal::Palette(p)) => p.items.iter().map(|i| i.label.clone()).collect(),
+            _ => vec![],
+        }
+    };
+    let l = labels(&h);
+    assert!(l.contains(&"top.txt".to_string()), "{l:?}");
+    assert!(!l.contains(&"sub/inner.txt".to_string()), "sub isn't listed yet: {l:?}");
+    assert!(matches!(&h.state().app.modal, Some(Modal::Palette(p)) if !p.loading && p.title.contains("listed files only")));
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    // Once the sidebar has listed sub/, its files are offered too.
+    h.state_mut().app.tree.reveal(&d.join("sub/inner.txt"));
+    press(&mut h, CMD, Key::P);
+    assert!(labels(&h).contains(&"sub/inner.txt".to_string()));
+}
+
+/// A slow drive in the sidebar: the folder shows "loading…" rather than freezing.
+#[test]
+fn slow_folder_shows_loading_in_the_sidebar() {
+    let d = project("slowside", &[("a.txt", "x\n"), ("sub/b.txt", "y\n")]);
+    let mut h = harness(&d);
+    {
+        let t = &mut h.state_mut().app.tree;
+        t.list_delay = Duration::from_millis(800);
+        t.quick = Duration::from_millis(10);
+        t.refresh();
+    }
+    let sub = d.join("sub");
+    h.state_mut().app.tree.reveal(&sub.join("b.txt"));
+    steps(&mut h, 2);
+    assert!(h.state().app.tree.is_loading(&sub));
+    shot(&mut h, "sidebar_loading");
+    assert!(wait(&mut h, 5, |g| g.app.tree.selected_path() == Some(sub.join("b.txt").as_path())));
+}
+
+fn mouse(h: &mut Harness<'static, Gui>, pos: egui::Pos2, pressed: bool) {
+    h.event(Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    });
+    steps(h, 1);
+}
+
+/// Dragging selects from the character the button went down on, a double-click-drag
+/// selects whole words and a triple one whole lines, and dragging below the window keeps
+/// selecting and scrolls.
+#[test]
+fn mouse_selection_by_character_word_line_and_outside() {
+    let mut text = String::from("alpha beta gamma\n");
+    for i in 0..200 {
+        text.push_str(&format!("line {i}\n"));
+    }
+    let d = project("mousesel", &[("a.txt", &text)]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    let at = |h: &Harness<'static, Gui>, line, col| h.state().pos_px_for_test(line, col);
+    let sel = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().selected_text();
+
+    // From the very first character.
+    let (cw, _, _) = h.state().text_metrics_for_test();
+    let from = at(&h, 0, 0) + egui::Vec2::new(cw * 0.3, 0.0);
+    let to = at(&h, 0, 5);
+    drag(&mut h, from, to);
+    assert_eq!(sel(&h).as_deref(), Some("alpha"));
+
+    // Double-click and drag: word by word.
+    let beta = at(&h, 0, 7);
+    click(&mut h, beta);
+    h.event(Event::PointerMoved(beta));
+    mouse(&mut h, beta, true);
+    assert_eq!(sel(&h).as_deref(), Some("beta"), "the second press selects the word");
+    for k in 1..=4 {
+        let gamma = at(&h, 0, 12);
+        h.event(Event::PointerMoved(beta + (gamma - beta) * (k as f32 / 4.0)));
+        steps(&mut h, 1);
+    }
+    assert_eq!(sel(&h).as_deref(), Some("beta gamma"));
+    let back = at(&h, 0, 2);
+    h.event(Event::PointerMoved(back));
+    steps(&mut h, 1);
+    assert_eq!(sel(&h).as_deref(), Some("alpha beta"), "backwards keeps the first word");
+    mouse(&mut h, back, false);
+
+    // Triple-click and drag: line by line.
+    let l2 = at(&h, 2, 2);
+    click(&mut h, l2);
+    click(&mut h, l2);
+    h.event(Event::PointerMoved(l2));
+    mouse(&mut h, l2, true);
+    assert_eq!(sel(&h).as_deref(), Some("line 1\n"));
+    let (l3, l4) = (at(&h, 3, 1), at(&h, 4, 1));
+    h.event(Event::PointerMoved(l3));
+    steps(&mut h, 1);
+    h.event(Event::PointerMoved(l4));
+    steps(&mut h, 1);
+    assert_eq!(sel(&h).as_deref(), Some("line 1\nline 2\nline 3\n"));
+    mouse(&mut h, l4, false);
+
+    // Below the window: the selection keeps growing while the pointer stays there.
+    std::thread::sleep(Duration::from_millis(600));
+    let start = at(&h, 6, 2);
+    h.event(Event::PointerMoved(start));
+    steps(&mut h, 1);
+    mouse(&mut h, start, true);
+    let outside = egui::Pos2::new(start.x, 900.0);
+    for k in 1..=4 {
+        h.event(Event::PointerMoved(start + (outside - start) * (k as f32 / 4.0)));
+        steps(&mut h, 1);
+    }
+    h.event(Event::PointerGone);
+    let line_then = h.state().app.buf().unwrap().cursor.line;
+    for _ in 0..8 {
+        std::thread::sleep(Duration::from_millis(45));
+        steps(&mut h, 1);
+    }
+    let b = h.state().app.buf().unwrap();
+    assert!(b.scroll_y > 0, "the view scrolled");
+    assert!(b.cursor.line > line_then + 4, "{} -> {}", line_then, b.cursor.line);
+    assert_eq!(b.selection().unwrap().0, Pos::new(6, 2));
+    mouse(&mut h, outside, false);
+    let line_up = h.state().app.buf().unwrap().cursor.line;
+    std::thread::sleep(Duration::from_millis(100));
+    steps(&mut h, 3);
+    assert_eq!(h.state().app.buf().unwrap().cursor.line, line_up, "released: it stops");
 }

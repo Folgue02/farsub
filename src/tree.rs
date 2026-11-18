@@ -1,9 +1,16 @@
 //! Sidebar file tree. Each project folder is a top-level node (like Sublime's FOLDERS);
 //! listings are read lazily and cached, and only expanded folders are flattened into the
 //! visible node list. Project exclude patterns hide matching entries.
+//!
+//! Folders are listed in a background thread, so a slow (network) drive never freezes the
+//! window: the tree waits a moment for each listing (a local folder is done by then, so it
+//! shows at once) and otherwise marks the folder "loading…" and fills it in when it
+//! arrives. Refreshing keeps showing the old listing until the new one is in.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use crate::project::Folder;
@@ -30,7 +37,26 @@ pub struct Tree {
     pub expanded: HashSet<PathBuf>,
     /// Multi-selection for file operations.
     pub marked: HashSet<PathBuf>,
-    cache: HashMap<PathBuf, Vec<(String, bool, bool)>>,
+    cache: HashMap<PathBuf, Entries>,
+    /// Listings from before a refresh, shown until the new ones arrive.
+    stale: HashMap<PathBuf, Entries>,
+    /// Folders being listed in the background.
+    loading: HashSet<PathBuf>,
+    /// Bumped when listings are thrown away (refresh), so late ones are ignored.
+    generation: u64,
+    listed_tx: Sender<Listing>,
+    listed_rx: Receiver<Listing>,
+    /// A `reveal` waiting for a folder on the way to be listed.
+    reveal_pending: Option<PathBuf>,
+    /// Wakes the window when a background listing arrives.
+    pub waker: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// How long a rebuild waits for listings (all of them together) before showing
+    /// "loading…" for the rest.
+    pub quick: Duration,
+    /// The current rebuild's wait ends here.
+    deadline: Option<Instant>,
+    /// Test hook: every listing takes at least this long (a slow drive).
+    pub list_delay: Duration,
     show_hidden: bool,
     /// Folder open/close animations: folder → (start, opening).
     pub anims: HashMap<PathBuf, (Instant, bool)>,
@@ -44,9 +70,26 @@ fn ease(t: f32) -> f32 {
 
 const ALWAYS_HIDDEN: &[&str] = &[".git", ".DS_Store", ".hg", ".svn"];
 
+/// A folder's entries: (name, is_dir, ignored), folders first.
+type Entries = Vec<(String, bool, bool)>;
+/// A finished background listing: (generation, folder, entries; None if unreadable).
+type Listing = (u64, PathBuf, Option<Entries>);
+
 impl Tree {
     pub fn new() -> Self {
+        let (listed_tx, listed_rx) = channel();
         Tree {
+            stale: HashMap::new(),
+            loading: HashSet::new(),
+            generation: 0,
+            listed_tx,
+            listed_rx,
+            reveal_pending: None,
+            waker: None,
+            // Tests wait longer, so a busy machine doesn't turn local folders "loading".
+            quick: Duration::from_millis(if cfg!(test) { 3000 } else { 60 }),
+            list_delay: Duration::ZERO,
+            deadline: None,
             roots: vec![],
             nodes: vec![],
             sel: 0,
@@ -80,8 +123,17 @@ impl Tree {
         }
         self.roots = roots;
         self.show_hidden = show_hidden;
-        self.cache.clear();
+        self.forget_listings();
+        self.stale.clear();
+        self.reveal_pending = None;
         self.rebuild();
+    }
+
+    /// Drop every listing (and ignore the ones still running).
+    fn forget_listings(&mut self) {
+        self.generation += 1;
+        self.loading.clear();
+        self.cache.clear();
     }
 
     pub fn is_root(&self, p: &Path) -> bool {
@@ -96,42 +148,105 @@ impl Tree {
             .max_by_key(|r| r.path.components().count())
     }
 
-    fn children(&mut self, dir: &Path) -> &[(String, bool, bool)] {
-        let show_hidden = self.show_hidden;
-        let folder = self.root_of(dir).cloned();
-        self.cache.entry(dir.to_path_buf()).or_insert_with(|| {
-            let kept = not_ignored(dir);
-            let mut v: Vec<(String, bool, bool)> = std::fs::read_dir(dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .filter_map(|e| {
-                            let name = e.file_name().to_string_lossy().into_owned();
-                            if ALWAYS_HIDDEN.contains(&name.as_str())
-                                || name.ends_with(".farsub-workspace")
-                                || (!show_hidden && name.starts_with('.'))
-                            {
-                                return None;
-                            }
-                            // Follow symlinks so linked folders expand.
-                            let is_dir = std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir());
-                            if folder.as_ref().is_some_and(|f| f.excluded(&name, is_dir)) {
-                                return None;
-                            }
-                            let ignored = !kept.contains(&name);
-                            Some((name, is_dir, ignored))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            v.sort_by(|a, b| {
-                b.1.cmp(&a.1)
-                    .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+    /// A folder's entries: listed already, or listed now in the background (waiting up to
+    /// `quick` for it); while it's still loading, the old listing if there is one.
+    fn children(&mut self, dir: &Path) -> Entries {
+        if let Some(v) = self.cache.get(dir) {
+            return v.clone();
+        }
+        if self.loading.insert(dir.to_path_buf()) {
+            let (tx, generation, d) = (self.listed_tx.clone(), self.generation, dir.to_path_buf());
+            let (folder, show_hidden) = (self.root_of(dir).cloned(), self.show_hidden);
+            let (wake, delay) = (self.waker.clone(), self.list_delay);
+            std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                let v = list_dir(&d, folder.as_ref(), show_hidden);
+                let _ = tx.send((generation, d, v));
+                if let Some(w) = wake {
+                    w();
+                }
             });
-            v
-        })
+            let until = self.deadline.unwrap_or_else(|| Instant::now() + self.quick);
+            while !self.cache.contains_key(dir) {
+                let left = until.saturating_duration_since(Instant::now());
+                match self.listed_rx.recv_timeout(left) {
+                    Ok(r) => self.store(r),
+                    Err(_) => break,
+                }
+            }
+            if let Some(v) = self.cache.get(dir) {
+                return v.clone();
+            }
+        }
+        self.stale.get(dir).cloned().unwrap_or_default()
+    }
+
+    /// Keep a finished listing (unless it's from before a refresh).
+    fn store(&mut self, (generation, dir, v): Listing) {
+        if generation != self.generation {
+            return;
+        }
+        self.loading.remove(&dir);
+        self.stale.remove(&dir);
+        if v.is_none() && !self.is_root(&dir) {
+            // Gone (or unreadable): don't keep it open.
+            self.expanded.remove(&dir);
+        }
+        self.cache.insert(dir, v.unwrap_or_default());
+    }
+
+    /// Take in listings that finished in the background. True if the tree changed.
+    pub fn poll(&mut self) -> bool {
+        let mut got = false;
+        while let Ok(r) = self.listed_rx.try_recv() {
+            got |= r.0 == self.generation;
+            self.store(r);
+        }
+        if got {
+            self.rebuild();
+            if let Some(p) = self.reveal_pending.take() {
+                self.reveal(&p);
+            }
+        }
+        got
+    }
+
+    /// The folder is open but its listing hasn't arrived yet.
+    pub fn is_loading(&self, dir: &Path) -> bool {
+        self.loading.contains(dir) && !self.cache.contains_key(dir)
+    }
+
+    /// Files listed so far under a project folder, relative to it (Goto Anything for a
+    /// folder with `index = false`).
+    pub fn known_files(&self, root: &Path) -> Vec<String> {
+        let mut out: Vec<String> = (self.cache.iter().chain(&self.stale))
+            .filter(|(d, _)| d.starts_with(root))
+            .flat_map(|(d, v)| {
+                v.iter().filter(|e| !e.1).filter_map(move |e| {
+                    let rel = d.join(&e.0);
+                    let rel = rel.strip_prefix(root).ok()?;
+                    Some(rel.to_string_lossy().replace('\\', "/"))
+                })
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub fn rebuild(&mut self) {
+        // Many open folders on a slow drive wait once, not once each.
+        let outer = self.deadline.is_none();
+        if outer {
+            self.deadline = Some(Instant::now() + self.quick);
+        }
+        self.rebuild_nodes();
+        if outer {
+            self.deadline = None;
+        }
+    }
+
+    fn rebuild_nodes(&mut self) {
         let keep = self.selected_path().map(Path::to_path_buf);
         let mut out = vec![];
         for r in self.roots.clone() {
@@ -162,7 +277,7 @@ impl Tree {
             .rev()
             .find(|n| n.path == dir)
             .is_some_and(|n| n.ignored);
-        let kids = self.children(dir).to_vec();
+        let kids = self.children(dir);
         for (name, is_dir, ignored) in kids {
             let path = dir.join(&name);
             let open = is_dir && self.expanded.contains(&path);
@@ -181,10 +296,13 @@ impl Tree {
     }
 
     /// Re-read directories from disk (after saves and file operations).
+    /// Folders that turn out to be gone close when their listing fails (no check per
+    /// open folder here, which would wait on a slow drive).
     pub fn refresh(&mut self) {
         self.anims.clear();
-        self.cache.clear();
-        self.expanded.retain(|p| p.is_dir());
+        let old = std::mem::take(&mut self.cache);
+        self.forget_listings();
+        self.stale.extend(old);
         self.marked.retain(|p| p.exists());
         self.rebuild();
     }
@@ -407,9 +525,18 @@ impl Tree {
             self.expanded.insert(cur.clone());
         }
         self.rebuild();
+        self.reveal_pending = None;
         if let Some(i) = self.nodes.iter().position(|n| n.path == path) {
             self.sel = i;
             self.follow = true;
+        } else if path
+            .ancestors()
+            .skip(1)
+            .take_while(|a| a.starts_with(&root))
+            .any(|a| self.is_loading(a))
+        {
+            // A folder on the way is still being listed: finish when it arrives.
+            self.reveal_pending = Some(path.to_path_buf());
         }
     }
 
@@ -445,6 +572,48 @@ mod tests {
             .iter()
             .map(|n| format!("{}{}", "  ".repeat(n.depth), n.name))
             .collect()
+    }
+
+    /// A slow drive: folders show "loading…" instead of freezing, fill in when listed, keep
+    /// their old entries while refreshing, and a reveal waits for the folders on the way.
+    #[test]
+    fn slow_listings_load_in_the_background() {
+        let d = tmp("slow");
+        std::fs::create_dir_all(d.join("src/deep")).unwrap();
+        std::fs::write(d.join("a.txt"), "").unwrap();
+        std::fs::write(d.join("src/deep/x.rs"), "").unwrap();
+        let mut t = Tree::new();
+        t.anim = Duration::ZERO;
+        t.list_delay = Duration::from_millis(300);
+        t.quick = Duration::from_millis(20);
+        let poll_until = |t: &mut Tree, f: &dyn Fn(&Tree) -> bool| {
+            let end = Instant::now() + Duration::from_secs(5);
+            while !f(t) && Instant::now() < end {
+                t.poll();
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            f(t)
+        };
+        let started = Instant::now();
+        t.set_roots(vec![Folder::plain(d.clone())], false);
+        assert!(started.elapsed() < Duration::from_millis(200), "waited for the drive");
+        assert_eq!(t.nodes.len(), 1, "only the root while it lists");
+        assert!(t.is_loading(&d));
+        assert!(poll_until(&mut t, &|t| t.nodes.len() == 3), "src and a.txt arrive");
+        assert!(!t.is_loading(&d));
+        // Reveal through two folders that aren't listed yet.
+        let x = d.join("src/deep/x.rs");
+        t.reveal(&x);
+        assert!(poll_until(&mut t, &|t| t.selected_path() == Some(x.as_path())));
+        // Refreshing keeps the rows while the new listings load.
+        let rows = t.nodes.len();
+        t.refresh();
+        assert_eq!(t.nodes.len(), rows);
+        assert!(t.is_loading(&d));
+        assert!(poll_until(&mut t, &|t| !t.is_loading(&d)));
+        assert_eq!(t.nodes.len(), rows);
+        // What's listed is known to Goto Anything for unindexed folders.
+        assert_eq!(t.known_files(&d), ["a.txt", "src/deep/x.rs"]);
     }
 
     #[test]
@@ -498,6 +667,7 @@ mod tests {
                 name: Some("App".into()),
                 folder_exclude_patterns: vec!["target".into()],
                 file_exclude_patterns: vec!["*.min.js".into()],
+                index: None,
             },
         );
         let mut t = Tree::new();
@@ -550,20 +720,76 @@ mod tests {
     }
 }
 
-/// Names in `dir` that no .gitignore (in it or its parents, git repository or not)
-/// excludes. Hidden files are judged by .gitignore only, not by being hidden.
-fn not_ignored(dir: &Path) -> HashSet<String> {
-    ignore::WalkBuilder::new(dir)
-        .max_depth(Some(1))
-        .hidden(false)
-        .git_ignore(true)
-        .git_exclude(true)
-        .git_global(false)
-        .ignore(false)
-        .require_git(false)
-        .build()
-        .flatten()
-        .filter(|e| e.depth() == 1)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect()
+/// List one folder (in a background thread). None if it can't be read.
+fn list_dir(dir: &Path, folder: Option<&Folder>, show_hidden: bool) -> Option<Entries> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    let ignores = Ignores::for_dir(dir);
+    let mut v: Entries = rd
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if ALWAYS_HIDDEN.contains(&name.as_str())
+                || name.ends_with(".farsub-workspace")
+                || (!show_hidden && name.starts_with('.'))
+            {
+                return None;
+            }
+            // The listing itself says what each entry is: no extra request per entry,
+            // which is what makes network drives slow. Only symlinks are followed, so
+            // linked folders expand.
+            let is_dir = match e.file_type() {
+                Ok(t) if t.is_symlink() => std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir()),
+                Ok(t) => t.is_dir(),
+                Err(_) => false,
+            };
+            if folder.is_some_and(|f| f.excluded(&name, is_dir)) {
+                return None;
+            }
+            let ignored = ignores.ignored(&e.path(), is_dir);
+            Some((name, is_dir, ignored))
+        })
+        .collect();
+    v.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+    });
+    Some(v)
+}
+
+/// The .gitignore files (and .git/info/exclude) that apply to a folder's entries: in it
+/// and its parents, git repository or not. Hidden files are judged by them only, not by
+/// being hidden.
+struct Ignores(Vec<ignore::gitignore::Gitignore>);
+
+impl Ignores {
+    fn for_dir(dir: &Path) -> Ignores {
+        let mut v = vec![];
+        // Deepest first: the nearest file decides.
+        for a in dir.ancestors() {
+            let mut b = ignore::gitignore::GitignoreBuilder::new(a);
+            let mut any = false;
+            for f in [a.join(".gitignore"), a.join(".git").join("info").join("exclude")] {
+                if f.is_file() {
+                    any = true;
+                    let _ = b.add(&f);
+                }
+            }
+            if any && let Ok(g) = b.build() {
+                v.push(g);
+            }
+        }
+        Ignores(v)
+    }
+
+    fn ignored(&self, path: &Path, is_dir: bool) -> bool {
+        use ignore::Match;
+        for g in &self.0 {
+            match g.matched(path, is_dir) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+        false
+    }
 }

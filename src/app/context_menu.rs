@@ -11,7 +11,10 @@ impl App {
     }
 
     pub fn open_context_menu_at(&mut self, kind: menu::ContextKind, pos: Option<(f32, f32)>) {
-        let items = self.contexts.get(kind.name()).cloned().unwrap_or_default();
+        let mut items = self.contexts.get(kind.name()).cloned().unwrap_or_default();
+        // Items only for some targets are left out elsewhere (not shown greyed out).
+        items.retain(|i| i.as_ref().is_none_or(|i| !only_when_enabled(i.cmd) || self.enabled(i.cmd)));
+        tidy_separators(&mut items);
         if items.is_empty() {
             return;
         }
@@ -100,4 +103,24 @@ impl App {
         }
         self.buf().and_then(|b| b.path.clone())
     }
+}
+
+/// Context menu items shown only where they apply.
+fn only_when_enabled(cmd: Command) -> bool {
+    matches!(cmd, Command::OpenProjectInNewWindow)
+}
+
+/// No separator first, last, or next to another.
+fn tidy_separators<T>(items: &mut Vec<Option<T>>) {
+    let mut out: Vec<Option<T>> = Vec::with_capacity(items.len());
+    for it in items.drain(..) {
+        if it.is_none() && out.last().is_none_or(|l| l.is_none()) {
+            continue;
+        }
+        out.push(it);
+    }
+    if out.last().is_some_and(|l| l.is_none()) {
+        out.pop();
+    }
+    *items = out;
 }

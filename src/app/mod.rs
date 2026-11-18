@@ -68,6 +68,8 @@ pub enum AppEvent {
     Grammar(String, InstallEvent),
     /// Find in Files results (search generation).
     Search(u64, crate::search::SearchEvent),
+    /// The open files as found on disk (`start_disk_check`).
+    Disk(Vec<buffers::DiskState>),
 }
 
 /// Event sender that also wakes the GUI so background results show up immediately.
@@ -502,6 +504,10 @@ pub struct App {
     /// The config file as last loaded (another window may save it).
     /// The settings file and keymap.toml as last loaded (to notice either changing).
     config_stamp: [Option<fileops::DiskStamp>; 2],
+    /// The project file on disk when last read or written here.
+    pub(super) project_stamp: Option<fileops::DiskStamp>,
+    /// A background check of the open files is running.
+    disk_check_running: bool,
     /// When open files were last checked against the disk (deleted files).
     last_disk_check: Instant,
     /// Set by commands that need a file/folder from the user; the GUI shows the picker.
@@ -608,6 +614,8 @@ impl App {
             settings_view: Vec::new(),
             settings_window: false,
             config_stamp: [None, None],
+            project_stamp: None,
+            disk_check_running: false,
             wrap_cols: None,
             last_disk_check: Instant::now(),
             file_request: None,
@@ -628,6 +636,9 @@ impl App {
             tx,
         };
         app.config_stamp = app.config_stamp_now();
+        app.project_stamp = app.project_stamp_now();
+        let tx = app.tx.clone();
+        app.tree.waker = Some(Arc::new(move || tx.wake()));
         app.apply_project_config();
         app.recent.touch(&app.project);
         app.recent.save(app.config.data_dir.as_deref());
@@ -660,12 +671,13 @@ impl App {
             if self.check_config_file() {
                 return true;
             }
+            if self.check_project_file() {
+                return true;
+            }
             if self.timers.reload_if_changed() {
                 return true;
             }
-            if self.check_deleted_files() {
-                return true;
-            }
+            self.start_disk_check();
         }
         if let Some((_, t)) = &self.status
             && t.elapsed() > Duration::from_secs(6)

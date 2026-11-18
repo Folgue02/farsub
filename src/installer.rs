@@ -33,6 +33,12 @@ fn exe(name: &str) -> String {
 pub fn installed_bin(data: &Path, s: &ServerConfig) -> Option<PathBuf> {
     let marker = server_dir(data, &s.name).join(MARKER);
     let bin = PathBuf::from(std::fs::read_to_string(marker).ok()?.trim());
+    // Made by npm, but the server doesn't install from npm anymore (taplo's npm build has
+    // no language server): stale, so it's installed again the current way.
+    let from_npm = bin.components().any(|c| c.as_os_str() == "node_modules");
+    if from_npm && s.install.as_ref().is_some_and(|i| i.npm.is_empty()) {
+        return None;
+    }
     bin.is_file().then_some(bin)
 }
 
@@ -812,6 +818,22 @@ mod tests {
         assert!(installed_bin(&data, &s).is_some());
         uninstall(&data, "fake_ls").unwrap();
         assert!(installed_bin(&data, &s).is_none());
+    }
+
+    /// An npm install made before the server's recipe moved off npm (taplo) is stale.
+    #[test]
+    fn npm_install_is_stale_once_the_recipe_drops_npm() {
+        let data = std::env::temp_dir().join(format!("farsub-stale-{}", std::process::id()));
+        let dir = server_dir(&data, "taplo");
+        let bin = dir.join("node_modules/.bin/taplo");
+        std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        std::fs::write(&bin, "").unwrap();
+        std::fs::write(dir.join(MARKER), bin.display().to_string()).unwrap();
+        let mut s = crate::config::Config::builtin().server("taplo").unwrap().clone();
+        assert!(installed_bin(&data, &s).is_none(), "taplo installs from GitHub now");
+        s.install.as_mut().unwrap().npm = vec!["@taplo/cli".into()];
+        assert_eq!(installed_bin(&data, &s), Some(bin));
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     /// Real npm install of bash-language-server (network). Run with --ignored.

@@ -150,6 +150,9 @@ impl App {
                         p.parent().map(Path::to_path_buf).unwrap_or(base),
                         p.file_name().map(|n| n.to_string_lossy().into_owned()),
                     ),
+                    None if self.is_new_project(id) => {
+                        (base, Some(format!("New Project.{}", project::PROJECT_EXT)))
+                    }
                     None => (base, None),
                 }
             }
@@ -227,16 +230,26 @@ impl App {
                 if input.is_empty() {
                     return;
                 }
-                let path = self.resolve(&self.base_dir(), &input);
+                let mut path = self.resolve(&self.base_dir(), &input);
+                let new_project = self.is_new_project(self.buffers[self.cur].id);
+                if new_project && path.extension().is_none_or(|e| e != project::PROJECT_EXT) {
+                    path.set_extension(project::PROJECT_EXT);
+                }
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 let cur = self.cur;
                 self.close_lsp_doc(cur);
-                self.set_buffer_path(cur, path);
+                self.set_buffer_path(cur, path.clone());
                 self.save_current();
                 self.lsp_open(cur);
                 self.refresh_tree();
+                if new_project && self.buffers[cur].path.is_some() && !self.buffers[cur].modified {
+                    self.msg(format!(
+                        "Saved {} — Project: Open This Project in New Window opens it",
+                        path.display()
+                    ));
+                }
             }
             PromptKind::OpenPath => {
                 if input.is_empty() {

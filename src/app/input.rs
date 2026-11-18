@@ -447,6 +447,7 @@ impl App {
             AppEvent::Grammar(name, ev) => self.on_grammar_event(name, ev),
             AppEvent::Search(id, ev) => self.on_search_event(id, ev),
             AppEvent::Menu(id) => self.on_menu_command(&id),
+            AppEvent::Disk(states) => self.on_disk_states(states),
             AppEvent::Files(root, list) => {
                 self.indexing.remove(&root);
                 self.files.insert(root, list);

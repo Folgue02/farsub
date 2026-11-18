@@ -178,12 +178,27 @@ impl App {
         b.column_select(Pos::new(fl, 0), Pos::new(tl, 0), from.1, to.1);
     }
 
-    pub fn editor_drag(&mut self, pos: Pos) {
-        if let Some(b) = self.buf_mut() {
-            let pos = b.clamp(pos);
+    /// Dragging the mouse after a press: `unit` 1 extends by characters, 2 by words, 3 by
+    /// lines, always keeping what the press selected (`first`, the word or line).
+    pub fn editor_drag(&mut self, pos: Pos, unit: u32, first: (Pos, Pos)) {
+        let Some(b) = self.buf_mut() else { return };
+        let pos = b.clamp(pos);
+        let (s0, e0) = first;
+        if unit == 1 {
             b.set_cursor(pos, true);
-            b.want_col = b.cursor.col;
+        } else {
+            let (s, e) = if unit == 2 {
+                b.word_bounds(pos).unwrap_or((pos, pos))
+            } else if pos.line + 1 < b.lines.len() {
+                (Pos::new(pos.line, 0), Pos::new(pos.line + 1, 0))
+            } else {
+                (Pos::new(pos.line, 0), b.last_pos())
+            };
+            let (anchor, cursor) = if s < s0 { (e0, s) } else { (s0, e.max(e0)) };
+            b.set_cursor(anchor, false);
+            b.set_cursor(cursor, true);
         }
+        b.want_col = b.cursor.col;
     }
 
     pub(super) fn run_editor(&mut self, cmd: Command) {

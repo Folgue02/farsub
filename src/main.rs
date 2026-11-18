@@ -31,6 +31,7 @@ mod packages;
 mod palette;
 mod paths;
 mod project;
+mod schemas;
 mod search;
 mod terminal;
 mod timers;
@@ -134,6 +135,14 @@ fn main() -> ExitCode {
             if args.keymap {
                 app.settings_window = true;
                 app.open_keymap_here();
+            }
+            if args.new_project {
+                app.settings_window = true;
+                app.open_new_project_here();
+            }
+            if let Some(f) = &args.edit_project {
+                app.settings_window = true;
+                app.open_project_here(f);
             }
             if plan.restore {
                 app.restore_workspace();

@@ -1,6 +1,6 @@
 name = "toml"
 title = "TOML"
-extensions = ["toml"]
+extensions = ["toml", "farsub-project"]
 filenames = ["Cargo.lock", "Pipfile", "poetry.lock", "uv.lock"]
 comment = "#"
 servers = ["taplo"]

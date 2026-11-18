@@ -28,6 +28,21 @@ impl App {
         let mut items = vec![];
         let mut loading = false;
         for f in self.project.folders.clone() {
+            if !f.indexed() {
+                // `index = false`: only what the sidebar has listed.
+                let known = self.tree.known_files(&f.path);
+                items.extend(known.into_iter().map(|rel| Item {
+                    icon: None,
+                    label: if multi {
+                        format!("{}/{rel}", f.name)
+                    } else {
+                        rel.clone()
+                    },
+                    detail: String::new(),
+                    action: Action::Open(f.path.join(&rel), None),
+                }));
+                continue;
+            }
             match self.files.get(&f.path) {
                 Some(list) => items.extend(list.iter().map(|rel| Item {
                     icon: None,
@@ -92,6 +107,9 @@ impl App {
         let items: Vec<Item> = match mode {
             Mode::Files => {
                 title = format!("Files in {}", self.project.name());
+                if self.project.folders.iter().any(|f| !f.indexed()) {
+                    title.push_str(" · unindexed folders: listed files only");
+                }
                 let (items, still) = self.project_file_items();
                 loading = still;
                 items
