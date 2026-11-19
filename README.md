@@ -254,8 +254,9 @@ Highlighting uses tree-sitter. 21 common grammars are compiled in; 37 more (C#,
 Swift, Kotlin, Groovy / Gradle, Haskell, SQL, Zig, Dockerfile, Vue, …) **install
 themselves** the first time you open such a file: farsub downloads the grammar's source and
 compiles it in the background with your C compiler (Xcode Command Line Tools, gcc/clang,
-or Visual Studio Build Tools). Language servers farsub can install are set up the same way.
-Turn this off with `auto_install = false`; then **Tools → Install Grammar…** / Language Servers install them.
+or Visual Studio Build Tools). Turn this off with `auto_install = false`; then
+**Tools → Install Grammar…** installs them. Language servers never install by themselves:
+opening a file tells you which ones **Tools → Language Servers** can install.
 Any other tree-sitter grammar installs from a source folder or archive on your computer:
 **Grammars: Install Grammar from File…/Folder…** or `farsub --install-grammar PATH`.
 `farsub --list-grammars` shows them all.

@@ -579,12 +579,7 @@ fn spawn(cmd: &str, args: &[&str]) -> bool {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        c.creation_flags(CREATE_NO_WINDOW);
-    }
+    crate::proc::hidden(&mut c);
     match c.spawn() {
         Ok(mut child) => {
             // Reap it so it doesn't linger as a zombie.

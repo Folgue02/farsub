@@ -55,11 +55,16 @@ pub struct EditorConfig {
     pub format_on_save: bool,
     /// Wrap long lines at the pane width (View: Toggle Word Wrap changes it per file).
     pub word_wrap: bool,
-    /// Shell for the integrated terminal (default: $SHELL, or cmd.exe on Windows).
+    /// Shell for the terminal panel: a program name or path (default: $SHELL; on
+    /// Windows PowerShell, `pwsh` when installed, else `powershell.exe`).
     pub terminal_shell: Option<String>,
-    /// Install what a file needs (its tree-sitter grammar, its language server) in the
-    /// background as soon as it's opened, instead of asking.
+    /// Install a file's tree-sitter grammar in the background as soon as it's opened,
+    /// instead of asking. Language servers are never installed this way: Tools ›
+    /// Language Servers installs them.
     pub auto_install: bool,
+    /// Languages whose language servers don't run ("*": all). In a project's
+    /// `[settings]` it applies to the whole project; a `[[folders]]` entry has its own.
+    pub lsp_disabled: Vec<String>,
     /// File icons in the sidebar, tabs and Goto Anything.
     pub file_icons: bool,
     /// Use only this icon package (a folder in Packages/ with an icons.toml); empty or
@@ -103,6 +108,7 @@ impl Default for EditorConfig {
             word_wrap: true,
             terminal_shell: None,
             auto_install: true,
+            lsp_disabled: Vec::new(),
             file_icons: true,
             icon_theme: None,
             caret_style: CaretStyle::Smooth,
@@ -1038,11 +1044,16 @@ trim_automatic_white_space = true
 format_on_save = false
 # Wrap long lines at the pane width; View › Word Wrap (Alt+Z) toggles it per file.
 word_wrap = true
-# Shell for the terminal panel (default: $SHELL).
-# terminal_shell = "/bin/zsh"
-# Install a file's grammar and language server automatically (in the background) when it
-# opens. Off: farsub tells you what's missing and you install from the Tools menu.
+# Shell for the terminal panel, a program name or path. Default: $SHELL; on Windows
+# PowerShell (PowerShell 7's pwsh when installed, else powershell.exe).
+# terminal_shell = "/bin/zsh"        # or "cmd.exe", "pwsh", "C:\\msys64\\usr\\bin\\bash.exe"
+# Install a file's highlighting grammar automatically (in the background) when it opens.
+# Off: farsub tells you what's missing and you install from the Tools menu. Language
+# servers are never installed automatically: Tools › Language Servers installs them.
 auto_install = true
+# Languages whose language servers don't run, by name ("*" for all): ["python"]. In a
+# project file's [settings] it covers that project; a [[folders]] entry can have its own.
+lsp_disabled = []
 # File icons in the sidebar, tabs and Goto Anything; mapping in icons.toml.
 file_icons = true
 # Use only one icon package from Packages/ (one with an icons.toml):

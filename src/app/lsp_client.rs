@@ -77,6 +77,14 @@ impl App {
         server
     }
 
+    /// `lsp_disabled` turns this file's language servers off: in the settings (the
+    /// project's `[settings]` or your own) or in the project folder it's in.
+    pub(super) fn lsp_disabled_for(&self, path: &std::path::Path, lang: &str) -> bool {
+        let hit = |list: &[String]| list.iter().any(|l| l == "*" || l == lang);
+        hit(&self.config.editor.lsp_disabled)
+            || self.project.folder_of(path).is_some_and(|f| hit(&f.def.lsp_disabled))
+    }
+
     pub(super) fn lsp_open(&mut self, i: usize) {
         let b = &self.buffers[i];
         let (Some(path), Some(lang)) = (b.path.clone(), b.lang.clone()) else {
@@ -85,7 +93,7 @@ impl App {
         let Some(cfg) = self.config.language(&lang).cloned() else {
             return;
         };
-        if cfg.servers.is_empty() {
+        if cfg.servers.is_empty() || self.lsp_disabled_for(&path, &lang) {
             return;
         }
         let Some((server, bin)) = self.pick_server(&cfg) else {
@@ -111,19 +119,9 @@ impl App {
                         "No {lang} language server found (install {})",
                         cmds.join(" or ")
                     ));
-                } else if self.config.editor.auto_install
-                    && self.config.data_dir.is_some()
-                    && !self.install_failed.contains_key(&installable[0])
-                {
-                    // Frictionless: install the first installable server; the file
-                    // attaches to it when it's ready.
-                    let name = installable[0].clone();
-                    crate::log::info(
-                        "lsp",
-                        format!("{lang} needs a language server: installing {name}"),
-                    );
-                    self.install_server(&name);
                 } else {
+                    // Servers are only installed when asked for (Tools › Language
+                    // Servers), never just because a file was opened.
                     self.msg(format!(
                         "No {lang} language server installed — Tools › Language Servers can install {}",
                         installable.join(", ")

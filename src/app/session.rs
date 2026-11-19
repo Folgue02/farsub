@@ -113,6 +113,11 @@ impl App {
     }
 
     /// The project file was edited: apply folders and settings in place.
+    #[cfg(test)]
+    pub fn reload_project_file_for_test(&mut self) {
+        self.reload_project_file();
+    }
+
     pub(super) fn reload_project_file(&mut self) {
         let Some(f) = self.project.file.clone() else {
             return;
@@ -120,8 +125,17 @@ impl App {
         self.project_stamp = self.project_stamp_now();
         match Project::load(&f) {
             Ok(p) => {
+                let off = |p: &Project| -> Vec<(PathBuf, Vec<String>)> {
+                    (p.folders.iter())
+                        .map(|f| (f.path.clone(), f.def.lsp_disabled.clone()))
+                        .collect()
+                };
+                let folders_lsp_changed = off(&p) != off(&self.project);
                 self.project = p;
                 self.reload_config();
+                if folders_lsp_changed {
+                    self.restart_lsp();
+                }
                 self.tree
                     .set_roots(self.project.folders.clone(), self.show_hidden);
                 self.files.clear();

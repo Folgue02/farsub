@@ -49,8 +49,9 @@
 - **Automatic:** with `auto_install` (default on), opening a file whose grammar is
   installable but missing installs it in the background (once per session per grammar;
   a failure is logged with its reason and the file keeps the regex fallback). Language servers
-  the manager can install are installed the same way when a file needs one. With it off,
-  farsub says what's missing and the Tools menu installs it.
+  are not (decided 2026-11-19): they install only from Tools › Language Servers (see
+  [Language servers](language-servers.md)). With it off, farsub says what's missing and
+  the Tools menu installs it.
 - **From this computer:** "Grammars: Install Grammar from File…/Folder…" (system file
   picker) or `--install-grammar PATH` compiles a grammar source folder or archive
   (`.zip`, `.tar.gz`, `.tgz`, `.tar`, `.crate`) holding `src/parser.c` (also in a

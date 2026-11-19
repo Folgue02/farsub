@@ -15,11 +15,38 @@ use crate::keys::{Key, KeyCode};
 #[derive(Default)]
 pub struct TermCallbacks {
     pub title: String,
+    /// Answers to the program's status requests, sent back to it after each read.
+    reply: Vec<u8>,
 }
 
 impl vt100::Callbacks for TermCallbacks {
     fn set_window_title(&mut self, _: &mut vt100::Screen, title: &[u8]) {
         self.title = String::from_utf8_lossy(title).into_owned();
+    }
+
+    /// Device status requests, which vt100 leaves to us. Windows' pseudo-console asks
+    /// for the cursor position (`ESC[6n`) when it starts and waits for the answer before
+    /// the shell shows anything; programs like fzf ask too.
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        i1: Option<u8>,
+        _: Option<u8>,
+        params: &[&[u16]],
+        c: char,
+    ) {
+        if c != 'n' || i1.is_some() {
+            return;
+        }
+        match params.first().and_then(|p| p.first()) {
+            Some(6) => {
+                let (row, col) = screen.cursor_position();
+                self.reply
+                    .extend(format!("\x1b[{};{}R", row + 1, col + 1).into_bytes());
+            }
+            Some(5) => self.reply.extend(b"\x1b[0n"),
+            _ => {}
+        }
     }
 }
 
@@ -33,7 +60,7 @@ pub struct Terminal {
     /// "zsh", "bash", … (the shell's name; programs can set a title too).
     pub shell: String,
     parser: Arc<Mutex<Parser>>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
     pub exited: Arc<AtomicBool>,
@@ -68,6 +95,13 @@ impl Terminal {
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())?;
+        // Windows: PowerShell by default (PowerShell 7 when installed), not cmd.exe.
+        let windows_default = (shell.is_none() && cfg!(windows)).then(|| {
+            crate::lsp::find_server("pwsh")
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "powershell.exe".into())
+        });
+        let shell = shell.or(windows_default.as_deref());
         let mut cmd = match shell {
             Some(sh) => CommandBuilder::new(sh),
             None => CommandBuilder::new_default_prog(),
@@ -88,7 +122,7 @@ impl Terminal {
             })
             .unwrap_or_else(|| {
                 if cfg!(windows) {
-                    "cmd".into()
+                    "powershell".into()
                 } else {
                     "sh".into()
                 }
@@ -97,7 +131,7 @@ impl Terminal {
         let killer = child.clone_killer();
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(|e| e.to_string())?));
         let parser = Arc::new(Mutex::new(Parser::new_with_callbacks(
             nz(rows),
             nz(cols),
@@ -122,13 +156,23 @@ impl Terminal {
         {
             let parser = parser.clone();
             let exited = exited.clone();
+            let writer = writer.clone();
             std::thread::spawn(move || {
                 let mut buf = [0u8; 16 * 1024];
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
-                            parser.lock().unwrap().process(&buf[..n]);
+                            let reply = {
+                                let mut p = parser.lock().unwrap();
+                                p.process(&buf[..n]);
+                                std::mem::take(&mut p.callbacks_mut().reply)
+                            };
+                            if !reply.is_empty() {
+                                let mut w = writer.lock().unwrap();
+                                let _ = w.write_all(&reply);
+                                let _ = w.flush();
+                            }
                             tx.wake();
                         }
                     }
@@ -171,8 +215,9 @@ impl Terminal {
         }
         // Typing jumps back to the live screen, like other terminals.
         self.parser.lock().unwrap().screen_mut().set_scrollback(0);
-        let _ = self.writer.write_all(bytes);
-        let _ = self.writer.flush();
+        let mut w = self.writer.lock().unwrap();
+        let _ = w.write_all(bytes);
+        let _ = w.flush();
     }
 
     pub fn paste(&mut self, text: &str) {
@@ -436,5 +481,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
             t.is_exited()
         }));
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+
+    /// Cursor-position and status requests get answered (Windows' pseudo-console waits
+    /// for the first one before the shell appears).
+    #[test]
+    fn answers_device_status_requests() {
+        let mut p = Parser::new_with_callbacks(nz(24), nz(80), 0, TermCallbacks::default());
+        p.process(b"\r\nab\x1b[6n");
+        assert_eq!(std::mem::take(&mut p.callbacks_mut().reply), b"\x1b[2;3R");
+        p.process(b"\x1b[5n");
+        assert_eq!(std::mem::take(&mut p.callbacks_mut().reply), b"\x1b[0n");
+        p.process(b"\x1b[?6n\x1b[2J");
+        assert!(p.callbacks().reply.is_empty());
     }
 }

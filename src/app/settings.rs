@@ -294,8 +294,9 @@ impl App {
         if let Some(e) = &new.error {
             return self.msg(format!("Config error: {e}"));
         }
-        let langs_changed =
-            new.languages != self.config.languages || new.servers != self.config.servers;
+        let langs_changed = new.languages != self.config.languages
+            || new.servers != self.config.servers
+            || new.editor.lsp_disabled != self.config.editor.lsp_disabled;
         let data = self.config.data_dir.clone();
         self.config = new;
         self.config_stamp = self.config_stamp_now();

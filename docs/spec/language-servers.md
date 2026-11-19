@@ -7,8 +7,13 @@
   logs, update, uninstall. Placeholders `${install_dir}`, `${root}`, `${root_id}` (a short
   per-project id), `${home}` in server args/env/settings/initialization options.
 - **Goal: as few manual installs as possible** (decided 2026-11-15). Built-in servers
-  (~46), installable from the manager (and automatically with `auto_install`) on macOS,
-  Linux and Windows:
+  (~46), installable from the manager on macOS, Linux and Windows. **Never installed
+  just because a file opened** (decided 2026-11-19: a server is a big download and a
+  program that runs; the user decides): opening a file whose server is missing says
+  which ones Tools › Language Servers can install. `auto_install` is for grammars only.
+  On Windows, servers and every other helper program (install steps, git, the grammar
+  compiler, timer commands) start without a console window of their own.
+  Built-in servers:
   - npm (needs Node.js): pyright, basedpyright, ts_ls (`typescript@5`, since TypeScript
     7 has no `tsserver`), bashls, yamlls, jsonls / cssls / html_ls
     (vscode-langservers-extracted), dockerls, intelephense, svelte, elmls, vimls,

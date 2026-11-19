@@ -563,7 +563,7 @@ fn run(mut c: Command, cwd: &Path, log: &dyn Fn(String)) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(" ")
     ));
-    let mut child = c
+    let mut child = crate::proc::hidden(&mut c)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

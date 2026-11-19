@@ -85,7 +85,7 @@ pub fn install_git(dir: PathBuf, url: String, tx: EventTx) {
             }
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             let git = crate::lsp::find_server("git").ok_or("`git` not found")?;
-            let out = std::process::Command::new(git)
+            let out = crate::proc::hidden(&mut std::process::Command::new(git))
                 .args(["clone", "--depth", "1", &url])
                 .arg(&dest)
                 .stdin(std::process::Stdio::null())

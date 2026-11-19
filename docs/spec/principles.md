@@ -12,8 +12,10 @@ What farsub is trying to be; every other page follows from these.
   languages without a tree-sitter grammar uses syntect, which reads Sublime Text's
   `.sublime-syntax` grammar format (bat's ~220 grammars plus `runtime/syntaxes/`).
 - **Frictionless.** Users never have to install things by hand to get a working editor:
-  what a file needs (its grammar, its language server) installs itself in the background
-  when the file opens (`auto_install`, on by default). Configuration is for customizing
+  a file's highlighting grammar installs itself in the background when the file opens
+  (`auto_install`, on by default). Language servers are the exception (decided
+  2026-11-19): they're big downloads and running programs, so they install only when
+  the user picks one in Tools › Language Servers; opening a file says which can. Configuration is for customizing
   and enjoying the app, not for making it work. Installing extras is one step: pick a
   file or folder, or a name from a list.
 - **Keyboard first, mouse welcome.** Every action is reachable from the keyboard (shortcut,

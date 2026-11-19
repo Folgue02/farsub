@@ -679,7 +679,10 @@ fn fake_server_config(root: &Path) -> Config {
 #[cfg(unix)]
 fn server_manager_install_and_uninstall() {
     let d = project("servers", &[("a.fake", "hello\n")]);
-    let gui = Gui::headless(d.clone(), fake_server_config(&d));
+    let mut cfg = fake_server_config(&d);
+    // Even with auto_install on, opening a file never installs its server.
+    cfg.editor.auto_install = true;
+    let gui = Gui::headless(d.clone(), cfg);
     let mut h = Harness::builder()
         .with_size(egui::Vec2::new(1200.0, 720.0))
         .with_accessibility_check(false)
@@ -687,7 +690,8 @@ fn server_manager_install_and_uninstall() {
         .build_ui_state(|ui, g: &mut Gui| g.frame(ui), gui);
     h.state_mut().app.open_file(&d.join("a.fake"), true);
     steps(&mut h, 2);
-    // Opening the file explains how to get a server.
+    // Opening the file explains how to get a server, and installs nothing.
+    assert!(h.state().app.installing.is_empty());
     let msg = h.state().app.status.clone().unwrap().0;
     assert!(
         msg.contains("Language Servers") && msg.contains("fake_ls"),
@@ -4442,3 +4446,68 @@ fn open_config_folder_in_a_new_window() {
         && m.items.iter().flatten().any(|i| i.cmd == Command::OpenConfigFolder)));
 }
 
+/// `lsp_disabled` turns language servers off for some languages (or "*": all) in one
+/// project folder, or in the whole project through `[settings]`.
+#[test]
+#[cfg(unix)]
+fn lsp_disabled_per_folder_and_project() {
+    let d = project(
+        "lspoff",
+        &[("a/x.fake", "x\n"), ("a/x.fake2", "x\n"), ("b/y.fake", "y\n")],
+    );
+    let cfg = test_config(&d);
+    // In the project file, so they survive the config reloads a project change makes.
+    const LANGS: &str = r#"
+[[languages]]
+name = "fakelang"
+extensions = ["fake"]
+servers = ["sleeper"]
+
+[[languages]]
+name = "fakelang2"
+extensions = ["fake2"]
+servers = ["sleeper"]
+
+[[servers]]
+name = "sleeper"
+command = "sleep"
+args = ["30"]
+"#;
+    let pf = d.join("p.farsub-project");
+    let write = |settings: &str| {
+        std::fs::write(
+            &pf,
+            format!(
+                "[[folders]]\npath = \"a\"\nlsp_disabled = [\"fakelang\"]\n\n\
+                 [[folders]]\npath = \"b\"\n{settings}\n{LANGS}"
+            ),
+        )
+        .unwrap();
+    };
+    write("");
+    let mut h = project_harness(crate::project::Project::load(&pf).unwrap(), cfg);
+    for f in ["a/x.fake", "a/x.fake2", "b/y.fake"] {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    steps(&mut h, 2);
+    let attached = |h: &Harness<'static, Gui>| -> Vec<bool> {
+        let app = &h.state().app;
+        ["x.fake", "x.fake2", "y.fake"]
+            .iter()
+            .map(|n| app.buffers.iter().find(|b| b.name() == *n).unwrap().lsp_client.is_some())
+            .collect()
+    };
+    // Folder a: no server for fakelang, but fakelang2 still gets one; folder b: on.
+    assert_eq!(attached(&h), [false, true, true]);
+    // The whole project: [settings] lsp_disabled = ["*"], applied when the file changes.
+    write("\n[settings]\nlsp_disabled = [\"*\"]\n");
+    h.state_mut().app.reload_project_file_for_test();
+    steps(&mut h, 2);
+    assert_eq!(attached(&h), [false, false, false]);
+    // Back on.
+    write("");
+    h.state_mut().app.reload_project_file_for_test();
+    steps(&mut h, 2);
+    assert_eq!(attached(&h), [false, true, true]);
+    h.state_mut().app.lsp.shutdown();
+}

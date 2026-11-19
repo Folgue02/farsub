@@ -4,6 +4,12 @@
   slow network folder Goto Anything shouldn't read in full; see
   [Goto Anything](goto-anything.md)), `[settings]` overriding
   editor settings, optional `[[languages]]`/`[[servers]]`. Highlighted as TOML.
+- **Turning language servers off** (decided 2026-11-19): `lsp_disabled`, a list of
+  language names (`"*"`: all). On a `[[folders]]` entry it covers files in that folder;
+  in the project's `[settings]` the whole project (in your own settings, every window).
+  E.g. `lsp_disabled = ["python"]` on a vendored folder, `["*"]` in `[settings]` for no
+  servers at all. Saving the project file (or the settings) restarts the servers, so
+  files there detach or attach at once.
 - **Edit Project** (Project › Edit Project, decided 2026-11-18): like Preferences:
   Settings, a **window of its own** (`--edit-project FILE`). Left, `Example
   Project.farsub-project`: read-only, every part of a project file with comments. Right,

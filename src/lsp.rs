@@ -109,7 +109,7 @@ impl Client {
                 root.display()
             ),
         );
-        let mut child = Command::new(cmd)
+        let mut child = crate::proc::hidden(&mut Command::new(cmd))
             .args(&args)
             // For launchers that keep data per project (installer.rs `{root_id}`).
             .env("FARSUB_ROOT_ID", root_id(root))

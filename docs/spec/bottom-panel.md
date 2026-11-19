@@ -9,8 +9,13 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
 
 - **Ctrl+`** toggles the panel showing the terminal (creating one on first use) and focuses
   it; pressing it while the terminal has focus hides the panel. **Ctrl+Shift+`** opens a
-  new terminal. Terminals start in the project's first folder with the user's `$SHELL`
-  (`cmd.exe`/PowerShell on Windows), or `terminal_shell` if set; `TERM=xterm-256color`.
+  new terminal. Terminals start in the project's first folder with `terminal_shell` if
+  set (a program name or path), else the user's `$SHELL`; on Windows the default is
+  PowerShell (decided 2026-11-19: PowerShell 7's `pwsh` when installed, else the
+  built-in `powershell.exe`; `terminal_shell = "cmd.exe"` brings cmd back).
+  `TERM=xterm-256color`. Device status requests (`ESC[6n` cursor position, `ESC[5n`)
+  are answered: Windows' pseudo-console asks for the cursor position when it starts and
+  shows nothing until it gets an answer, which is why the shell never appeared there.
 - **Ctrl+Tab / Ctrl+Shift+Tab** cycle terminal tabs (wrapping) while a terminal has
   focus; in the editor they keep switching files.
 - Keys go to the shell, including Ctrl combinations (Ctrl+C interrupts). Cmd shortcuts on

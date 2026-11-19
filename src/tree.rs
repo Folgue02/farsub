@@ -668,6 +668,7 @@ mod tests {
                 folder_exclude_patterns: vec!["target".into()],
                 file_exclude_patterns: vec!["*.min.js".into()],
                 index: None,
+                lsp_disabled: vec![],
             },
         );
         let mut t = Tree::new();

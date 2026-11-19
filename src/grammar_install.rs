@@ -296,7 +296,7 @@ fn compile(src: &Path, out: &Path) -> Result<(), String> {
         }
         cmd.arg("-o").arg(out);
     }
-    let output = cmd
+    let output = crate::proc::hidden(&mut cmd)
         .output()
         .map_err(|e| format!("running the compiler: {e}"))?;
     if !output.status.success() {

@@ -29,6 +29,7 @@ mod menu;
 mod native_menu;
 mod packages;
 mod palette;
+mod proc;
 mod paths;
 mod project;
 mod schemas;

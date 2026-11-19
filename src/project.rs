@@ -55,12 +55,16 @@ file_exclude_patterns = ["*.min.js", "*.lock"]
 path = "../shared-lib"        # folders can live anywhere
 # index = false               # a slow (network) folder: Goto Anything only offers the
                               # files the sidebar has listed, instead of reading it all
+# lsp_disabled = ["python"]   # no language servers for these languages in this folder
+                              # ("*" for all of them)
 
 # ---- settings: any editor setting (Preferences: Settings lists them), only here
 [settings]
 tab_size = 2
 use_tabs = false
 format_on_save = true
+# lsp_disabled = ["javascript"]  # no language servers for these languages in the whole
+                                 # project ("*" for all of them)
 # theme = "Tsoding"
 # highlighter = { markdown = "tree-sitter" }
 
@@ -99,6 +103,10 @@ pub struct FolderDef {
     /// sidebar has listed so far, instead of reading the whole folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<bool>,
+    /// Languages whose language servers don't run for files in this folder, by name
+    /// ("*": all): ["python", "javascript"].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lsp_disabled: Vec<String>,
 }
 
 /// A resolved project folder.
