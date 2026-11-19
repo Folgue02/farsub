@@ -1,0 +1,9 @@
+name = "lakescript"
+title = "LakeScript"
+# No tree-sitter grammar yet: highlighted by the bundled regex grammar
+# (runtime/syntaxes/LakeScript.sublime-syntax).
+grammar = ""
+extensions = ["lks"]
+first_line = '^#!.*\blks\b'
+comment = "//"
+tab_size = 4

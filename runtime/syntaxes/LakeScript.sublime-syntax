@@ -1,0 +1,156 @@
+%YAML 1.2
+---
+# Bundled with farsub. LakeScript (.lks), until it has a tree-sitter grammar.
+# Follows the lexer in lakescript's crates/lakescript/src/lexer.rs.
+name: LakeScript
+file_extensions: [lks]
+first_line_match: '^#!.*\blks\b'
+scope: source.lakescript
+
+variables:
+  name: '[A-Za-z_][A-Za-z0-9_]*'
+  types: '\b(?:string|number|bool|list|map|any|void|regex|symbol|range|result|command)\b'
+
+contexts:
+  main:
+    - match: '\A#!.*$'
+      scope: comment.line.shebang.lakescript
+    - include: comments
+    - include: strings
+    - include: numbers
+    - match: '\$({{name}})'
+      scope: variable.other.lakescript
+    - match: '\b(?:let|const|type|use|pub)\b'
+      scope: storage.modifier.lakescript
+    - match: '\b(?:if|else|for|in|while|switch|case|default|break|continue|return|yield|try|catch)\b'
+      scope: keyword.control.lakescript
+    - match: '\b(?:true|false|null)\b'
+      scope: constant.language.lakescript
+    # A function declaration: `number fib(` / `bool prime?(`.
+    - match: '^\s*(?:(pub)\s+)?({{name}})(\s*<[^>()]*>)?\s+({{name}}\??)(?=\s*\()'
+      captures:
+        1: storage.modifier.lakescript
+        2: storage.type.lakescript
+        4: entity.name.function.lakescript
+    - match: '{{types}}'
+      scope: storage.type.lakescript
+    # A call: `outln(` / `prime?(`.
+    - match: '({{name}}\??)(?=\s*\()'
+      scope: variable.function.lakescript
+    # Module paths: `paths::load()`.
+    - match: '{{name}}(?=::)'
+      scope: entity.name.namespace.lakescript
+    - match: ':{{name}}'
+      scope: constant.other.symbol.lakescript
+    # Test operators: -f, -like, -notin…
+    - match: '(?<![\w$)\]])-(?:f|d|x|r|w|like|match|in|notlike|notmatch|notin)\b'
+      scope: keyword.operator.word.lakescript
+    - match: '=>|->|\.\.\.|\.\.=?|\?\?|\?\.|\*\*=?|<<=?|>>>=?|>>=?|[-+*/%&|^=!<>]=?|&&|\|\||\+\+|--|[~?]'
+      scope: keyword.operator.lakescript
+    - match: '[;,]'
+      scope: punctuation.separator.lakescript
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.lakescript
+      push:
+        - meta_scope: comment.line.double-slash.lakescript
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.lakescript
+      push:
+        - meta_scope: comment.block.lakescript
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.lakescript
+          pop: true
+
+  numbers:
+    - match: '\b(?:0[xX][0-9a-fA-F_]+|0[oO][0-7_]+|0[bB][01_]+|[0-9][0-9_]*(?:\.[0-9][0-9_]*)?(?:[eE][-+]?[0-9_]+)?)\b'
+      scope: constant.numeric.lakescript
+
+  escapes:
+    - match: '\\(?:u\{[0-9a-fA-F]+\}|.)'
+      scope: constant.character.escape.lakescript
+
+  interpolation:
+    - match: '\{\{|\}\}'
+      scope: constant.character.escape.lakescript
+    - match: '\{'
+      scope: punctuation.section.interpolation.begin.lakescript
+      push:
+        - clear_scopes: 1
+        - meta_scope: meta.interpolation.lakescript
+        - match: '\}'
+          scope: punctuation.section.interpolation.end.lakescript
+          pop: true
+        - include: main
+
+  strings:
+    # f"""…""" and f"…" interpolate {expressions}.
+    - match: '\bf"""'
+      push:
+        - meta_scope: string.quoted.triple.lakescript
+        - match: '"""'
+          pop: true
+        - include: escapes
+        - include: interpolation
+    - match: '\bf"'
+      push:
+        - meta_scope: string.quoted.double.lakescript
+        - match: '"'
+          pop: true
+        - match: '$'
+          pop: true
+        - include: escapes
+        - include: interpolation
+    # %x"…" shell commands: interpolated, backslashes kept, may span lines.
+    - match: '%x"'
+      push:
+        - meta_scope: string.interpolated.command.lakescript
+        - match: '\\"'
+        - match: '"'
+          pop: true
+        - include: interpolation
+    - match: '"""'
+      push:
+        - meta_scope: string.quoted.triple.lakescript
+        - match: '"""'
+          pop: true
+        - include: escapes
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.lakescript
+        - match: '"'
+          pop: true
+        - match: '$'
+          pop: true
+        - include: escapes
+    - match: "'"
+      push:
+        - meta_scope: string.quoted.single.lakescript
+        - match: "'"
+          pop: true
+        - match: '$'
+          pop: true
+        - include: escapes
+    # r"…" / r#"…"# with no escapes.
+    - match: '\br(#*)"'
+      push:
+        - meta_scope: string.quoted.raw.lakescript
+        - match: '"\1'
+          pop: true
+    # %r"…"flags regexes: only \" is an escape, other backslashes are the regex's.
+    - match: '%r"'
+      push:
+        - meta_scope: string.regexp.lakescript
+        - match: '\\"'
+          scope: constant.character.escape.lakescript
+        - match: '"[imsx]*'
+          pop: true
+    # %w[…] words, %i[…] symbols.
+    - match: '%[wi]\['
+      push:
+        - meta_scope: string.unquoted.list.lakescript
+        - match: '\]'
+          pop: true

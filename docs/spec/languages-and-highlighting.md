@@ -32,7 +32,7 @@
 - A language names its grammar with `grammar = "…"` (default: its name); `grammar = ""`
   means no tree-sitter grammar (the regex fallback below still applies). Languages with no
   tree-sitter grammar at all yet: AWK, BibTeX, Clojure, Crystal,
-  .env, GraphQL, Just, LaTeX, Meson, Nim, Perl, Terraform, Typst, WGSL (a test keeps this
+  .env, GraphQL, Just, LakeScript, LaTeX, Meson, Nim, Perl, Terraform, Typst, WGSL (a test keeps this
   list current, checks every recipe has a bundled query, and, for recipes whose source is
   on the machine (cargo registry or `FARSUB_GRAMMAR_SOURCES`), that the query compiles
   against the grammar).
@@ -70,7 +70,7 @@
   regex grammar (syntect, which reads Sublime Text's `.sublime-syntax` format) instead
   of shown as plain text. Once the tree-sitter grammar is installed the file switches to it. The fallback grammars are
   two-face's set (bat's, ~220) plus `runtime/syntaxes/*.sublime-syntax` (Gleam, Just, KDL,
-  Meson, Prisma), precompiled at build time and loaded only when a file first needs one
+  LakeScript, Meson, Prisma), precompiled at build time and loaded only when a file first needs one
   (the release binary grew from 34 to 36 MB). A language's fallback is found by title,
   name, then file extension / file name; `fallback_syntax = "…"` (a grammar name) pins it,
   `""` turns it off. TextMate scopes become theme captures through `scopes.toml` (longest
@@ -108,3 +108,13 @@
   server exists. Languages whose only comments are block comments (HTML, CSS, XML,
   Markdown, OCaml, Svelte, Vue) have no comment token yet, so Toggle Comment does nothing
   there. Block-comment support is still to do.
+- **LakeScript** (`.lks`, `#!…lks` scripts; decided 2026-11-18, temporary until it has a
+  tree-sitter grammar): a built-in language with a bundled regex grammar
+  (`runtime/syntaxes/LakeScript.sublime-syntax`) following lakescript's lexer and its
+  author's notes: `$variables`, keywords, types (`string`, `number`, `list`, `result`…)
+  and function declarations (`bool prime?(…)`), `//`, `///` and `/* */` comments,
+  `'…'` and `"…"` (single-line), `"""…"""`, raw `r"…"` / `r#"…"#`, `f"…"` with `{…}`
+  interpolation (`{{` / `}}` literal), `%x"…"` commands (interpolated, may span lines),
+  `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` / `%i[…]` lists, `:symbols`,
+  `module::` paths, numbers (hex, octal, binary, `_`), test operators (`-f`, `-like`,
+  `-notin`…). Toggle Comment uses `//`; indentation 4 spaces.

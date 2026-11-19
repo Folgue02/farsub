@@ -972,6 +972,88 @@ mod coverage {
         assert!(plain.line(0).is_none_or(|l| l.is_empty()));
     }
 
+    /// LakeScript's bundled regex grammar: variables, keywords, types, f-string
+    /// interpolation and comments come out styled.
+    #[test]
+    fn lakescript_is_highlighted() {
+        use super::HlCache;
+        let mut s = super::Syntax::load("Monokai Extended");
+        let c = crate::config::Config::builtin();
+        s.set_languages(&c.languages);
+        let lang = c.language_for(std::path::Path::new("x.lks"), "").unwrap();
+        assert_eq!(lang.name, "lakescript");
+        let shebang = c.language_for(std::path::Path::new("tool"), "#!/usr/bin/lks").unwrap();
+        assert_eq!(shebang.name, "lakescript");
+        let text: Vec<String> = [
+            "// a comment",
+            "bool prime?(number $n) {",
+            "    let $d = 2;",
+            "    outln(f\"n = {$n}\");",
+            "}",
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        let mut hl = HlCache::new("lakescript".into());
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(hl.fallback_name(), Some("LakeScript"));
+        let at = |ln: usize, col: usize| {
+            hl.line(ln)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let style = |c: &str| s.theme.style_for(c).unwrap();
+        assert_eq!(at(0, 4), Some(style("comment")));
+        assert_eq!(at(3, 12), Some(style("string")), "{:?}", hl.line(3));
+        let (kw, var, string) = (at(2, 5), at(2, 9), at(3, 12));
+        assert!(kw.is_some() && var.is_some(), "{:?}", hl.line(2));
+        assert_ne!(kw, var);
+        assert_ne!(at(3, 17), string, "{{$n}} inside the f-string is code");
+        assert!(at(1, 0).is_some(), "the return type is styled");
+        assert!(at(1, 6).is_some(), "the function name is styled");
+
+        // The other literals, from lakescript's own example.
+        let text: Vec<String> = [
+            r#"if ($w -match %r"^\d+\"x"i) outln(%x"cat {$p}");"#,
+            r##"const $raw = r#"C:\p "q""#; const $s = :active;"##,
+            "let $x = f\"{{literal}} {$y}\"; paths::load();",
+            "let $q = 'unclosed",
+            "let $after = 1;",
+        ]
+        .iter()
+        .map(|l| l.to_string())
+        .collect();
+        let mut hl = HlCache::new("lakescript".into());
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        let at = |ln: usize, col: usize| {
+            hl.line(ln)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let line0 = &text[0];
+        let col = |l: &str, pat: &str| l.find(pat).unwrap();
+        let regex = at(0, col(line0, "^"));
+        assert!(regex.is_some(), "{:?}", hl.line(0));
+        assert_eq!(at(0, col(line0, "\"x") + 2), regex, "\\\" stays inside the regex");
+        assert_ne!(at(0, col(line0, "outln")), regex, "the flags end it");
+        assert_eq!(at(0, col(line0, "cat")), Some(style("string")));
+        assert_ne!(at(0, col(line0, "$p")), Some(style("string")));
+        assert_ne!(at(0, col(line0, "match")), None, "-match is an operator");
+        let line1 = &text[1];
+        assert_eq!(at(1, col(line1, "\"q") + 1), Some(style("string")), "raw string");
+        assert_ne!(at(1, col(line1, "const $s")), Some(style("string")), "raw string ends");
+        assert!(at(1, col(line1, ":active") + 1).is_some(), "symbol");
+        let line2 = &text[2];
+        assert_ne!(at(2, col(line2, "{{")), at(2, col(line2, "$y")), "{{{{ is literal");
+        assert!(at(2, col(line2, "paths")).is_some(), "module path");
+        assert_ne!(at(4, 0), Some(style("string")), "an unclosed string ends with its line");
+    }
+
     #[test]
     fn scope_map_uses_the_longest_prefix() {
         let mut m = crate::fallback::ScopeMap::default();
@@ -1028,6 +1110,7 @@ mod coverage {
                 "dotenv",
                 "graphql",
                 "just",
+                "lakescript",
                 "latex",
                 "meson",
                 "nim",
