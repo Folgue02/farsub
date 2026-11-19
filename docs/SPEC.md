@@ -10,7 +10,7 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
   New Window, headless commands
 - [Window layout](spec/window.md): areas of the window, `ui_scale`, editor groups
   (columns)
-- [Editor](spec/editor.md): settings view, caret, indentation, word wrap, files deleted or
+- [Editor](spec/editor.md): settings view, config folder window, caret, indentation, word wrap, files deleted or
   changed on disk, encodings, saving, hover, scrollbars and smooth scrolling
 - [Languages and highlighting](spec/languages-and-highlighting.md): language detection,
   tree-sitter, themes, installable grammars, the regex fallback

@@ -4413,3 +4413,32 @@ fn mouse_selection_by_character_word_line_and_outside() {
     steps(&mut h, 3);
     assert_eq!(h.state().app.buf().unwrap().cursor.line, line_up, "released: it stops");
 }
+
+/// Preferences: Open farsub's Config Folder opens the folder holding config.toml (created
+/// if missing) in a new window with the same config, and it's in the File menu.
+#[test]
+fn open_config_folder_in_a_new_window() {
+    use crate::commands::Command;
+    let d = project("cfgfolder", &[("a.txt", "x\n")]);
+    let mut h = harness(&d);
+    let dir = d.join("my-config");
+    let file = dir.join("config.toml");
+    h.state_mut().app.config.path = Some(file.clone());
+    assert!(!dir.exists());
+    h.state_mut().app.run(Command::OpenConfigFolder);
+    assert!(dir.is_dir(), "the folder is created");
+    let app = &h.state().app;
+    let spawned = app.spawned.last().unwrap();
+    assert_eq!(spawned[0], dir.as_os_str(), "{spawned:?}");
+    let i = spawned.iter().position(|a| a == "--config").unwrap();
+    assert_eq!(spawned[i + 1], file.as_os_str());
+    assert!(app.status.as_ref().unwrap().0.contains(&dir.display().to_string()));
+    // This window is untouched: still the same project folder.
+    assert!(app.buffers.iter().all(|b| b.path.as_ref().is_none_or(|p| !p.starts_with(&dir))));
+    assert_eq!(crate::commands::name(Command::OpenConfigFolder), "Preferences: Open farsub's Config Folder");
+    let (menus, errs) = crate::menu::build(&app.config.menus);
+    assert!(errs.is_empty(), "{errs:?}");
+    assert!(menus.iter().any(|m| m.title == "File"
+        && m.items.iter().flatten().any(|i| i.cmd == Command::OpenConfigFolder)));
+}
+

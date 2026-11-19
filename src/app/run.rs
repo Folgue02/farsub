@@ -124,6 +124,7 @@ impl App {
             }
             OpenSettings => self.open_settings(),
             OpenKeymap => self.open_keymap(),
+            OpenConfigFolder => self.open_config_folder(),
             ReopenClosed => {
                 while let Some(p) = self.closed.pop() {
                     if p.is_file() {

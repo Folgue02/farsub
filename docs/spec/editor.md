@@ -18,8 +18,14 @@
   Running Settings or Key Bindings inside that window opens the other pair there too;
   the window closes when the last pair does. Project › Edit Project is the same kind of
   window for a project file (see [Projects](projects.md)).
-- With taplo installed (it installs itself on the first TOML file when `auto_install` is
-  on), these files are checked against farsub's schemas: a misspelled setting or an
+- **Config folder** ("Preferences: Open farsub's Config Folder", File › Open Config
+  Folder, decided 2026-11-19): opens the folder that holds `config.toml` (`keymap.toml`,
+  `languages/`, `servers/`, `grammars/`, `queries/`, `themes/`; where a custom language's
+  `languages/<name>.toml` goes) as a folder in a **new window**, like `farsub <folder>`
+  with the same `--config` / `--data-dir`, so the current window's project is untouched.
+  It's the settings file's folder (`--config` / `FARSUB_CONFIG`), else the standard place
+  below; created first if missing. The status bar shows its path.
+- With taplo installed (Tools › Language Servers), these files are checked against farsub's schemas: a misspelled setting or an
   unknown command id is an error, keys complete, and hovering one explains it (see
   [Language servers](language-servers.md)).
 - **Config folder created on first start** (decided 2026-11-15): if the settings file

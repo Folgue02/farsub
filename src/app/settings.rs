@@ -92,6 +92,28 @@ impl App {
         self.spawn_window(args);
     }
 
+    /// farsub's config folder: `config.toml`'s folder (`--config` / `FARSUB_CONFIG`), else
+    /// the standard place. Created if missing.
+    pub fn config_folder(&self) -> Option<PathBuf> {
+        let file = self.config.path.clone().or_else(config::config_path)?;
+        Some(file.parent()?.to_path_buf())
+    }
+
+    /// Preferences: Open farsub's Config Folder: that folder (languages/, servers/,
+    /// keymap.toml, …) in a new window, so this window's project is left alone.
+    pub(super) fn open_config_folder(&mut self) {
+        let Some(dir) = self.config_folder() else {
+            return self.no_config_location();
+        };
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return self.msg(format!("Couldn't create {}: {e}", dir.display()));
+        }
+        let mut args = self.window_args("--");
+        args[0] = dir.clone().into();
+        self.spawn_window(args);
+        self.msg(format!("Opened farsub's config folder in a new window: {}", dir.display()));
+    }
+
     /// Project › Edit Project: like Preferences: Settings, a window of its own
     /// (`--edit-project FILE`) with an example project on the left and the project file on
     /// the right. Saving it there applies it in the project's window.
