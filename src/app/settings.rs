@@ -31,7 +31,7 @@ impl App {
         ]
     }
 
-    /// Preferences: Settings — like Sublime: a window of its own (another farsub process,
+    /// Preferences: Settings — a window of its own (another farsub process,
     /// `--settings`) with the defaults on the left and your file on the right. Saving there
     /// applies to every window (each one notices the file changed).
     pub(super) fn open_settings(&mut self) {

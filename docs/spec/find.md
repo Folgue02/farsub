@@ -1,6 +1,6 @@
 # Find, Replace and Find in Files
 
-Decided 2026-11-15, following Sublime: one find panel at the bottom of the window, above
+Decided 2026-11-15: one find panel at the bottom of the window, above
 the status bar and across its whole width. It has three modes. Each mode shows its fields
 and its toggles; the texts and toggles are kept while it's closed, and saved in the
 workspace.
@@ -21,9 +21,9 @@ workspace.
   (`"ab"`, Cmd+Alt+W / Alt+W), wrap around, in selection. Find in Files has context
   instead of wrap and in selection. Every toggle is also a command ("Find: Toggle …") and
   sits in the Find menu. Defaults: everything off except wrap and context.
-  **Differs from Sublime:** no "preserve case" and no highlight-matches toggle (matches
+  There's no "preserve case" and no highlight-matches toggle (matches
   are always outlined).
-- Case-insensitive by default, as in Sublime. The old prompt's smart case (an uppercase
+- Case-insensitive by default. The old prompt's smart case (an uppercase
   letter meant case-sensitive) is gone: the toggle decides.
 - Whole word: a match that begins or ends with a word character (letter, digit, `_`)
   mustn't be continued by another one just outside it. So `foo` doesn't match in
@@ -97,5 +97,5 @@ workspace.
 - Find Results isn't unsaved work: no close prompt, and it's not kept by hot exit.
 - **Replace in files:** Enter in the Replace field (or the Replace button) runs the
   search, then asks "Replace N matches in M files with "…"?". Yes opens each file and
-  replaces in it, leaving the changes **unsaved** (as in Sublime), so you can review them
+  replaces in it, leaving the changes **unsaved**, so you can review them
   and File › Save All writes them. Nothing on disk changes until you save.

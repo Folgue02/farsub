@@ -348,7 +348,7 @@ fn settings_add_language_and_theme() {
         h.state().app.buf().unwrap().name(),
         ".farsub-test-config.toml"
     );
-    // Like Sublime: defaults (read-only, every setting) on the left, the user file on the
+    // Defaults (read-only, every setting) on the left, the user file on the
     // right, focused.
     {
         let app = &h.state().app;
@@ -1720,7 +1720,7 @@ fn caret_styles_and_size() {
     use crate::config::CaretStyle;
     use crate::gui::caret_alpha;
     let ms = Duration::from_millis;
-    // Defaults: smooth fade, a bit thicker and taller than the line (Sublime-like look).
+    // Defaults: smooth fade, a bit thicker and taller than the line.
     let e = crate::config::EditorConfig::default();
     assert_eq!(e.caret_style, CaretStyle::Smooth);
     assert!(e.caret_extra_width > 0.0 && e.caret_extra_top > 0.0 && e.caret_extra_bottom > 0.0);

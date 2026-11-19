@@ -1,4 +1,4 @@
-//! The application log shown in the console panel (like Sublime's console). Any thread can
+//! The application log shown in the console panel. Any thread can
 //! write to it: the UI, language-server readers, installers, package loading.
 
 use std::collections::VecDeque;

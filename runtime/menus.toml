@@ -1,4 +1,4 @@
-# Menu layout (like Sublime's Main.sublime-menu). A menus.toml in the config folder
+# Menu layout. A menus.toml in the config folder
 # replaces it. Items are command ids; "-" is a separator. Labels come from the command
 # names unless written as "command_id: Label".
 
@@ -42,7 +42,7 @@ items = ["new_project", "open_project", "open_project_in_new_window", "switch_pr
 title = "Help"
 items = ["show_keymap", "show_commands", "-", "show_licenses"]
 
-# Right-click menus (like Sublime's Context.sublime-menu / Side Bar.sublime-menu).
+# Right-click menus.
 # Shift+F10 or the Menu key opens the one for the focused pane.
 [context.editor]
 items = ["cut", "copy", "paste", "-", "select_all", "-", "goto_definition", "find_references", "code_actions", "rename", "hover", "format", "-", "toggle_comment", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager", "open_project_in_new_window"]

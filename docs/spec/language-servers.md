@@ -77,7 +77,7 @@
   on the next line), so the cursor goes on the squiggle.
 - **Format Document** (LSP › Format Document, also in the right-click menu) applies the
   server's formatting as one undo step.
-- **Format on save** (`format_on_save`, default off, like Sublime LSP): Cmd+S first asks
+- **Format on save** (`format_on_save`, default off): Cmd+S first asks
   the server to format the file, then saves it once the edits arrive (or as it is if
   formatting fails). Saving again while it waits saves right away, so a server that
   never answers can't block saving. Files without a server that can format are saved

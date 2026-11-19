@@ -1,4 +1,4 @@
-//! Text buffer with Sublime-style editing operations and grouped undo/redo.
+//! Text buffer with multi-cursor editing operations and grouped undo/redo.
 
 use crate::commands::Command;
 use std::path::{Path, PathBuf};
@@ -201,7 +201,7 @@ pub enum Indent {
     Spaces(usize),
 }
 
-/// Guess a file's indentation like Sublime: tabs vs spaces by majority of indented lines,
+/// Guess a file's indentation: tabs vs spaces by majority of indented lines,
 /// and the space width from the most common indentation *change* between lines.
 pub fn guess_indent(lines: &[String]) -> Option<Indent> {
     let mut tabs = 0;
@@ -324,7 +324,7 @@ impl Buffer {
             Some(Indent::Spaces(n)) => " ".repeat(n),
             None => "    ".to_string(),
         };
-        // A file indented with N spaces uses N as its tab width too (like Sublime).
+        // A file indented with N spaces uses N as its tab width too.
         let tab_size = match guess {
             Some(Indent::Spaces(n)) => n,
             _ => 4,
@@ -513,7 +513,7 @@ impl Buffer {
         }
     }
 
-    /// Indent using spaces/tabs and/or change the width (Sublime's Indentation menu).
+    /// Indent using spaces/tabs and/or change the width (the Indentation menu).
     pub fn set_indent(&mut self, kind: Indent) {
         self.indent_override = true;
         match kind {
@@ -580,7 +580,7 @@ impl Buffer {
     }
 
     /// Indentation width (display columns) of a line; blank lines take the next non-blank's,
-    /// like Sublime's indent guides.
+    /// so indent guides run through them.
     pub fn indent_width(&self, l: usize) -> usize {
         let ts = self.tab_size.max(1);
         let width = |s: &str| {
@@ -1066,7 +1066,7 @@ impl Buffer {
 
     /// Enter: a new line indented like this one (one level deeper after an opener). With
     /// `trim_ws`, a line holding only indentation is emptied first, so blank lines don't
-    /// keep trailing spaces (Sublime's `trim_automatic_white_space`).
+    /// keep trailing spaces (`trim_automatic_white_space`).
     pub fn newline(&mut self, trim_ws: bool) {
         if self.read_only {
             return;
@@ -1368,7 +1368,7 @@ impl Buffer {
         true
     }
 
-    /// Up/Down by visual rows when lines wrap at `width` columns (like Sublime).
+    /// Up/Down by visual rows when lines wrap at `width` columns.
     pub fn move_visual(&mut self, delta: isize, select: bool, width: usize) {
         use crate::wrap::{col_in_seg, dcol, seg_of, segments};
         let tab = self.tab_size;
@@ -2598,7 +2598,7 @@ mod tests {
         assert_eq!(b.indent_kind(), Indent::Tabs);
         b.undo();
         assert_eq!(b.text(), "fn a() {\n    x;\n        y;\n}");
-        // Undo restores the text; the setting stays (as in Sublime). Switch back to spaces.
+        // Undo restores the text; the setting stays. Switch back to spaces.
         b.set_indent(Indent::Spaces(4));
         b.set_tab_width(2);
         assert_eq!(b.indent_unit, "  ");

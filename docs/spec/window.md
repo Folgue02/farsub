@@ -23,10 +23,10 @@
 
 - `ui_scale` (default 1.0, range 0.5–3) zooms the **whole interface**: every font, widget,
   margin and hit area, like browser zoom. It's separate from `font_size` and from View →
-  Zoom In/Out (Cmd+= / Cmd+-), which size only the editor text, as in Sublime. Changing it
+  Zoom In/Out (Cmd+= / Cmd+-), which size only the editor text. Changing it
   in the settings file applies immediately. The macOS menu bar is drawn by the OS and isn't
   scaled.
-- **Editor groups** (Sublime's View › Layout): 1–4 columns side by side, each with its own
+- **Editor groups** (View › Layout): 1–4 columns side by side, each with its own
   tab strip; every file is in exactly one group. Layout: Single / 2 / 3 / 4 Columns
   (macOS Cmd+Alt+1–4; Windows/Linux Alt+Shift+1–4). Focus Group N: Ctrl+1–4. Move File
   to Group N: Ctrl+Shift+1–4 (adds columns if needed, and focus follows the file). Focus
@@ -36,7 +36,7 @@
   (double-click evens them out).
 - Opening a file puts it in the focused group; a file already open elsewhere is focused
   in its own group. Next/Previous File, Close Other Tabs / Tabs to the Right, and tab
-  numbers (Cmd+1–9 on macOS; Alt+1–9 on Windows/Linux, as in Sublime) work within the
+  numbers (Cmd+1–9 on macOS; Alt+1–9 on Windows/Linux) work within the
   focused group.
 - A group whose last tab closes stays focused and empty; editing commands do nothing
   there. Removing columns moves their tabs into the last remaining group.

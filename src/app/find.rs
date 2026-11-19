@@ -1,6 +1,6 @@
 //! App: the find panel (Find, Replace, Find in Files) and the Find Results buffer.
 //!
-//! Like Sublime: one panel at the bottom of the window with toggles (regex, case, whole
+//! One panel at the bottom of the window with toggles (regex, case, whole
 //! word, wrap, in selection, context), searching as you type in a file; Find in Files
 //! writes its results into a read-only "Find Results" tab whose lines open their match.
 
@@ -260,7 +260,7 @@ impl App {
         *v = !*v;
         let on = *v;
         if o == FindOpt::InSelection && on && self.find.scope.is_none() {
-            // Take the current selection as the scope (Sublime does the same).
+            // Take the current selection as the scope.
             self.find.scope = self.buf().and_then(|b| b.selection());
             if self.find.scope.is_none() {
                 self.msg("In selection: select some text first");
@@ -379,7 +379,7 @@ impl App {
                 }
                 true
             }
-            // Alt+Enter: a cursor on every match (Sublime's Find All).
+            // Alt+Enter: a cursor on every match (Find All).
             KeyCode::Enter if k.alt && !k.ctrl && !k.sup && self.find.mode != FindMode::Files => {
                 self.find_all();
                 true

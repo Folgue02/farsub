@@ -85,7 +85,7 @@ impl App {
             if trig.iter().any(|t| t.ends_with(ch)) && self.completion.is_none() {
                 self.request_completion();
             } else if self.completion.is_none() && is_word(ch) {
-                // Auto-trigger after a few identifier characters, like Sublime.
+                // Auto-trigger after a few identifier characters.
                 let ws = b.word_start(b.cursor);
                 if b.cursor.col - ws.col == 3 && b.lsp_client.is_some() {
                     self.request_completion();
@@ -245,7 +245,7 @@ impl App {
             }
             Copy | Cut if self.buffers[self.cur].multi() => {
                 // Several cursors: each selection on its own line (whole lines where
-                // nothing is selected, like Sublime).
+                // nothing is selected).
                 let b = &mut self.buffers[self.cur];
                 let sels = b.sels();
                 let line = sels.iter().all(|s| s.is_empty());

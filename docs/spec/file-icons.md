@@ -13,5 +13,5 @@
   `folder_open_image`. All packages load in name order after the built-ins, then the
   user's own `icons.toml` on top. `icon_theme = "<package>"` uses only that package. PNG
   only (no SVG). Packages: Reload applies changes.
-- Sublime icon packages (e.g. A File Icon) are **not** compatible: they map icons through
-  Sublime syntax/theme preference files, a different format.
+- Icon packages made for other editors (e.g. A File Icon) are **not** compatible: they map
+  icons through that editor's syntax/theme preference files, a different format.

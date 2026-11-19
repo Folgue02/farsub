@@ -1,4 +1,4 @@
-//! The Sublime-style GUI: everything is custom-painted with egui's painter so the editor,
+//! The GUI: everything is custom-painted with egui's painter so the editor,
 //! sidebar, tabs and overlays look and behave like a code editor rather than a form.
 
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ struct Palette {
 }
 
 /// The primary button went down on this widget this frame. Tabs, sidebar rows and the
-/// menu bar react to the press (like Sublime / VS Code); buttons keep acting on release.
+/// menu bar react to the press (like VS Code); buttons keep acting on release.
 /// Keep the mouse off what's under a popup or dialog. Called with its box (or the whole
 /// window, for a dialog that dims it) before its own widgets: it takes the hover and
 /// clicks there, so the editor or terminal below doesn't show its I-beam or react.
@@ -443,7 +443,7 @@ impl Gui {
             rest.max.y = r.top();
             r
         });
-        // The find panel spans the window above the status bar, like Sublime's.
+        // The find panel spans the window above the status bar.
         let find_h = self.find_panel_height();
         let find_panel = (find_h > 0.0).then(|| {
             let r = Rect::from_min_max(Pos2::new(rest.left(), rest.bottom() - find_h), rest.max);
@@ -495,7 +495,7 @@ impl Gui {
             rest.max.y = r.top();
             r
         });
-        // Editor groups side by side (Sublime's Layout → Columns), each with its own tabs.
+        // Editor groups side by side (Layout → Columns), each with its own tabs.
         let n = self.app.layout.max(1);
         if self.app.group_split.len() != n {
             self.app.group_split = vec![1.0 / n as f32; n];
@@ -845,7 +845,7 @@ fn squiggle(p: &Painter, x0: f32, x1: f32, y: f32, col: Color32) {
 }
 
 /// Caret opacity `elapsed` after it last moved, and when the next frame is needed.
-/// The caret stays solid for a moment after moving (like Sublime), then animates.
+/// The caret stays solid for a moment after moving, then animates.
 pub fn caret_alpha(style: CaretStyle, elapsed: Duration) -> (f32, Option<Duration>) {
     const HOLD: f32 = 0.5; // seconds solid after a move
     const PERIOD: f32 = 1.0; // one full off/on cycle

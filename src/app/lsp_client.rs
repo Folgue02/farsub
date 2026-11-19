@@ -740,7 +740,7 @@ impl App {
                                 out.push(Item {
                                     icon: Some(kind_name(kind_num(&s.kind))),
                                     label: format!("{}{}", "  ".repeat(depth), s.name),
-                                    // Only the name and its kind, like Sublime (no signature).
+                                    // Only the name and its kind (no signature).
                                     detail: kind_name(kind_num(&s.kind)).to_string(),
                                     action: Action::Goto(from_lsp(lines, r.line, r.character)),
                                 });

@@ -1,4 +1,4 @@
-//! Projects, like Sublime's `.sublime-project`: a `NAME.farsub-project` TOML file listing
+//! Projects: a `NAME.farsub-project` TOML file listing
 //! folders (with names and exclude patterns), settings that override the editor settings,
 //! and optionally project-only `[[languages]]` / `[[servers]]`.
 //!

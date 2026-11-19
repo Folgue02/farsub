@@ -91,7 +91,7 @@ impl Gui {
             let active = Some(i) == shown;
             if active {
                 clip.rect_filled(tr, 0.0, c.bg);
-                // The accent bar marks the focused group's tab (Sublime dims the others).
+                // The accent bar marks the focused group's tab (the others are dimmed).
                 clip.rect_filled(
                     Rect::from_min_size(tr.min, Vec2::new(w, 2.0)),
                     0.0,
@@ -122,7 +122,7 @@ impl Gui {
                 if active { c.fg } else { c.dim },
             );
             if b.deleted {
-                // The file is gone from disk (Sublime-style hint).
+                // The file is gone from disk.
                 clip.text(
                     Pos2::new(label.right() + 4.0, tr.center().y),
                     Align2::LEFT_CENTER,

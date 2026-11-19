@@ -1,9 +1,9 @@
 # Sidebar
 
 - Files and folders matched by `.gitignore` (and `.git/info/exclude`) are listed but
-  **dimmed**, as in Sublime 4 / VS Code; everything inside an ignored folder counts as
+  **dimmed**, as in VS Code; everything inside an ignored folder counts as
   ignored. This works whether or not the folder is a git repository.
-- **Slow (network) drives** (decided 2026-11-18, for Samba shares where Sublime freezes):
+- **Slow (network) drives** (decided 2026-11-18, for Samba shares and other slow mounts):
   folders are listed in a background thread, one folder at a time as you open it, so
   the window never waits on the drive. A rebuild of the tree waits up to 60 ms in all for
   listings (a local folder is done by then, so it shows at once); a folder that takes
@@ -20,7 +20,7 @@
 - Hover highlight; folders open/close with a slide + rotating arrow animation.
 - Rows react when the mouse button goes **down** (a folder opens/closes, a file is
   selected), not on release; double-click opens a file. Editor tabs, the bottom panel's
-  tabs and the menu-bar titles also react on press (decided 2026-11-15, like Sublime / VS
+  tabs and the menu-bar titles also react on press (decided 2026-11-15, like VS
   Code). Buttons (a tab's ×, menu items, the find panel's and status bar's buttons) still
   act on release, so moving away before letting go cancels. A tab's × closes only if
   the press was on it too.

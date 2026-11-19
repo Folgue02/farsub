@@ -67,7 +67,7 @@ pub fn install_from_path(dir: &Path, path: &Path) -> Result<String, String> {
     result
 }
 
-/// Folder name for a repository URL: ".../Dracula-sublime.git" → "Dracula-sublime".
+/// Folder name for a repository URL: ".../dracula-theme.git" → "dracula-theme".
 pub fn name_from_url(url: &str) -> Option<String> {
     let last = url.trim().trim_end_matches('/').rsplit(['/', ':']).next()?;
     let name = last.trim_end_matches(".git");

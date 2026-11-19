@@ -90,8 +90,7 @@ impl App {
         }
     }
 
-    /// Run a console line: a few built-ins, otherwise a command id (like Sublime's
-    /// `window.run_command`).
+    /// Run a console line: a few built-ins, otherwise a command id.
     pub fn console_exec(&mut self, line: &str) {
         use crate::log;
         if line.is_empty() {

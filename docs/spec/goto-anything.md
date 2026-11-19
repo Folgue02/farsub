@@ -7,6 +7,6 @@
   so far (open a folder in the sidebar to add its files), and the title says "unindexed
   folders: listed files only". Find in Files still searches it when asked (in the
   background).
-- Each file is a two-line row, as in Sublime: its icon, the file name larger and bold,
+- Each file is a two-line row: its icon, the file name larger and bold,
   and the path below it in a smaller dim font. Fuzzy-match characters are highlighted in
   both lines. Switch Open File uses the same rows.

@@ -70,7 +70,7 @@ impl App {
             && !k.alt
             && !k.sup
         {
-            // Esc in the file closes the find panel (Sublime's hide_panel).
+            // Esc in the file closes the find panel.
             self.close_find();
             return true;
         }
@@ -114,8 +114,8 @@ impl App {
             self.run(cmd);
             return true;
         }
-        // Select tab N of the focused group: Cmd+N on macOS, Alt+N elsewhere (Sublime;
-        // Ctrl+N focuses group N there).
+        // Select tab N of the focused group: Cmd+N on macOS, Alt+N elsewhere
+        // (Ctrl+N focuses group N there).
         let tab_mod = if cfg!(target_os = "macos") {
             k.sup && !k.alt
         } else {

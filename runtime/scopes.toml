@@ -1,5 +1,5 @@
 # Fallback highlighting: files with no tree-sitter grammar (none exists yet, it's still
-# installing, or it can't be compiled) are highlighted with Sublime-style regex grammars.
+# installing, or it can't be compiled) are highlighted with syntect regex grammars.
 # Those name tokens with TextMate scopes ("keyword.control.rust"); this table turns a scope
 # into the theme capture it's colored with ("keyword"), so themes need nothing extra.
 #

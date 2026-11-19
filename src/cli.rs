@@ -1,4 +1,4 @@
-//! Command-line interface, modeled on Sublime's `subl`.
+//! Command-line interface.
 
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ use crate::project::{Last, PROJECT_EXT};
 #[command(
     name = "farsub",
     version,
-    about = "A Sublime Text-style editor with LSP, projects and a keyboard-driven sidebar.",
+    about = "A code editor with LSP, projects and a keyboard-driven sidebar.",
     after_help = "Examples:
   farsub                      reopen the last project/folders (or the current folder)
   farsub .                    open the current folder

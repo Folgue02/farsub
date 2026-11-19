@@ -15,7 +15,7 @@ impl Gui {
         if let Some(b) = app.buf() {
             left = format!("Line {}, Column {}", b.cursor.line + 1, b.cursor.col + 1);
             if b.multi() {
-                // Like Sublime: "3 selection regions" instead of the position.
+                // "3 selection regions" instead of the position.
                 left = format!("{} selection regions", b.extra.len() + 1);
             } else if let Some((a, z)) = b.selection() {
                 let n = b.text_range(a, z).chars().count();
@@ -56,7 +56,7 @@ impl Gui {
                 };
                 Some((text, col))
             });
-        // Right side, Sublime style: each item is clickable.
+        // Right side: each item is clickable.
         let mut right: Vec<(String, Option<crate::commands::Command>)> = vec![];
         if let Some(b) = app.buf() {
             let lsp = app.lsp_status();
@@ -71,7 +71,7 @@ impl Gui {
                 right.push(("no LSP".into(), Some(crate::commands::Command::LspInfo)));
             }
             if !b.encoding.is_utf8() {
-                // Like Sublime: the encoding shows only when it isn't plain UTF-8.
+                // The encoding shows only when it isn't plain UTF-8.
                 right.push((
                     b.encoding.label(),
                     Some(crate::commands::Command::ConvertToUtf8),

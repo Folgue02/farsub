@@ -4,7 +4,7 @@ The living description of how farsub works and should behave, one page per area.
 decision changes, the page is corrected (not appended to). "Cmd" means Cmd on macOS and
 Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
 
-- [Principles](spec/principles.md): Sublime feel, inspired by (not built from) Sublime,
+- [Principles](spec/principles.md): familiar editor feel, own file formats,
   frictionless, keyboard first, nothing hard-coded, never lose work
 - [Command line](spec/command-line.md): opening files and folders, `--wait`, `--empty`,
   New Window, headless commands

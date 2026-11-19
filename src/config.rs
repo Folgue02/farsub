@@ -6,7 +6,7 @@
 //!   config.toml          [editor] settings (+ optional [[languages]] / [[servers]])
 //!   languages/*.toml     one language per file (same name replaces a built-in)
 //!   servers/*.toml       language servers, nvim-lspconfig style, with mason-style [install]
-//!   keymap.toml          extra/overriding [[keys]] (like Sublime's user keymap)
+//!   keymap.toml          extra/overriding [[keys]]
 //!   menus.toml           replaces the menu layout
 //!   Packages/            farsub packages: themes/*.toml, queries/<grammar>/highlights.scm, icons.toml
 //! ~/.local/share/farsub/servers/<name>/   servers installed by the server manager
@@ -45,11 +45,11 @@ pub struct EditorConfig {
     pub animations: bool,
     /// Opening a file selects it in the sidebar (expanding its folders) and scrolls to it.
     pub reveal_opened_file: bool,
-    /// Vertical lines at each indentation level (like Sublime's indent guides).
+    /// Vertical lines at each indentation level .
     pub indent_guides: bool,
     /// Highlight the line the cursor is on (off by default).
     pub highlight_current_line: bool,
-    /// Enter on a line holding only indentation empties it (Sublime's setting).
+    /// Enter on a line holding only indentation empties it.
     pub trim_automatic_white_space: bool,
     /// Format with the language server before saving (Cmd+S).
     pub format_on_save: bool,
@@ -67,13 +67,13 @@ pub struct EditorConfig {
     pub icon_theme: Option<String>,
     /// How the caret animates: "smooth" (fades in and out), "blink", or "solid".
     pub caret_style: CaretStyle,
-    /// Pixels added to the 1px caret width (Sublime's `caret_extra_width`).
+    /// Pixels added to the 1px caret width.
     pub caret_extra_width: f32,
-    /// Pixels the caret reaches above the line (Sublime's `caret_extra_top`).
+    /// Pixels the caret reaches above the line.
     pub caret_extra_top: f32,
-    /// Pixels the caret reaches below the line (Sublime's `caret_extra_bottom`).
+    /// Pixels the caret reaches below the line.
     pub caret_extra_bottom: f32,
-    /// Keep unsaved changes across restarts instead of asking on quit (like Sublime).
+    /// Keep unsaved changes across restarts instead of asking on quit.
     pub hot_exit: bool,
     /// Start without arguments → reopen the last project/folders.
     pub restore_session: bool,
@@ -124,7 +124,7 @@ pub enum Highlighter {
     #[default]
     #[serde(rename = "tree-sitter")]
     TreeSitter,
-    /// Always the Sublime-style regex grammar (bat's set), even with a tree-sitter one.
+    /// Always the regex grammar (bat's set), even with a tree-sitter one.
     #[serde(rename = "regex")]
     Regex,
 }
@@ -132,7 +132,7 @@ pub enum Highlighter {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CaretStyle {
-    /// Fades out and back in (Sublime's default "smooth").
+    /// Fades out and back in (the default).
     #[default]
     Smooth,
     /// Hard on/off blinking.
@@ -442,7 +442,7 @@ pub struct LanguageConfig {
     /// "tree-sitter" (default) or "regex"; the settings' `highlighter` map overrides it.
     #[serde(default)]
     pub highlighter: Option<Highlighter>,
-    /// Sublime-style grammar (by name, e.g. "Bourne Again Shell") for the regex fallback
+    /// Regex grammar (by name, e.g. "Bourne Again Shell") for the regex fallback
     /// used while there's no tree-sitter grammar. Default: found by title, name or file
     /// extension; `""` turns the fallback off.
     #[serde(default)]
@@ -564,7 +564,7 @@ pub struct Config {
     pub keys: Vec<KeyBinding>,
     pub docs: Vec<KeyDoc>,
     pub menus: Vec<MenuDef>,
-    /// Right-click menus (context name → items), like Sublime's Context.sublime-menu.
+    /// Right-click menus (context name → items).
     pub context_menus: HashMap<String, Vec<String>>,
     /// Installable grammar recipes (grammars/*.toml).
     pub grammars: Vec<crate::grammar_install::GrammarRecipe>,
@@ -989,7 +989,7 @@ impl Config {
     }
 }
 
-/// The file a new user settings file starts as (Sublime-style: nearly empty; the defaults
+/// The file a new user settings file starts as (nearly empty; the defaults
 /// are shown beside it by Preferences: Settings).
 pub const TEMPLATE: &str = r##"# farsub settings. Anything here overrides the defaults shown in the other pane
 # (Preferences: Settings). Copy a line over, change it, save to apply.
@@ -1047,7 +1047,7 @@ auto_install = true
 file_icons = true
 # Use only one icon package from Packages/ (one with an icons.toml):
 # icon_theme = "My Icons"
-# Caret: "smooth" (fade in/out), "blink" or "solid"; size in pixels like Sublime's
+# Caret: "smooth" (fade in/out), "blink" or "solid"; size in pixels with
 # caret_extra_width / caret_extra_top / caret_extra_bottom (width = 1 + extra).
 caret_style = "smooth"
 caret_extra_width = 1.5
@@ -1057,7 +1057,7 @@ caret_extra_bottom = 1.0
 hot_exit = true
 restore_session = true
 # Highlighter per language (by name): "tree-sitter" (its tree-sitter grammar; the regex one
-# while there's none) or "regex" (Sublime-style regex grammar, always). Each language has
+# while there's none) or "regex" (the regex grammar, always). Each language has
 # its own default; Markdown uses "regex" (it colors bold, italic, inline code and fenced
 # code by language). E.g. { markdown = "tree-sitter", python = "regex" }.
 highlighter = {}
@@ -1141,7 +1141,7 @@ mod tests {
                 "Default Settings doesn't document `{key}`"
             );
         }
-        // A brand-new user file is the short Sublime-style one and is valid.
+        // A brand-new user file is the short template and is valid.
         let mut u = Config::builtin();
         u.merge_str(TEMPLATE).unwrap();
         assert_eq!(u.editor, EditorConfig::default());

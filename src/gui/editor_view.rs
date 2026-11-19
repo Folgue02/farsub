@@ -259,7 +259,7 @@ impl Gui {
             let col = col_in_seg(&b.lines[row.line], tab, &row.seg, target, row.last);
             Pos::new(row.line, col)
         };
-        // Pointer: I-beam over text, but the normal arrow over selected text (like Sublime).
+        // Pointer: I-beam over text, but the normal arrow over selected text.
         // Uses the character cell under the pointer, not the nearest caret position.
         let over_selection = |b: &Buffer, pt: Pos2| -> bool {
             let Some((a, z)) = b.selection() else {
@@ -559,7 +559,7 @@ impl Gui {
         // Indent guides sit at absolute columns (continuation rows are indented to match).
         let x0 = text_left - b.scroll_x as f32 * cw;
         // Indent guides: one line per indentation level; the guide of the block around the
-        // cursor is highlighted (Sublime's "active" guide).
+        // cursor is highlighted (the "active" guide).
         let unit = if b.indent_unit == "\t" {
             b.tab_size
         } else {
@@ -826,7 +826,7 @@ impl Gui {
             }
         }
         if b.scroll_y > 0 || b.scroll_row > 0 || b.scroll_px > 0.0 {
-            // Subtle shadow under the tab bar when scrolled, like Sublime.
+            // Subtle shadow under the tab bar when scrolled.
             for k in 0..6 {
                 let a = 40 - k * 6;
                 clip.line_segment(
@@ -838,7 +838,7 @@ impl Gui {
                 );
             }
         }
-        // Scrollbars (Sublime-style: thin, wider on hover). Vertical: drag the thumb or click
+        // Scrollbars (thin, wider on hover). Vertical: drag the thumb or click
         // the track to jump there; diagnostics are marked along it.
         let max_scroll = b.lines.len().saturating_sub(1);
         let page = visible.saturating_sub(1).max(1);

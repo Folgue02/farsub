@@ -1,6 +1,6 @@
 # farsub
 
-A Sublime Text-style code editor in Rust (egui/eframe): Goto Anything, command palette,
+A code editor in Rust (egui/eframe): Goto Anything, command palette,
 symbol search, tree-sitter syntax highlighting, LSP with a built-in server
 installer, and a sidebar you can drive entirely from the keyboard, including file
 operations. The mouse works too.
@@ -14,7 +14,7 @@ How it's supposed to behave is written down in [docs/SPEC.md](docs/SPEC.md) (an 
 
 ## Command line
 
-Modeled on Sublime's `subl`:
+Usage:
 
 ```text
 farsub                      reopen the last project/folders (or the current folder)
@@ -34,7 +34,7 @@ at other config/data folders. `farsub --help` lists everything.
 
 ## Projects and workspaces
 
-Like Sublime: a **project** (`NAME.farsub-project`) says what's in the window; its
+A **project** (`NAME.farsub-project`) says what's in the window; its
 **workspace** (`NAME.farsub-workspace`, next to it) remembers the session.
 
 ```toml
@@ -84,7 +84,7 @@ folder override them:
   config.toml          [editor] settings (+ optional [[languages]] / [[servers]])
   languages/<name>.toml   add a language, or replace a built-in with the same name
   servers/<name>.toml     add/replace a language server (nvim-lspconfig style)
-  keymap.toml          add/override/unbind keys (like Sublime's user keymap)
+  keymap.toml          add/override/unbind keys
   menus.toml           replace the menu layout
   themes/*.toml        color themes
   queries/<grammar>/highlights.scm   override a grammar's highlighting
@@ -143,14 +143,14 @@ Command ids are the snake_case names shown in the keymap viewer (`goto_file`,
 | Ctrl+G | Goto line | `:` |
 | Cmd+E | Switch open file | |
 
-Type a prefix in any palette to switch modes, as in Sublime.
+Type a prefix in any palette to switch modes.
 
 ## Sidebar (keyboard)
 
 Cmd+0 focuses the sidebar (Cmd+0 again or Esc returns to the editor), Cmd+B shows or hides
 it, and Cmd+Shift+E reveals the current file. Drag its right edge to resize it
 (double-click the edge to reset); the width is saved with the workspace. Rows highlight on hover, and folders open and
-close with a Sublime-style slide and rotating arrow (`animations = false` turns that off).
+close with a slide and rotating arrow (`animations = false` turns that off).
 
 | Key | Action |
 | --- | --- |
@@ -175,7 +175,7 @@ tabs and language-server state.
 
 ## Editor
 
-Sublime defaults: Cmd+D (select word, then next occurrence), Cmd+L, Cmd+Shift+K,
+Editing keys: Cmd+D (select word, then next occurrence), Cmd+L, Cmd+Shift+K,
 Cmd+Shift+D, Alt+↑/↓ (move line), Cmd+/ (comment), Cmd+] / Cmd+[, Cmd+Enter,
 Cmd+Shift+Enter, Cmd+J, F9 (sort lines). Also Cmd+Z / Cmd+Shift+Z, Cmd+S,
 Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab and Cmd+1…9
@@ -184,7 +184,7 @@ takes the whole line. Brackets and quotes auto-close, and Enter auto-indents.
 
 ## Find, Replace and Find in Files
 
-One panel at the bottom of the window, as in Sublime:
+One panel at the bottom of the window:
 
 | Key | Action |
 |---|---|
@@ -262,7 +262,8 @@ Any other tree-sitter grammar installs from a source folder or archive on your c
 Until a file's tree-sitter grammar is installed (or when it can't be compiled), and for
 the languages with no tree-sitter grammar yet (AWK, BibTeX, Clojure, Crystal, .env,
 GraphQL, Just, LaTeX, Meson, Nim, Perl, Terraform, Typst and WGSL), farsub highlights it
-with a bundled Sublime-style regex grammar instead, so nothing shows as plain text.
+with a bundled regex grammar (syntect, Sublime Text's `.sublime-syntax` format) instead,
+so nothing shows as plain text.
 Override the fallback with `fallback_syntax = "Grammar Name"` in a language file, and how
 its scopes map to theme colors with a `scopes.toml` in the config folder.
 
@@ -364,7 +365,7 @@ image = "img/rust.png"   # relative to the package
 ```
 
 All icon packages are used (in name order), or only one with `icon_theme = "Package
-Name"`. `file_icons = false` hides icons. Sublime icon packages such as A File Icon use a
+Name"`. `file_icons = false` hides icons. Icon packages made for other editors (such as A File Icon) use a
 different format and don't work as they are.
 
 Files matched by `.gitignore` are dimmed in the sidebar and left out of Goto Anything,
@@ -379,7 +380,7 @@ use the same `keymap.toml` commands (`move_word_left`, `select_to_line_end`,
 
 ## Split panes (editor groups)
 
-Like Sublime's View › Layout: up to 4 columns, each with its own tabs.
+Up to 4 columns, each with its own tabs.
 
 | Action | macOS | Windows / Linux |
 | --- | --- | --- |
@@ -392,7 +393,7 @@ Click a pane to focus it, and drag the divider to resize. Each pane has scrollba
 (vertical always, horizontal for long lines). The layout is saved with the
 workspace.
 
-**Preferences: Settings** (Cmd+,) opens a settings window, as in Sublime: the full,
+**Preferences: Settings** (Cmd+,) opens a settings window: the full,
 read-only `Default Settings.toml` on the left and your settings file on the right. Copy
 over what you want to change and save; every farsub window picks up the change. Closing
 either pane closes the window. The settings file and its folder are created the first time
@@ -462,12 +463,12 @@ Long lines wrap by default (`word_wrap = true`), with wrapped rows indented like
 View › Word Wrap (Alt+Z) toggles it for the current file.
 
 `ui_scale = 1.25` zooms the whole interface (fonts, sidebar, tabs, menus, panels) like
-browser zoom. Cmd+= / Cmd+- still change only the editor font size, as in Sublime.
+browser zoom. Cmd+= / Cmd+- still change only the editor font size.
 
 Goto Symbol (Cmd+R) lists names only (`add`, `Point`, `impl Debug for Point<T>`) with the
-kind on the right, as in Sublime. No signatures.
+kind on the right. No signatures.
 
-The caret uses Sublime's settings: `caret_style = "smooth"` (fade, the default), `"blink"` or
+Caret settings: `caret_style = "smooth"` (fade, the default), `"blink"` or
 `"solid"`, and `caret_extra_width` / `caret_extra_top` / `caret_extra_bottom` in pixels
 (defaults 1.5 / 1 / 1).
 

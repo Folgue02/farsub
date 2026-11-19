@@ -170,7 +170,7 @@ impl Gui {
                 col = mix(col, c.side, 0.55);
             }
             if n.ignored {
-                // Matched by .gitignore: listed, but dimmed (like Sublime / VS Code).
+                // Matched by .gitignore: listed, but dimmed (like VS Code).
                 col = mix(col, c.side, 0.5);
             }
             let name_r = row_clip.text(

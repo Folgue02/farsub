@@ -7,7 +7,7 @@
   closes, for use as `$EDITOR` / `git config core.editor "farsub -w"`.
 - Argument errors are reported in the shell (exit code 2) before handing off.
 - `--empty` opens a clean window: no folder, no project, no session (files given too still
-  open in it). File › New Window (Cmd+Shift+N, as in Sublime) starts one as a separate
+  open in it). File › New Window (Cmd+Shift+N) starts one as a separate
   farsub process, with the same `--config` / `--data-dir`. An empty window doesn't
   replace the "last session" and keeps no workspace; it starts without the sidebar (see
   [Sidebar](sidebar.md)).

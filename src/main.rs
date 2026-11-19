@@ -1,4 +1,4 @@
-//! farsub — a Sublime Text-style code editor with a keyboard-driven sidebar, projects,
+//! farsub — a code editor with a keyboard-driven sidebar, projects,
 //! syntax packages and LSP support.
 
 // A GUI app on Windows: no console window opens with it. Started from a terminal, it

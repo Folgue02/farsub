@@ -141,7 +141,7 @@ impl App {
                     base.file_name().unwrap_or_default().to_string_lossy()
                 );
                 self.prompt(&title, &rel, PromptKind::RenameMove(src, base));
-                // Put the cursor before the extension, like Sublime/VS Code.
+                // Put the cursor before the extension, like VS Code.
                 if let Some(Modal::Prompt(p)) = &mut self.modal
                     && let Some(dot) = p.input.text().rfind('.')
                     && p.input.text().rfind('/').is_none_or(|s| s < dot)

@@ -36,7 +36,7 @@ impl Gui {
         let mut click: Option<Click> = None;
         let pointer = ui.ctx().pointer_hover_pos();
 
-        // Toggles, left of the first row (Sublime's option buttons).
+        // Toggles, left of the first row.
         let opts = self.app.find.opts();
         let top = r.top() + 4.0;
         let mut x = r.left() + 10.0;

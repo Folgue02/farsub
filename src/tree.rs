@@ -1,4 +1,4 @@
-//! Sidebar file tree. Each project folder is a top-level node (like Sublime's FOLDERS);
+//! Sidebar file tree. Each project folder is a top-level node;
 //! listings are read lazily and cached, and only expanded folders are flattened into the
 //! visible node list. Project exclude patterns hide matching entries.
 //!

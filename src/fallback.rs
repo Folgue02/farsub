@@ -1,4 +1,4 @@
-//! Fallback highlighting with syntect (Sublime-style regex grammars), for files tree-sitter
+//! Fallback highlighting with syntect (regex grammars in the `.sublime-syntax` format), for files tree-sitter
 //! can't highlight: the language has no tree-sitter grammar yet, its grammar is still
 //! installing, or it can't be compiled here (no C compiler).
 //!

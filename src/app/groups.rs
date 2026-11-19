@@ -113,7 +113,7 @@ impl App {
     }
 
     /// After a buffer in group `g` closed at index `i`, show a neighbouring tab of the
-    /// same group (the one to its left, like Sublime), keeping focus in that group.
+    /// same group (the one to its left), keeping focus in that group.
     pub(super) fn reselect_after_close(&mut self, g: usize, i: usize) {
         let tabs = self.group_tabs(g);
         let pick = tabs

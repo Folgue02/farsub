@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::project::Folder;
 
-/// The find panel's toggles (kept in the workspace, like Sublime).
+/// The find panel's toggles (kept in the workspace).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(default)]
 pub struct FindOptions {
@@ -154,7 +154,7 @@ fn bounded(line: &str, s: usize, e: usize) -> bool {
     (!first || !before) && (!last || !after)
 }
 
-/// Sublime-style replacement escapes into the regex crate's syntax.
+/// Replacement escapes (`\1`, `\n`, `\t`, `\\`, `\$`) into the regex crate's syntax.
 fn regex_template(t: &str) -> String {
     let mut out = String::new();
     let mut chars = t.chars().peekable();

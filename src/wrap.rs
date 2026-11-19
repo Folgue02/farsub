@@ -1,8 +1,7 @@
 //! Soft word wrap: splitting a line into visual rows by display columns.
 //!
-//! Rows break after whitespace when possible (the space stays at the end of the row, like
-//! Sublime), otherwise mid-word. Continuation rows are indented like the line itself
-//! (Sublime's `indent_subsequent_lines`), capped at half the width.
+//! Rows break after whitespace when possible (the space stays at the end of the row),
+//! otherwise mid-word. Continuation rows are indented like the line itself, capped at half the width.
 
 use unicode_width::UnicodeWidthChar;
 

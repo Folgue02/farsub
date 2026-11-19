@@ -67,8 +67,8 @@
 - **Regex fallback** (decided 2026-11-14): whenever tree-sitter can't highlight a file (the
   language has no tree-sitter grammar, its grammar isn't installed yet or failed to
   compile, e.g. no C compiler, or its query doesn't load), it's highlighted with a
-  Sublime-style regex grammar (syntect) instead of shown as plain text. Once the
-  tree-sitter grammar is installed the file switches to it. The fallback grammars are
+  regex grammar (syntect, which reads Sublime Text's `.sublime-syntax` format) instead
+  of shown as plain text. Once the tree-sitter grammar is installed the file switches to it. The fallback grammars are
   two-face's set (bat's, ~220) plus `runtime/syntaxes/*.sublime-syntax` (Gleam, Just, KDL,
   Meson, Prisma), precompiled at build time and loaded only when a file first needs one
   (the release binary grew from 34 to 36 MB). A language's fallback is found by title,

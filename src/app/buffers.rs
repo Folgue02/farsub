@@ -163,10 +163,10 @@ impl App {
         });
     }
 
-    /// Open files that were deleted on disk (or came back), like Sublime: a deleted file
+    /// Open files that were deleted on disk (or came back): a deleted file
     /// counts as unsaved, so closing asks first and hot exit keeps its contents. Files
-    /// another program changed: unedited ones reload in place (an undoable edit, like
-    /// Sublime); one with unsaved edits asks first.
+    /// another program changed: unedited ones reload in place (an undoable edit);
+    /// one with unsaved edits asks first.
     pub(super) fn on_disk_states(&mut self, states: Vec<DiskState>) {
         self.disk_check_running = false;
         let mut deleted_changed = false;
@@ -197,7 +197,7 @@ impl App {
             self.disk_changed(i, &st);
         }
         if deleted_changed {
-            // Like Sublime: the sidebar stops listing it.
+            // The sidebar stops listing it.
             self.refresh_tree();
         }
         for name in gone {
@@ -452,7 +452,7 @@ impl App {
             self.group_active[b.group] = None;
         }
         // Closing either side of the settings view closes the view (like closing
-        // Sublime's settings window): the other side goes too unless it has unsaved
+        // a settings window): the other side goes too unless it has unsaved
         // changes, and the previous layout comes back.
         if let Some(k) = (self.settings_view.iter())
             .position(|v| v.defaults_id == b.id || v.user_id == b.id)

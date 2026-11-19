@@ -53,7 +53,7 @@ impl Gui {
             return;
         };
         let w = (full.width() * 0.6).clamp(360.0, 720.0);
-        // Files get Sublime's two-line rows: icon, bold name, path underneath.
+        // Files get two-line rows: icon, bold name, path underneath.
         let file_rows = matches!(pal.mode, Mode::Files | Mode::Buffers);
         let row_h = if file_rows { 44.0 } else { 30.0 };
         let max_rows = if file_rows { 9usize } else { 12 };

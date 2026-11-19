@@ -488,7 +488,7 @@ pub struct App {
     next_term_id: usize,
     /// Sidebar width in points (drag its edge to resize).
     pub sidebar_width: f32,
-    /// Editor groups (Sublime's layout columns), 1–4.
+    /// Editor groups (layout columns), 1–4.
     pub layout: usize,
     /// Focused group.
     pub group: usize,

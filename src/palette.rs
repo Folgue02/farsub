@@ -1,4 +1,4 @@
-//! Sublime-style fuzzy palette. The query prefix picks the mode, like Goto Anything:
+//! Fuzzy palette. The query prefix picks the mode, like Goto Anything:
 //! `>` commands, `@` symbols, `:` line, `#` project symbols, nothing = files.
 
 use std::path::PathBuf;

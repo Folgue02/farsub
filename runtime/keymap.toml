@@ -1,4 +1,4 @@
-# Default key bindings (like Sublime's Default.sublime-keymap).
+# Default key bindings.
 # Override or extend them in ~/.config/farsub/keymap.toml with the same format.
 #
 # keys:     "Cmd+Shift+P" — Cmd is Cmd on macOS and Ctrl elsewhere; also Ctrl, Shift, Alt.
@@ -286,7 +286,7 @@ command = "next_result"
 [[keys]]
 keys = "Shift+F4"
 command = "prev_result"
-# The find panel's toggles (Sublime: Cmd+Alt+… on macOS, Alt+… elsewhere).
+# The find panel's toggles (Cmd+Alt+… on macOS, Alt+… elsewhere).
 [[keys]]
 keys = "Cmd+Alt+R"
 command = "toggle_find_regex"
@@ -619,7 +619,7 @@ section = "Menu bar"
 keys = "Enter / Esc"
 description = "Run the item / close"
 
-# Editor groups (Sublime: View › Layout, Focus Group, Move File to Group).
+# Editor groups (View › Layout, Focus Group, Move File to Group).
 # Tab N of the focused group: Cmd+N on macOS, Alt+N on Windows/Linux.
 [[keys]]
 keys = "Cmd+Alt+1"
@@ -678,7 +678,7 @@ command = "focus_group4"
 keys = "Ctrl+Shift+4"
 command = "move_to_group4"
 
-# Word wrap per file (VS Code's key; Sublime has none by default).
+# Word wrap per file (VS Code's key).
 [[keys]]
 keys = "Alt+Z"
 command = "toggle_word_wrap"
@@ -952,7 +952,7 @@ command = "delete_word_right"
 context = "editor"
 platforms = ["windows", "linux"]
 
-# A new, empty window (Sublime: Cmd+Shift+N).
+# A new, empty window.
 [[keys]]
 keys = "Cmd+Shift+N"
 command = "new_window"

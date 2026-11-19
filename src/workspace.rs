@@ -1,4 +1,4 @@
-//! Workspaces, like Sublime's `.sublime-workspace`: the session for a project (open files,
+//! Workspaces: the session for a project (open files,
 //! cursors, scroll positions, sidebar state, find text) plus "hot exit" contents of unsaved
 //! buffers, so quitting never loses work and the next launch picks up where you left off.
 

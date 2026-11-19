@@ -1,6 +1,6 @@
 # Multiple cursors
 
-Decided 2026-11-15: as in Sublime, every cursor is a full selection. Typing, deleting,
+Decided 2026-11-15: every cursor is a full selection. Typing, deleting,
 moving, Enter, Tab and the edit commands act at all of them at once, and one Undo undoes
 the edit everywhere (and brings the cursors back). Code folding was considered and
 dropped (the user doesn't want it).
@@ -10,7 +10,7 @@ dropped (the user doesn't want it).
 | Action | macOS | Windows / Linux |
 |---|---|---|
 | Select the word, then add its next occurrence | Cmd+D | Ctrl+D |
-| Select every occurrence | Cmd+Alt+G (Sublime's Ctrl+Cmd+G can't be written in the keymap), Alt+F3 | Alt+F3 |
+| Select every occurrence | Cmd+Alt+G (Ctrl+Cmd+G can't be written in the keymap), Alt+F3 | Alt+F3 |
 | Split the selection into one per line | Cmd+Shift+L | Ctrl+Shift+L |
 | Add a cursor on the line above / below | Ctrl+Shift+Up / Down | Ctrl+Alt+Up / Down |
 | Add a cursor, or remove the one clicked | Cmd+Click | Ctrl+Click |
@@ -41,7 +41,7 @@ dropped (the user doesn't want it).
   Join Lines, Insert Line Before / After) run **once per line**: two cursors on the same
   line don't delete two lines.
 - **Copy / Cut:** each selection's text, one per line of the clipboard. With only carets
-  (nothing selected), each cursor's whole line, like Sublime.
+  (nothing selected), each cursor's whole line.
 - **Paste:** when the clipboard has as many pieces as there are cursors (what they
   copied, or as many lines), each cursor gets its own piece; otherwise every cursor
   gets the whole text.

@@ -3,8 +3,8 @@
 //! read from the same `Keymap`.
 //!
 //! Specs look like "Cmd+Shift+P". `Cmd` is the primary modifier (Cmd on macOS, Ctrl
-//! elsewhere; both always work); `Ctrl` is written where Sublime uses Ctrl everywhere (it
-//! matches the same way); plus `Shift` and `Alt`.
+//! elsewhere; both always work); `Ctrl` is written where a binding is Ctrl on every
+//! platform (it matches the same way); plus `Shift` and `Alt`.
 
 use crate::commands::{self, Command};
 use crate::config::{Config, KeyDoc};
