@@ -19,7 +19,9 @@ Usage:
 ```text
 farsub                      reopen the last project/folders (or the current folder)
 farsub .                    open a folder (several folders → a multi-folder window)
-farsub src/main.rs:42:5     open a file at line 42, column 5 (in the last session)
+farsub src/main.rs:42:5     open a file at line 42, column 5 (in the window used last,
+                            else a new window with the last session)
+farsub --new-window a.txt   open files in a new window instead
 farsub app.farsub-project   open a project (also: -p/--project FILE)
 farsub -a ../lib            add a folder to the last session's project
 farsub -n file.txt          don't restore any session

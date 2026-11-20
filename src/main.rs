@@ -18,6 +18,7 @@ mod grammar_install;
 mod grammars;
 mod gui;
 mod highlight;
+mod instance;
 mod installer;
 mod keymap;
 mod keys;
@@ -109,7 +110,23 @@ fn main() -> ExitCode {
         }),
     };
 
-    // Don't block the shell (like `subl`): relaunch detached and return, unless --wait.
+    // Files only: open them in the window used last, if one is running.
+    if std::env::var_os("FARSUB_DETACHED").is_none()
+        && cli::reuses_window(&args, &cwd)
+        && let Some(d) = &config.data_dir
+    {
+        let req = instance::Request {
+            files: (plan.files.iter())
+                .map(|f| (f.path.clone(), f.line, f.col))
+                .collect(),
+            stdin: stdin_text.clone(),
+        };
+        if instance::send(d, &req) {
+            return ExitCode::SUCCESS;
+        }
+    }
+
+    // Don't block the shell: relaunch detached and return, unless --wait.
     if !args.wait && std::env::var_os("FARSUB_DETACHED").is_none() {
         return detach(stdin_text.as_deref());
     }
@@ -154,6 +171,13 @@ fn main() -> ExitCode {
                     let _ = app.project.save_as(&f);
                 }
             }
+            if !app.settings_window
+                && let Some(d) = app.config.data_dir.clone()
+            {
+                let ctx = cc.egui_ctx.clone();
+                gui.instance = instance::Instance::listen(&d, move || ctx.request_repaint());
+            }
+            let app = &mut gui.app;
             for f in &plan.files {
                 app.open_at(&f.path, f.line, f.col);
             }

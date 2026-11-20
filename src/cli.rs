@@ -60,6 +60,10 @@ pub struct Args {
     #[arg(short, long)]
     pub add: bool,
 
+    /// Open files in a new window instead of the window used last.
+    #[arg(long)]
+    pub new_window: bool,
+
     /// Stay in the foreground until the window is closed (for $EDITOR / git).
     #[arg(short, long)]
     pub wait: bool,
@@ -276,6 +280,30 @@ pub fn plan(
     } else {
         plan(Target::Folders(vec![cwd.to_path_buf()]), vec![])
     })
+}
+
+/// Whether these arguments are only files (and/or `-`), which open in the window the
+/// user used last when one is running. Folders, projects, `--wait` and the window options
+/// start a new window.
+pub fn reuses_window(args: &Args, cwd: &Path) -> bool {
+    !args.paths.is_empty()
+        && !(args.new_window
+            || args.wait
+            || args.new
+            || args.add
+            || args.empty
+            || args.settings
+            || args.keymap
+            || args.new_project
+            || args.edit_project.is_some()
+            || args.project.is_some())
+        && args.paths.iter().all(|p| {
+            if p == "-" {
+                return true;
+            }
+            let path = abs(cwd, p);
+            !path.is_dir() && path.extension().is_none_or(|e| e != PROJECT_EXT)
+        })
 }
 
 /// Handle the non-GUI options. Returns `Some(exit code)` if one ran.
@@ -502,6 +530,23 @@ mod tests {
 
     fn args(v: &[&str]) -> Args {
         Args::try_parse_from(std::iter::once("farsub").chain(v.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn only_files_go_to_the_open_window() {
+        let d = std::env::temp_dir().join(format!("farsub-reuse-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        std::fs::write(d.join("a.rs"), "x").unwrap();
+        let r = |v: &[&str]| reuses_window(&args(v), &d);
+        assert!(r(&["a.rs"]));
+        assert!(r(&["a.rs:3:2", "new.txt", "-"]));
+        assert!(r(&["-"]));
+        assert!(!r(&[]), "nothing: the last session, in a new window");
+        assert!(!r(&["sub"]), "folders open a new window");
+        assert!(!r(&["a.rs", "x.farsub-project"]));
+        for flag in ["--new-window", "-w", "-n", "--empty"] {
+            assert!(!r(&[flag, "a.rs"]), "{flag}");
+        }
     }
 
     #[test]

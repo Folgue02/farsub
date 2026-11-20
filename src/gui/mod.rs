@@ -174,6 +174,10 @@ pub struct Gui {
     pub tab_scroll: HashMap<usize, (f32, Option<usize>)>,
     /// The buffer whose tab × the last press on a tab landed on.
     close_press: Option<usize>,
+    /// This window's listing for `farsub FILE` (none in settings windows and tests), and
+    /// whether the window had focus last frame.
+    pub instance: Option<(crate::instance::Instance, std::sync::mpsc::Receiver<crate::instance::Request>)>,
+    was_focused: bool,
     /// The tab (buffer id) being dragged to another place or group.
     tab_drag: Option<usize>,
     /// This frame's tabs (group, buffer id, rect) and groups (tab strip, column), where a
@@ -258,6 +262,8 @@ impl Gui {
             sidebar_sel_px: None,
             tab_scroll: HashMap::new(),
             close_press: None,
+            instance: None,
+            was_focused: false,
             tab_drag: None,
             tab_hits: Vec::new(),
             group_cols: Vec::new(),
@@ -376,6 +382,7 @@ impl Gui {
     /// One full frame: input, background events, drawing.
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        self.remote_requests(&ctx);
         // Every widget is custom-drawn and keys are routed by the app, so egui's own widget
         // focus must never hold: otherwise Tab/Ctrl+Shift+Tab walk it onto a menu-bar button
         // and the next Enter "clicks" it.
@@ -633,6 +640,33 @@ impl Gui {
         let (cw, rh) = (sane(cw, 0.6), sane(rh, 1.2));
         let lh = (rh * 1.35).round();
         (cw, lh, rh)
+    }
+}
+
+impl Gui {
+    /// Files sent by `farsub FILE` open here and bring the window to the front; focusing
+    /// the window makes it the one they go to.
+    fn remote_requests(&mut self, ctx: &egui::Context) {
+        let Some((inst, rx)) = &self.instance else { return };
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.was_focused {
+            inst.focused();
+        }
+        self.was_focused = focused;
+        let reqs: Vec<_> = rx.try_iter().collect();
+        for r in &reqs {
+            for (path, line, col) in &r.files {
+                self.app.open_at(path, *line, *col);
+            }
+            if let Some(t) = &r.stdin {
+                self.app.open_untitled(t);
+            }
+            self.app.focus = Focus::Editor;
+        }
+        if !reqs.is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
     }
 }
 

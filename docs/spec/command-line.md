@@ -5,6 +5,15 @@
 - **Does not block the shell**: the command hands off to a background process and returns
   immediately (like `subl`). `-w/--wait` keeps it in the foreground until the window
   closes, for use as `$EDITOR` / `git config core.editor "farsub -w"`.
+- **Files open in the window used last** (decided 2026-11-20): when the arguments are
+  only files (and/or `-`), and a farsub window with the same data folder is running,
+  they open in the most recently focused one, which comes to the front; no new window
+  starts. Folders, projects, no arguments, `-w`, `-n`, `-a`, `--empty`, the settings
+  options and `--new-window` still start a new window. How: each window (except the
+  settings ones) listens on a localhost port and lists itself in
+  `<data>/windows/<pid>-<port>.json` (port, a random token the request must carry, last
+  focus time; owner-only on Unix); the listing goes when the window closes, and one whose
+  window doesn't answer is removed.
 - Argument errors are reported in the shell (exit code 2) before handing off.
 - `--empty` opens a clean window: no folder, no project, no session (files given too still
   open in it). File › New Window (Cmd+Shift+N) starts one as a separate

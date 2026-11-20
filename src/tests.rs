@@ -4563,3 +4563,23 @@ fn tabs_drag_between_groups_and_reorder() {
     assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
     assert_eq!(names(&h, 0), ["b.txt"]);
 }
+
+#[test]
+fn files_from_the_command_line_open_in_this_window() {
+    let d = project("remote", &[("a.txt", "one\ntwo\nthree\n")]);
+    let mut h = harness(&d);
+    let data = d.join(".data");
+    h.state_mut().instance = crate::instance::Instance::listen(&data, || {});
+    let req = crate::instance::Request {
+        files: vec![(d.join("a.txt"), Some(3), None)],
+        stdin: Some("piped".into()),
+    };
+    assert!(crate::instance::send(&data, &req));
+    steps(&mut h, 2);
+    let app = &h.state().app;
+    let names: Vec<String> = app.buffers.iter().map(|b| b.name()).collect();
+    assert!(names.contains(&"a.txt".to_string()), "{names:?}");
+    assert_eq!(app.buf().unwrap().lines[0], "piped");
+    let a = app.buffers.iter().find(|b| b.name() == "a.txt").unwrap();
+    assert_eq!(a.primary().cursor.line, 2);
+}
