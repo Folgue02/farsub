@@ -70,7 +70,7 @@ keys = "Cmd+Shift+E"
 command = "reveal_in_sidebar"
 [[keys]]
 keys = "Ctrl+Tab"
-command = "next_buffer"
+command = "next_recent_file"
 [[keys]]
 keys = "Ctrl+PageDown"
 command = "next_buffer"
@@ -79,7 +79,7 @@ keys = "Cmd+Alt+Right"
 command = "next_buffer"
 [[keys]]
 keys = "Ctrl+Shift+Tab"
-command = "prev_buffer"
+command = "prev_recent_file"
 [[keys]]
 keys = "Ctrl+PageUp"
 command = "prev_buffer"

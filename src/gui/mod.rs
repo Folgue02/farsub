@@ -383,6 +383,8 @@ impl Gui {
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.remote_requests(&ctx);
+        let ctrl = ctx.input(|i| i.modifiers.ctrl);
+        self.app.track_recent(ctrl);
         // Every widget is custom-drawn and keys are routed by the app, so egui's own widget
         // focus must never hold: otherwise Tab/Ctrl+Shift+Tab walk it onto a menu-bar button
         // and the next Enter "clicks" it.

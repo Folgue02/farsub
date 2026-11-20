@@ -149,6 +149,9 @@ impl App {
                     self.quit = true;
                 }
             }
+            NextRecentFile | PrevRecentFile => {
+                self.cycle_recent(if cmd == NextRecentFile { 1 } else { -1 });
+            }
             NextBuffer | PrevBuffer => {
                 if self.buf().is_some() {
                     self.cycle_tab(if cmd == NextBuffer { 1 } else { -1 });

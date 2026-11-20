@@ -166,6 +166,60 @@ impl App {
         }
     }
 
+    /// Called every frame: the current file moves to the front of the recent list, except
+    /// while Ctrl+Tab is cycling (Ctrl still held), so the order stays put until the user
+    /// lets go of Ctrl and the file they stopped on counts as used.
+    pub fn track_recent(&mut self, ctrl_down: bool) {
+        if self.recent_cycle.is_some() {
+            if ctrl_down {
+                return;
+            }
+            self.recent_cycle = None;
+        }
+        let Some(id) = self.buf().map(|b| b.id) else {
+            return;
+        };
+        if self.recent_files.first() != Some(&id) {
+            self.recent_files.retain(|&r| r != id);
+            self.recent_files.insert(0, id);
+        }
+    }
+
+    /// Ctrl+Tab / Ctrl+Shift+Tab: step through the open files by when they were last
+    /// used, in any group. Each press while Ctrl is held goes one further.
+    pub(super) fn cycle_recent(&mut self, d: isize) {
+        let Some(cur) = self.buf().map(|b| b.id) else {
+            return;
+        };
+        let (order, at) = self.recent_cycle.take().unwrap_or_else(|| {
+            // The current file first, then the others by last use, then any never shown.
+            let mut order = vec![cur];
+            let rest = self.recent_files.iter().copied();
+            let all = self.buffers.iter().map(|b| b.id);
+            for id in rest.chain(all) {
+                if !order.contains(&id) && self.buf_index(id).is_some() {
+                    order.push(id);
+                }
+            }
+            (order, 0)
+        });
+        let order: Vec<usize> = order
+            .into_iter()
+            .filter(|&id| self.buf_index(id).is_some())
+            .collect();
+        if order.is_empty() {
+            return;
+        }
+        let at = (at as isize + d).rem_euclid(order.len() as isize) as usize;
+        if let Some(i) = self.buf_index(order[at]) {
+            self.set_cur(i);
+        }
+        self.recent_cycle = Some((order, at));
+        self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
+    }
+
     /// Cycle tabs within the focused group.
     pub(super) fn cycle_tab(&mut self, d: isize) {
         let tabs = self.group_tabs(self.group);

@@ -494,6 +494,10 @@ pub struct App {
     pub group: usize,
     /// Last active buffer id per group.
     pub group_active: [Option<usize>; MAX_GROUPS],
+    /// Open files (buffer ids), most recently used first, for Ctrl+Tab.
+    pub recent_files: Vec<usize>,
+    /// While Ctrl is held after Ctrl+Tab: the order it started from and how far along it is.
+    pub recent_cycle: Option<(Vec<usize>, usize)>,
     /// Width of each group as a fraction of the editor area (sums to 1).
     pub group_split: Vec<f32>,
     /// Open while "Preferences: Settings" shows defaults beside the user file.
@@ -610,6 +614,8 @@ impl App {
             layout: 1,
             group: 0,
             group_active: [None; MAX_GROUPS],
+            recent_files: Vec::new(),
+            recent_cycle: None,
             group_split: vec![1.0],
             settings_view: Vec::new(),
             settings_window: false,

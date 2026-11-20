@@ -42,6 +42,15 @@
   in its own group. Next/Previous File, Close Other Tabs / Tabs to the Right, and tab
   numbers (Cmd+1–9 on macOS; Alt+1–9 on Windows/Linux) work within the
   focused group.
+- **Ctrl+Tab switches to recent files** (decided 2026-11-20; Ctrl on every platform,
+  also macOS): it goes to the file used before the current one, in any group. Pressing
+  Tab again while Ctrl is still held goes one further back (A → B → C), and the order
+  doesn't change until Ctrl is let go; then the file it stopped on counts as the most
+  recent. So Ctrl+Tab, released, flips between the last two files. Ctrl+Shift+Tab goes
+  the other way (from the least recent). No list pops up: the tabs switch as you go.
+  From the command palette ("View: Switch to Recent File") it acts like one press.
+  Next/Previous File in tab order stay on Ctrl+PageDown/PageUp and Cmd+Alt+→/←. In a
+  terminal, Ctrl+Tab still cycles terminal tabs.
 - A group whose last tab closes stays focused and empty; editing commands do nothing
   there. Removing columns moves their tabs into the last remaining group.
 - The layout, each file's group and the focused group are saved in the workspace.

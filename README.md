@@ -180,8 +180,9 @@ tabs and language-server state.
 Editing keys: Cmd+D (select word, then next occurrence), Cmd+L, Cmd+Shift+K,
 Cmd+Shift+D, Alt+↑/↓ (move line), Cmd+/ (comment), Cmd+] / Cmd+[, Cmd+Enter,
 Cmd+Shift+Enter, Cmd+J, F9 (sort lines). Also Cmd+Z / Cmd+Shift+Z, Cmd+S,
-Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab and Cmd+1…9
-(switch tabs), Cmd+= / Cmd+- (zoom), Alt+- (jump back). Copying with nothing selected
+Cmd+Shift+S, Cmd+Alt+S, Cmd+W, Cmd+Shift+T (reopen closed), Ctrl+Tab (the file used
+before; keep Ctrl held and press Tab again to go further back), Ctrl+PageDown/PageUp and
+Cmd+1…9 (switch tabs), Cmd+= / Cmd+- (zoom), Alt+- (jump back). Copying with nothing selected
 takes the whole line. Brackets and quotes auto-close, and Enter auto-indents.
 
 ## Find, Replace and Find in Files

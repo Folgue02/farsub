@@ -4583,3 +4583,70 @@ fn files_from_the_command_line_open_in_this_window() {
     let a = app.buffers.iter().find(|b| b.name() == "a.txt").unwrap();
     assert_eq!(a.primary().cursor.line, 2);
 }
+
+#[test]
+fn ctrl_tab_switches_to_recent_files() {
+    let d = project(
+        "recent",
+        &[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n"), ("d.txt", "d\n")],
+    );
+    let mut h = harness(&d);
+    for f in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+        h.state_mut().app.open_file(&d.join(f), true);
+        steps(&mut h, 1);
+    }
+    // Used last: d, c, b, a. Then b again: b, d, c, a.
+    let b = h.state().app.group_tabs(0)[1];
+    h.state_mut().app.set_cur(b);
+    steps(&mut h, 1);
+    let cur = |h: &Harness<'static, Gui>| h.state().app.buf().unwrap().name();
+    // Ctrl held while Tab is pressed (and released).
+    let tab = |h: &mut Harness<'static, Gui>, shift: bool| {
+        let m = if shift { Modifiers::CTRL | Modifiers::SHIFT } else { Modifiers::CTRL };
+        h.event(Event::ModifiersChanged(m));
+        for pressed in [true, false] {
+            h.event(Event::Key {
+                key: Key::Tab,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: m,
+            });
+        }
+        h.event(Event::ModifiersChanged(Modifiers::CTRL));
+        steps(h, 1);
+    };
+    let release = |h: &mut Harness<'static, Gui>| {
+        h.event(Event::ModifiersChanged(Modifiers::NONE));
+        steps(h, 1);
+    };
+    // One Ctrl+Tab: the file used before (d); again: back to b.
+    tab(&mut h, false);
+    release(&mut h);
+    assert_eq!(cur(&h), "d.txt");
+    tab(&mut h, false);
+    release(&mut h);
+    assert_eq!(cur(&h), "b.txt");
+    // Holding Ctrl and pressing Tab twice goes two back (c), without reordering on the way.
+    tab(&mut h, false);
+    assert_eq!(cur(&h), "d.txt");
+    tab(&mut h, false);
+    assert_eq!(cur(&h), "c.txt");
+    release(&mut h);
+    // Now c, b, d, a. Ctrl+Shift+Tab goes the other way: the least recent first.
+    tab(&mut h, true);
+    assert_eq!(cur(&h), "a.txt");
+    release(&mut h);
+    // Ctrl+Tab still switches back to c after that.
+    tab(&mut h, false);
+    release(&mut h);
+    assert_eq!(cur(&h), "c.txt");
+    // A closed file drops out.
+    h.state_mut().app.run(crate::commands::Command::CloseBuffer);
+    steps(&mut h, 1);
+    let after_close = cur(&h);
+    tab(&mut h, false);
+    release(&mut h);
+    assert_ne!(cur(&h), "c.txt");
+    assert_ne!(cur(&h), after_close);
+}
