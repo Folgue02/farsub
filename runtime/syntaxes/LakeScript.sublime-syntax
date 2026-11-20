@@ -1,7 +1,7 @@
 %YAML 1.2
 ---
 # Bundled with farsub. LakeScript (.lks), until it has a tree-sitter grammar.
-# Follows the lexer in lakescript's crates/lakescript/src/lexer.rs.
+# Follows LakeScript 0.7.1's lexical syntax.
 name: LakeScript
 file_extensions: [lks]
 first_line_match: '^#!.*\blks\b'
@@ -9,7 +9,12 @@ scope: source.lakescript
 
 variables:
   name: '[A-Za-z_][A-Za-z0-9_]*'
-  types: '\b(?:string|number|bool|list|map|any|void|regex|symbol|range|result|command)\b'
+  builtin_types: '\b(?:void|any|string|number|bool|symbol|list|map|range|regex|result|command)\b'
+  builtin_classes: '\b(?:IEquals|IOrdered|IAdd|ISub|IMul|IDiv|IMod|IPow|INeg|IIndex|ISetIndex|IContains|Exception|IOError|FileNotFound|PermissionDenied|ValueError|UsageError|TypeError|IndexError|ArithmeticError|CommandFailed)\b'
+  # PascalCase: a capital first and at least one lowercase letter (SCREAMING_CASE is
+  # an enum value).
+  pascal: '\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\b'
+  reserved: '(?:let|const|class|interface|enum|use|pub|if|else|for|in|while|switch|case|default|break|continue|return|yield|try|catch|finally|throw|true|false|null)\b'
 
 contexts:
   main:
@@ -18,39 +23,245 @@ contexts:
     - include: comments
     - include: strings
     - include: numbers
-    - match: '\$({{name}})'
-      scope: variable.other.lakescript
-    - match: '\b(?:let|const|type|use|pub)\b'
-      scope: storage.modifier.lakescript
-    - match: '\b(?:if|else|for|in|while|switch|case|default|break|continue|return|yield|try|catch)\b'
-      scope: keyword.control.lakescript
-    - match: '\b(?:true|false|null)\b'
-      scope: constant.language.lakescript
-    # A function declaration: `number fib(` / `bool prime?(`.
-    - match: '^\s*(?:(pub)\s+)?({{name}})(\s*<[^>()]*>)?\s+({{name}}\??)(?=\s*\()'
+    - include: declarations
+    - include: expressions
+
+  # class / interface / enum / command headers, and the bodies where their contextual
+  # words are keywords.
+  declarations:
+    - match: '\b(class)\s+({{name}})'
       captures:
-        1: storage.modifier.lakescript
-        2: storage.type.lakescript
-        4: entity.name.function.lakescript
-    - match: '{{types}}'
-      scope: storage.type.lakescript
-    # A call: `outln(` / `prime?(`.
-    - match: '({{name}}\??)(?=\s*\()'
-      scope: variable.function.lakescript
-    # Module paths: `paths::load()`.
+        1: keyword.declaration.class.lakescript
+        2: entity.name.class.lakescript
+      push: class-header
+    - match: '\b(interface)\s+({{name}})'
+      captures:
+        1: keyword.declaration.interface.lakescript
+        2: entity.name.interface.lakescript
+      push: class-header
+    - match: '\b(enum)\s+({{name}})'
+      captures:
+        1: keyword.declaration.enum.lakescript
+        2: entity.name.enum.lakescript
+      push: enum-header
+    # `command` is a keyword only before a PascalCase name and `{`; elsewhere it's a type.
+    - match: '\b(command)\s+([A-Z][A-Za-z0-9_]*)(?=\s*\{)'
+      captures:
+        1: keyword.declaration.command.lakescript
+        2: entity.name.class.lakescript
+      push: command-header
+
+  class-header:
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      set: class-body
+    - match: ';'
+      scope: punctuation.terminator.lakescript
+      pop: true
+    - match: '\b(?:extends|implement)\b'
+      scope: keyword.other.lakescript
+    - include: main
+
+  class-body:
+    - meta_scope: meta.block.class.lakescript
+    - match: '\}'
+      scope: punctuation.section.block.end.lakescript
+      pop: true
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      push: class-body
+    - include: class-words
+    - include: main
+
+  class-words:
+    - match: '\b(?:extends|implement|override|static)\b'
+      scope: keyword.other.lakescript
+    # The constructor: `new(...) {`.
+    - match: '\bnew(?=\s*\()'
+      scope: keyword.other.new.lakescript
+    - match: '\bSelf\b'
+      scope: keyword.other.self.lakescript
+
+  enum-header:
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      set: enum-body
+    - match: ';'
+      scope: punctuation.terminator.lakescript
+      pop: true
+    - include: main
+
+  enum-body:
+    - meta_scope: meta.block.enum.lakescript
+    - match: '\}'
+      scope: punctuation.section.block.end.lakescript
+      pop: true
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      push: class-body
+    - match: '\b[A-Z][A-Z0-9_]*\b'
+      scope: constant.other.enum.lakescript
+    - include: class-words
+    - include: main
+
+  command-header:
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      set: command-body
+    - include: main
+
+  command-body:
+    - meta_scope: meta.block.command.lakescript
+    - match: '\}'
+      scope: punctuation.section.block.end.lakescript
+      pop: true
+    - match: '\b(subcommand)\s+([A-Z][A-Za-z0-9_]*)'
+      captures:
+        1: keyword.other.lakescript
+        2: entity.name.class.lakescript
+    - match: '\{'
+      scope: punctuation.section.block.begin.lakescript
+      push: command-body
+    # flag(v, count)
+    - match: '\b(flag)\s*(\()'
+      captures:
+        1: keyword.other.lakescript
+        2: punctuation.section.parens.begin.lakescript
+      push: flag-args
+    - match: '\b(?:flag|optional)\b'
+      scope: keyword.other.lakescript
+    - include: main
+
+  flag-args:
+    - match: '\)'
+      scope: punctuation.section.parens.end.lakescript
+      pop: true
+    - match: '\bcount\b'
+      scope: keyword.other.lakescript
+    - include: main
+
+  # `number area(`, `pub static Point origin(`, `list<string> names(`, `bool empty?(`:
+  # the name after a type, at the start of a line or after `{` / `;`.
+  function-decl:
+    - match: '{{name}}\??(?=\s*\()'
+      scope: entity.name.function.lakescript
+      pop: true
+    - match: '\b(?:pub|static|override|const)\b'
+      scope: storage.modifier.lakescript
+    - include: types
+    - match: '[<>,?]'
+      scope: keyword.operator.lakescript
+    - match: '{{name}}'
+
+  types:
+    - match: '{{builtin_types}}'
+      scope: support.type.lakescript
+    - match: '{{builtin_classes}}'
+      scope: support.type.class.lakescript
+    - match: '{{pascal}}'
+      scope: support.class.lakescript
+
+  expressions:
+    - match: '(?:^|(?<=[{;]))\s*(?=(?:(?:pub|static|override|const)\s+)*(?!{{reserved}})\??{{name}}(?:<[^()]*?>)?\s+{{name}}\??\s*\()'
+      push: function-decl
+    - match: '\${{name}}'
+      scope: variable.other.lakescript
+    # @field, @method(), @ (the object), @super.
+    - match: '@super\b'
+      scope: variable.language.super.lakescript
+    - match: '@{{name}}\??(?=\s*\()'
+      scope: variable.function.member.lakescript
+    - match: '@{{name}}'
+      scope: variable.other.member.lakescript
+    - match: '@'
+      scope: variable.language.this.lakescript
+    - match: '\b(?:let|const|pub)\b'
+      scope: storage.modifier.lakescript
+    - match: '\buse\b'
+      scope: keyword.control.import.lakescript
+      push: use-line
+    - match: '\b(?:return|yield)\b'
+      scope: keyword.control.return.lakescript
+    - match: '\b(?:if|else|for|in|while|switch|case|default|break|continue|try|catch|finally|throw)\b'
+      scope: keyword.control.lakescript
+    - match: '\b(?:true|false)\b'
+      scope: constant.language.boolean.lakescript
+    - match: '\bnull\b'
+      scope: constant.language.null.lakescript
+    - match: '::'
+      scope: punctuation.accessor.lakescript
+    # Status::PAID is an enum value; Git::Commit is a type.
+    - match: '(?<=::)[A-Z][A-Z0-9_]*\b'
+      scope: constant.other.enum.lakescript
+    - include: types
+    # Module members: `paths::load()`, `fs::$sep`.
     - match: '{{name}}(?=::)'
       scope: entity.name.namespace.lakescript
-    - match: ':{{name}}'
+    # A call: `outln(` / `empty?(`.
+    - match: '{{name}}\??(?=\s*\()'
+      scope: variable.function.lakescript
+    - match: '(?<=\.){{name}}'
+      scope: variable.other.member.lakescript
+    # A named argument: `name: value`.
+    - match: '\b{{name}}(?=\s*:(?!:))'
+      scope: variable.parameter.lakescript
+    - match: '(?<![:\w]):{{name}}'
       scope: constant.other.symbol.lakescript
-    # Test operators: -f, -like, -notin…
-    - match: '(?<![\w$)\]])-(?:f|d|x|r|w|like|match|in|notlike|notmatch|notin)\b'
+    # Test operators: a `-` directly followed by the word.
+    - match: '(?<!-)-(?:notlike|notmatch|notin|like|match|in|f|d|x|r|w)\b'
       scope: keyword.operator.word.lakescript
-    - match: '=>|->|\.\.\.|\.\.=?|\?\?|\?\.|\*\*=?|<<=?|>>>=?|>>=?|[-+*/%&|^=!<>]=?|&&|\|\||\+\+|--|[~?]'
+    - match: '=>|->|\.\.\.|\.\.=?|\?\?|\?\.|\*\*=?|<<=?|>>>=?|>>=?|&&|\|\||\+\+|--|[-+*/%&|^=!<>]=?|[~?:]'
       scope: keyword.operator.lakescript
-    - match: '[;,]'
+    - match: '\.'
+      scope: punctuation.accessor.lakescript
+    - match: ','
+      scope: punctuation.separator.lakescript
+    - match: ';'
+      scope: punctuation.terminator.lakescript
+
+  # use std/fs;  use config/paths::{load, $defaultPath as $p};  use store/Customer;
+  use-line:
+    - meta_scope: meta.import.lakescript
+    - match: ';'
+      scope: punctuation.terminator.lakescript
+      pop: true
+    - match: '$'
+      pop: true
+    - match: '\{'
+      scope: punctuation.section.braces.begin.lakescript
+      push: use-names
+    - include: use-parts
+    - match: '{{name}}'
+      scope: entity.name.namespace.lakescript
+
+  use-names:
+    - match: '\}'
+      scope: punctuation.section.braces.end.lakescript
+      pop: true
+    - include: comments
+    - include: use-parts
+    - match: ','
+      scope: punctuation.separator.lakescript
+
+  use-parts:
+    - match: '\bas\b'
+      scope: keyword.control.import.lakescript
+    - match: '\${{name}}'
+      scope: variable.other.lakescript
+    - match: '{{pascal}}'
+      scope: support.class.lakescript
+    - match: '::'
+      scope: punctuation.accessor.lakescript
+    - match: '/'
       scope: punctuation.separator.lakescript
 
   comments:
+    - match: '///'
+      scope: punctuation.definition.comment.lakescript
+      push:
+        - meta_scope: comment.line.documentation.lakescript
+        - match: '$'
+          pop: true
     - match: '//'
       scope: punctuation.definition.comment.lakescript
       push:
@@ -104,7 +315,7 @@ contexts:
           pop: true
         - include: escapes
         - include: interpolation
-    # %x"…" shell commands: interpolated, backslashes kept, may span lines.
+    # %x"…" commands: interpolated, backslashes kept, may span lines.
     - match: '%x"'
       push:
         - meta_scope: string.interpolated.command.lakescript

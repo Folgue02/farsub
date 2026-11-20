@@ -1054,6 +1054,135 @@ mod coverage {
         assert_ne!(at(4, 0), Some(style("string")), "an unclosed string ends with its line");
     }
 
+    /// LakeScript 0.7.1's sample script: `@` fields, contextual words (`command`, `flag`,
+    /// `count`, `new`, `Self`, `implement`), enum values, doc comments, test operators.
+    #[test]
+    fn lakescript_contextual_words_and_fields() {
+        use super::HlCache;
+        let mut s = super::Syntax::load("Monokai Extended");
+        s.set_languages(&crate::config::Config::builtin().languages);
+        let text: Vec<String> = r#"#!/usr/bin/lks
+use std/process;
+
+/// A tiny todo list
+command Todo {
+    /// More output
+    flag(v, count) number @verbose;
+    subcommand Add {
+        string @task;
+        flag(p) Priority @priority = Priority::NORMAL;
+    }
+}
+
+enum Priority { LOW, NORMAL, HIGH; }
+
+interface IShape {
+    number area();
+    string describe() = f"area {@area().round(2)}";
+}
+
+class Circle extends Base {
+    pub const number @radius;
+    number $made = 0;
+    pub new(@radius) {
+        @super('circle');
+        Self::$made += 1;
+    }
+    implement IShape { number area() = 3.14 * @radius ** 2; }
+    implement IMul<number, Circle> { Circle mul(number $n) = Circle(@radius * $n); }
+}
+
+const $args = Todo::parse();
+const $files = %w[a.txt b.txt];
+if (-f $files[0] && $files[0] -like '*.txt') {
+    %x"git add {$files}".pipe(%x"sort").run();
+}
+const $n = (try process::shell('ls | wc -l').output()).orElse('0');
+outln($args.subcommand?.is(Todo::Add) ?? false);
+command $c = %x"ls";
+if ($files.empty?()) { outln(@); }"#
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        let mut hl = HlCache::new("lakescript".into());
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        let ln = |pat: &str| text.iter().position(|l| l.contains(pat)).unwrap();
+        // The style at the start of `word` on the first line containing `line`.
+        let at = |line: &str, word: &str| {
+            let n = ln(line);
+            let col = text[n].find(word).unwrap();
+            hl.line(n)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let style = |c: &str| s.theme.style_for(c);
+        let check = |line: &str, word: &str, cap: &str| {
+            assert!(style(cap).is_some(), "the theme styles {cap}");
+            assert_eq!(at(line, word), style(cap), "`{word}` in `{line}` is {cap}");
+        };
+        // The checks below tell these apart.
+        for (a, b) in [
+            ("keyword", "type.builtin"),
+            ("keyword", "type"),
+            ("property", "function.call"),
+            ("constant", "type"),
+        ] {
+            assert_ne!(style(a), style(b), "{a} and {b} look alike in this theme");
+        }
+        assert_ne!(at("flag(v, count)", "v,"), style("keyword"), "`v` is a plain name");
+        assert_ne!(at("const $n", "orElse"), style("keyword"));
+        // Doc comments get their own capture (this theme colors it like a comment).
+        let mut m = crate::fallback::ScopeMap::default();
+        m.merge(include_str!("../runtime/scopes.toml")).unwrap();
+        assert_eq!(
+            m.capture("comment.line.documentation.lakescript"),
+            Some("comment.documentation")
+        );
+        check("/// A tiny", "A tiny", "comment.documentation");
+        check("/// More", "More", "comment.documentation");
+        check("command Todo", "command", "keyword");
+        check("command Todo", "Todo", "type");
+        check("command $c", "command", "type.builtin");
+        check("flag(v, count)", "flag", "keyword");
+        check("flag(v, count)", "count", "keyword");
+        check("flag(v, count)", "number", "type.builtin");
+        check("flag(v, count)", "@verbose", "property");
+        check("subcommand Add", "subcommand", "keyword");
+        check("subcommand?.is", "subcommand", "property");
+        check("Priority::NORMAL", "NORMAL", "constant");
+        check("Priority::NORMAL", "Priority @", "type");
+        check("enum Priority", "LOW", "constant");
+        check("interface IShape", "IShape", "type");
+        check("number area();", "area", "function");
+        check("string describe()", "describe", "function");
+        assert_ne!(at("string describe()", "@area"), style("string"), "interpolated code");
+        check("pub new(", "new", "keyword");
+        check("@super(", "@super", "variable.builtin");
+        check("Self::$made", "Self", "keyword");
+        assert!(at("Self::$made", "$made").is_some());
+        check("implement IShape {", "implement", "keyword");
+        check("implement IShape {", "area", "function");
+        check("implement IMul", "IMul", "type.builtin");
+        check("implement IMul", "mul", "function");
+        check("class Circle", "extends", "keyword");
+        check("class Circle", "Base", "type");
+        check("%w[", "a.txt", "string");
+        check("-f $files", "-f", "keyword.operator");
+        check("-f $files", "-like", "keyword.operator");
+        check("git add", "git add", "string");
+        assert_ne!(at("git add", "$files"), style("string"), "{{$files}} is code");
+        check("process::shell", "process", "module");
+        check("process::shell", "shell", "function.call");
+        check("outln($args", "Add", "type");
+        check("empty?()", "empty?", "function.call");
+        check("use std/process", "use", "keyword.import");
+        check("use std/process", "process", "module");
+        assert!(at("outln(@)", "@)").is_some(), "a lone @ is the object");
+    }
+
     #[test]
     fn scope_map_uses_the_longest_prefix() {
         let mut m = crate::fallback::ScopeMap::default();

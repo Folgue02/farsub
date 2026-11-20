@@ -111,11 +111,24 @@
   there. Block-comment support is still to do.
 - **LakeScript** (`.lks`, `#!…lks` scripts; decided 2026-11-18, temporary until it has a
   tree-sitter grammar): a built-in language with a bundled regex grammar
-  (`runtime/syntaxes/LakeScript.sublime-syntax`) following lakescript's lexer and its
-  author's notes: `$variables`, keywords, types (`string`, `number`, `list`, `result`…)
-  and function declarations (`bool prime?(…)`), `//`, `///` and `/* */` comments,
-  `'…'` and `"…"` (single-line), `"""…"""`, raw `r"…"` / `r#"…"#`, `f"…"` with `{…}`
-  interpolation (`{{` / `}}` literal), `%x"…"` commands (interpolated, may span lines),
-  `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` / `%i[…]` lists, `:symbols`,
-  `module::` paths, numbers (hex, octal, binary, `_`), test operators (`-f`, `-like`,
-  `-notin`…). Toggle Comment uses `//`; indentation 4 spaces.
+  (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.7.1's lexical
+  syntax (updated 2026-11-20):
+  - Names: `$variables` (also `Self::$count`), `@field`, `@method()`, a lone `@` and
+    `@super`, calls and declarations (`bool empty?(…)`, `pub static Point origin()`),
+    PascalCase types, `IName` interfaces, `Enum::VALUE` enum values, `module::` members.
+  - Keywords, built-in types (`string`, `number`, `command`…), built-in interfaces and
+    exceptions (`IMul`, `ValueError`…). Contextual words are keywords only where they
+    mean something: `extends`, `implement`, `override`, `static`, `new(` and `Self` in
+    class / interface / enum bodies; `command Name {`, `subcommand`, `optional`, `flag`
+    and `count` (inside `flag(…)`) in command declarations (`command` elsewhere is the
+    type); `as` in `use` lines, whose paths are modules and whose PascalCase last part
+    is a type.
+  - `//`, `/* */` and `///` doc comments (the `comment.documentation` color).
+  - Literals: `'…'` and `"…"` (single-line), `"""…"""`, raw `r"…"` / `r#"…"#`, `f"…"`
+    with `{…}` interpolation (`{{` / `}}` literal), `%x"…"` commands (interpolated, may
+    span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` / `%i[…]` lists,
+    `:symbols`, numbers (hex, octal, binary, `_`), named arguments (`name: value`).
+  - Test operators (`-f`, `-like`, `-notin`…: a `-` directly followed by the word) and
+    the other operators.
+
+  Toggle Comment uses `//`; indentation 4 spaces.

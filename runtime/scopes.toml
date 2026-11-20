@@ -11,6 +11,7 @@
 [scopes]
 "comment" = "comment"
 "comment.block.documentation" = "comment.documentation"
+"comment.line.documentation" = "comment.documentation"
 "punctuation.definition.comment" = ""
 
 "string" = "string"
