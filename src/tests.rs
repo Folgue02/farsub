@@ -4650,3 +4650,38 @@ fn ctrl_tab_switches_to_recent_files() {
     assert_ne!(cur(&h), "c.txt");
     assert_ne!(cur(&h), after_close);
 }
+
+#[test]
+fn switching_tabs_keeps_each_files_scroll() {
+    let long: String = (0..300).map(|i| format!("line {i}\n")).collect();
+    let d = project("keepscroll", &[("a.txt", long.as_str()), ("b.txt", "b\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    // Scroll a.txt down with the wheel; the cursor stays on line 1.
+    let at = h.state().editor_rect_for_test().center();
+    h.event(Event::PointerMoved(at));
+    for _ in 0..10 {
+        h.event(Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -10.0),
+            modifiers: Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+        });
+        steps(&mut h, 1);
+    }
+    steps(&mut h, 2);
+    let top = h.state().app.buf().unwrap().scroll_y;
+    assert!(top > 20, "scrolled: {top}");
+    assert_eq!(h.state().app.buf().unwrap().cursor.line, 0);
+    // To b.txt and back: a.txt is where it was, not back at the cursor.
+    h.state_mut().app.open_file(&d.join("b.txt"), true);
+    steps(&mut h, 2);
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().scroll_y, top);
+    // Moving the cursor still brings it into view.
+    press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    assert!(h.state().app.buf().unwrap().scroll_y < top);
+}

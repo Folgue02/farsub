@@ -473,13 +473,13 @@ impl Gui {
         }
 
         // Keep the cursor visible when it moved (not when the user scrolled).
-        let key = (b.id, b.cursor, b.version);
+        let key = (b.cursor, b.version);
         let cur_dcol = display_col(&b.lines[b.cursor.line], b.cursor.col);
         let cur_row = (
             b.cursor.line,
             seg_of(&line_segs(b, b.cursor.line, wrap), cur_dcol),
         );
-        if active_group && self.last_cursor != Some(key) {
+        if active_group && self.last_cursor.get(&b.id) != Some(&key) {
             let pg = self.app.page;
             let margin = 2.min(pg / 3);
             let top = (b.scroll_y, b.scroll_row);
@@ -505,7 +505,7 @@ impl Gui {
             } else if cur_dcol + 2 >= b.scroll_x + text_cols {
                 b.scroll_x = cur_dcol + 4 - text_cols.min(cur_dcol + 4);
             }
-            self.last_cursor = Some(key);
+            self.last_cursor.insert(b.id, key);
         }
         b.scroll_y = b.scroll_y.min(b.lines.len().saturating_sub(1));
         let rows = build_rows(

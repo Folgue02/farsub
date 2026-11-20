@@ -148,5 +148,8 @@
   pane, with no partial row past it (it used to slide a bit further and snap back).
   Sideways, wheel / trackpad scrolling keeps fractions of a column (slow swipes move) and
   stops once the end of the widest line is in view.
+- Each file keeps its own scroll position: switching tabs (or to another group) shows a
+  file where it was left, even when it was scrolled away from its cursor. Only moving
+  the cursor (typing, keys, Goto) scrolls the view to it.
 - Scrollbars only scroll; the cursor doesn't move. The mouse wheel scrolls anywhere over
   the pane, including over the scrollbars.

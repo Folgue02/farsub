@@ -122,7 +122,9 @@ pub struct Gui {
     /// Sidebar: pixels the top row is scrolled past.
     side_px: f32,
     term_scroll_acc: f32,
-    last_cursor: Option<(usize, Pos, i32)>,
+    /// Per file (buffer id): the cursor and version the view last followed, so switching
+    /// tabs keeps a file where it was scrolled to (only a moved cursor scrolls).
+    last_cursor: HashMap<usize, (Pos, i32)>,
     /// Alt+drag column selection: where it started (line, display column).
     col_drag: Option<(usize, usize)>,
     /// Mouse selection in progress: the press's click count (1 characters, 2 words,
@@ -236,7 +238,7 @@ impl Gui {
             scroll_mark: HashMap::new(),
             side_px: 0.0,
             term_scroll_acc: 0.0,
-            last_cursor: None,
+            last_cursor: HashMap::new(),
             col_drag: None,
             sel_drag: None,
             last_press: None,
