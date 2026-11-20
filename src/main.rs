@@ -131,6 +131,12 @@ fn main() -> ExitCode {
         return detach(stdin_text.as_deref());
     }
 
+    // macOS adds "Show Next Tab" / "Show Previous Tab" (Ctrl+Tab, Ctrl+Shift+Tab) to the
+    // Window menu for its own window tabs, which takes those keys from the editor.
+    #[cfg(target_os = "macos")]
+    if let Some(mtm) = objc2::MainThreadMarker::new() {
+        objc2_app_kit::NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
+    }
     // Scan installed fonts in the background (Preferences › Select Font, `font_face`).
     fonts::warm_up();
     let options = eframe::NativeOptions {

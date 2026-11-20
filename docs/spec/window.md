@@ -50,7 +50,9 @@
   the other way (from the least recent). No list pops up: the tabs switch as you go.
   From the command palette ("View: Switch to Recent File") it acts like one press.
   Next/Previous File in tab order stay on Ctrl+PageDown/PageUp and Cmd+Alt+→/←. In a
-  terminal, Ctrl+Tab still cycles terminal tabs.
+  terminal, Ctrl+Tab still cycles terminal tabs. On macOS, farsub turns off the system's
+  window tabbing, whose "Show Next Tab" / "Show Previous Tab" Window-menu items would
+  otherwise take Ctrl+Tab and Ctrl+Shift+Tab (farsub windows are separate windows).
 - A group whose last tab closes stays focused and empty; editing commands do nothing
   there. Removing columns moves their tabs into the last remaining group.
 - The layout, each file's group and the focused group are saved in the workspace.
