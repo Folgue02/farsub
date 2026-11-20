@@ -139,7 +139,7 @@ impl Gui {
             let hit = tr.intersect(r);
             let resp = hit
                 .is_positive()
-                .then(|| ui.interact(hit, Id::unique(("tab", b.id)), Sense::click()));
+                .then(|| ui.interact(hit, Id::unique(("tab", b.id)), Sense::click_and_drag()));
             let hovered_close = resp
                 .as_ref()
                 .and_then(|r| r.hover_pos())
@@ -155,6 +155,10 @@ impl Gui {
                 clip.line_segment([o + Vec2::new(-k, k), o + Vec2::new(k, -k)], st);
             }
             let Some(resp) = resp else { continue };
+            self.tab_hits.push((g, b.id, hit));
+            if resp.drag_started() && self.close_press != Some(b.id) {
+                self.tab_drag = Some(b.id);
+            }
             // The tab switches on press. Its × closes on release, and only if the press
             // was on the × too: switching can scroll the tab and slide its × under the
             // mouse, and that release isn't a click on the ×.
@@ -189,6 +193,52 @@ impl Gui {
             if close {
                 self.app.run(crate::commands::Command::CloseBuffer);
             }
+        }
+    }
+}
+
+impl Gui {
+    /// While a tab is dragged: mark where it would go (between two tabs of a strip, or a
+    /// whole other group when over its editor) and move it there on release.
+    pub(super) fn drop_tab(&mut self, ui: &egui::Ui, p: &Painter, c: &Palette) {
+        let Some(id) = self.tab_drag else { return };
+        let (pos, down) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
+        let from = self.app.buf_index_of(id).map(|i| self.app.buffers[i].group);
+        let target = pos.and_then(|pos| {
+            let g = self.group_cols.iter().position(|(_, col)| col.contains(pos))?;
+            let (strip, col) = self.group_cols[g];
+            if !strip.contains(pos) {
+                // Over an editor: the end of that group (nothing to do over its own).
+                let ed = Rect::from_min_max(Pos2::new(col.left(), strip.bottom()), col.max);
+                return (from != Some(g)).then_some((g, None, ed));
+            }
+            let tabs: Vec<_> = self.tab_hits.iter().filter(|t| t.0 == g).collect();
+            let before = tabs.iter().find(|t| pos.x < t.2.center().x);
+            let x = match (before, tabs.last()) {
+                (Some(t), _) => t.2.left(),
+                (None, Some(t)) => t.2.right(),
+                (None, None) => strip.left(),
+            };
+            let bar = Rect::from_min_max(
+                Pos2::new(x - 1.0, strip.top()),
+                Pos2::new(x + 1.0, strip.bottom()),
+            );
+            Some((g, before.map(|t| t.1), bar))
+        });
+        if down {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            if let Some((_, before, r)) = target {
+                if before.is_none() && r.width() > 2.0 {
+                    p.rect_filled(r, 0.0, c.accent.gamma_multiply(0.15));
+                } else {
+                    p.rect_filled(r, 0.0, c.accent);
+                }
+            }
+            return;
+        }
+        self.tab_drag = None;
+        if let Some((g, before, _)) = target {
+            self.app.move_tab(id, g, before);
         }
     }
 }

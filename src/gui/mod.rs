@@ -174,6 +174,12 @@ pub struct Gui {
     pub tab_scroll: HashMap<usize, (f32, Option<usize>)>,
     /// The buffer whose tab × the last press on a tab landed on.
     close_press: Option<usize>,
+    /// The tab (buffer id) being dragged to another place or group.
+    tab_drag: Option<usize>,
+    /// This frame's tabs (group, buffer id, rect) and groups (tab strip, column), where a
+    /// dragged tab can be dropped.
+    pub(crate) tab_hits: Vec<(usize, usize, Rect)>,
+    pub(crate) group_cols: Vec<(Rect, Rect)>,
     #[cfg(target_os = "macos")]
     native_menu: Option<crate::native_menu::NativeMenu>,
 }
@@ -252,6 +258,9 @@ impl Gui {
             sidebar_sel_px: None,
             tab_scroll: HashMap::new(),
             close_press: None,
+            tab_drag: None,
+            tab_hits: Vec::new(),
+            group_cols: Vec::new(),
             #[cfg(target_os = "macos")]
             native_menu: None,
         }
@@ -504,6 +513,8 @@ impl Gui {
         let mut editor = rest;
         let mut cursor_px = None;
         let mut x = rest.left();
+        self.tab_hits.clear();
+        self.group_cols.clear();
         for g in 0..n {
             let w = if g + 1 == n {
                 rest.right() - x
@@ -514,6 +525,7 @@ impl Gui {
             x += w;
             let tabs = Rect::from_min_max(col.min, Pos2::new(col.right(), col.top() + TAB_H));
             let ed = Rect::from_min_max(Pos2::new(col.left(), tabs.bottom()), col.max);
+            self.group_cols.push((tabs, col));
             self.draw_tabs(ui, &painter, tabs, &c, g);
             let px = self.draw_editor(ui, &painter, ed, &c, g);
             if g == self.app.group {
@@ -555,6 +567,7 @@ impl Gui {
                 }
             }
         }
+        self.drop_tab(ui, &painter, &c);
         self.draw_status(ui, &painter, status, &c);
         if let Some(r) = panel {
             self.draw_prompt(&painter, r, &c);

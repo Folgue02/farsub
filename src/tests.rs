@@ -4511,3 +4511,55 @@ args = ["30"]
     assert_eq!(attached(&h), [false, true, true]);
     h.state_mut().app.lsp.shutdown();
 }
+
+#[test]
+fn tabs_drag_between_groups_and_reorder() {
+    let d = project(
+        "tabdrag",
+        &[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n")],
+    );
+    let mut h = harness(&d);
+    for f in ["a.txt", "b.txt", "c.txt"] {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    h.state_mut()
+        .app
+        .run(crate::commands::Command::LayoutColumns2);
+    steps(&mut h, 2);
+    let names = |h: &Harness<'static, Gui>, g: usize| -> Vec<String> {
+        let app = &h.state().app;
+        app.group_tabs(g)
+            .into_iter()
+            .map(|i| app.buffers[i].name())
+            .collect()
+    };
+    let tab = |h: &Harness<'static, Gui>, name: &str| -> egui::Rect {
+        let app = &h.state().app;
+        let id = app.buffers.iter().find(|b| b.name() == name).unwrap().id;
+        h.state().tab_hits.iter().find(|t| t.1 == id).unwrap().2
+    };
+    // Drag a.txt onto the second group's editor: it moves there and is focused.
+    let from = tab(&h, "a.txt").center();
+    let ed = h.state().group_cols[1].1.center();
+    drag(&mut h, from, ed);
+    assert_eq!(names(&h, 0), ["b.txt", "c.txt"]);
+    assert_eq!(names(&h, 1), ["a.txt"]);
+    assert_eq!(h.state().app.group, 1);
+    assert_eq!(h.state().app.buf().unwrap().name(), "a.txt");
+    // Drag c.txt into the second strip, before a.txt.
+    let from = tab(&h, "c.txt").center();
+    let to = tab(&h, "a.txt").left_center() + egui::vec2(5.0, 0.0);
+    drag(&mut h, from, to);
+    assert_eq!(names(&h, 0), ["b.txt"]);
+    assert_eq!(names(&h, 1), ["c.txt", "a.txt"]);
+    // Reorder within a strip: c.txt after a.txt.
+    let from = tab(&h, "c.txt").center();
+    let to = tab(&h, "a.txt").right_center() - egui::vec2(5.0, 0.0);
+    drag(&mut h, from, to);
+    assert_eq!(names(&h, 1), ["a.txt", "c.txt"]);
+    // A click (no drag) still just switches tabs.
+    let at = tab(&h, "b.txt").center();
+    click(&mut h, at);
+    assert_eq!(h.state().app.buf().unwrap().name(), "b.txt");
+    assert_eq!(names(&h, 0), ["b.txt"]);
+}

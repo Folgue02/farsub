@@ -18,6 +18,10 @@
 - A tab switches on **press**; its **×** closes on release, and only when the press was
   on the × too. (Switching to a half-hidden tab scrolls it into view, which can slide
   its × under the mouse; that release doesn't close it.)
+- **Dragging a tab** (decided 2026-11-20) moves it: onto a tab strip (its own or another
+  group's), it goes where the accent bar shows, between two tabs; onto another group's
+  editor (which is tinted), it goes to the end of that group's tabs. The moved file
+  becomes current and focus follows it. Dropping it anywhere else does nothing.
 - The right end of the (rightmost) tab strip holds the alarm, pomodoro and clock
   widgets; see [Clock, pomodoro and alarm](timers.md).
 

@@ -94,7 +94,16 @@ impl App {
         if from == g {
             return;
         }
-        // The group it leaves shows its neighbour (the tab to the left, else the first).
+        self.leave_group(i);
+        self.buffers[i].group = g;
+        self.set_cur(i);
+        self.focus = Focus::Editor;
+    }
+
+    /// The group buffer `i` is leaving shows its neighbour (the tab to the left, else
+    /// the first).
+    fn leave_group(&mut self, i: usize) {
+        let from = self.buffers[i].group;
         let rest: Vec<usize> = self
             .group_tabs(from)
             .into_iter()
@@ -107,9 +116,33 @@ impl App {
             .or(rest.first())
             .copied();
         self.group_active[from] = neighbour.map(|t| self.buffers[t].id);
-        self.buffers[i].group = g;
-        self.set_cur(i);
+    }
+
+    /// Move tab `id` (a dragged tab) into group `g`, before tab `before` or at the end
+    /// of that group's tabs; it becomes the current file and focus follows it.
+    pub fn move_tab(&mut self, id: usize, g: usize, before: Option<usize>) {
+        if g >= self.layout || before == Some(id) {
+            return;
+        }
+        let Some(i) = self.buf_index(id) else { return };
+        if self.buffers[i].group != g {
+            self.leave_group(i);
+        }
+        let mut b = self.buffers.remove(i);
+        b.group = g;
+        let at = match before.and_then(|t| self.buf_index(t)) {
+            Some(t) => t,
+            None => self
+                .buffers
+                .iter()
+                .rposition(|o| o.group == g)
+                .map_or(self.buffers.len(), |t| t + 1),
+        };
+        self.buffers.insert(at, b);
+        self.set_cur(at);
         self.focus = Focus::Editor;
+        self.completion = None;
+        self.hover = None;
     }
 
     /// After a buffer in group `g` closed at index `i`, show a neighbouring tab of the
@@ -142,6 +175,11 @@ impl App {
         let at = tabs.iter().position(|&t| t == self.cur).unwrap_or(0) as isize;
         let n = tabs.len() as isize;
         self.set_cur(tabs[(at + d).rem_euclid(n) as usize]);
+    }
+
+    /// The index of the buffer with this id.
+    pub fn buf_index_of(&self, id: usize) -> Option<usize> {
+        self.buf_index(id)
     }
 
     pub(super) fn buf_index(&self, id: usize) -> Option<usize> {
