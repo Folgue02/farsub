@@ -76,9 +76,11 @@ strip = true
 [target.'cfg(target_os = "macos")'.dependencies]
 # Native macOS menu bar (other platforms use the in-window menu bar).
 muda = "0.21"
-# Turning off macOS window tabbing (it takes Ctrl+Tab for "Show Next Tab").
+# Turning off macOS window tabbing (it takes Ctrl+Tab for "Show Next Tab"), and sending
+# held-down menu shortcuts straight to the window.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSResponder", "NSWindow", "NSEvent", "block2"] }
+block2 = "0.6"
 
 [dev-dependencies]
 egui_kittest = { version = "0.37", features = ["wgpu", "snapshot"] }

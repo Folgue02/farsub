@@ -3,6 +3,10 @@
 - macOS: native menu bar. Native shortcuts only come from global/editor bindings and each
   key combination is registered once (a sidebar-only binding must never capture a key
   while typing — e.g. Cmd+X always cuts text in the editor).
+- macOS, **holding a menu shortcut** (decided 2026-11-20): the first press goes through
+  the menu bar (its menu flashes); repeats while the key is held go straight to the
+  window and run through the key bindings. Through the menu, each repeat flashed the
+  menu and key repeat lagged (holding Cmd+X to cut line after line).
 - Windows/Linux: in-window menu bar; F10 opens the in-window menus everywhere.
 - **Opening and saving use the system's file dialogs** (decided 2026-11-15): Cmd+O = File
   › Open File…, File › Open Folder…, Project › Open Project… / Add Folder… / Save Project

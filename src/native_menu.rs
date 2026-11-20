@@ -12,6 +12,31 @@ use crate::keys::KeyCode;
 pub struct NativeMenu {
     _menu: Menu,
     items: Vec<(MenuItem, Command, bool)>,
+    _repeats: Option<objc2::rc::Retained<objc2::runtime::AnyObject>>,
+}
+
+/// Held-down shortcuts skip the menu bar. macOS runs every Cmd key press through the
+/// menus first; a menu item's shortcut flashes its menu title and only then reaches the
+/// app, which slows key repeat to a crawl (holding Cmd+X to cut line after line lagged).
+/// The first press still goes through the menu (the flash shows what ran); repeats go
+/// straight to the window, like any other key, and the app's key bindings run them.
+fn route_repeats_to_window() -> Option<objc2::rc::Retained<objc2::runtime::AnyObject>> {
+    use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags};
+    let mtm = objc2::MainThreadMarker::new()?;
+    let block = block2::RcBlock::new(move |ev: std::ptr::NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: AppKit hands the monitor a valid event, on the main thread.
+        let e = unsafe { ev.as_ref() };
+        if e.isARepeat()
+            && e.modifierFlags().contains(NSEventModifierFlags::Command)
+            && let Some(w) = e.window(mtm)
+        {
+            w.sendEvent(e);
+            return std::ptr::null_mut();
+        }
+        ev.as_ptr()
+    });
+    // SAFETY: the block returns the event it was given or null.
+    unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::KeyDown, &block) }
 }
 
 fn code(k: KeyCode) -> Option<Code> {
@@ -151,7 +176,11 @@ impl NativeMenu {
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
             tx.send(AppEvent::Menu(e.id.0.clone()));
         }));
-        Some(NativeMenu { _menu: menu, items })
+        Some(NativeMenu {
+            _menu: menu,
+            items,
+            _repeats: route_repeats_to_window(),
+        })
     }
 
     /// Grey out items that can't run right now (only touches items whose state changed).
