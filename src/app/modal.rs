@@ -323,6 +323,7 @@ impl App {
                     self.tree.reveal(&path);
                 }
             }
+            PromptKind::WakaTimeKey => self.wakatime_set_key(&input),
             PromptKind::PackageUrl => {
                 if input.is_empty() {
                     return;

@@ -40,6 +40,7 @@ mod timers;
 #[cfg(test)]
 mod tests;
 mod tree;
+mod wakatime;
 mod workspace;
 mod wrap;
 

@@ -11,6 +11,8 @@ use crate::highlight::HlCache;
 
 pub struct LineEdit {
     buf: Buffer,
+    /// A password field: drawn as dots, never copied out (see `display_text`).
+    secret: bool,
 }
 
 impl Default for LineEdit {
@@ -21,7 +23,8 @@ impl Default for LineEdit {
 
 impl std::fmt::Debug for LineEdit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("LineEdit").field(&self.text()).finish()
+        let t = if self.secret { "<hidden>" } else { self.text() };
+        f.debug_tuple("LineEdit").field(&t).finish()
     }
 }
 
@@ -70,7 +73,30 @@ impl LineEdit {
     pub fn new(text: &str) -> Self {
         let mut buf = Buffer::from_text(0, None, one_line(text), HlCache::new("Plain Text".into()));
         buf.move_end(false);
-        LineEdit { buf }
+        LineEdit { buf, secret: false }
+    }
+
+    /// An empty password field: what's typed or pasted is shown as dots, and Copy / Cut
+    /// don't take it out.
+    pub fn secret() -> Self {
+        LineEdit {
+            secret: true,
+            ..LineEdit::new("")
+        }
+    }
+
+    pub fn is_secret(&self) -> bool {
+        self.secret
+    }
+
+    /// The text as drawn: one dot per character in a password field (so the caret and
+    /// selection columns still line up).
+    pub fn display_text(&self) -> std::borrow::Cow<'_, str> {
+        if self.secret {
+            "•".repeat(self.text().chars().count()).into()
+        } else {
+            self.text().into()
+        }
     }
 
     pub fn text(&self) -> &str {
@@ -111,7 +137,9 @@ impl LineEdit {
 
     /// Empty it and forget its undo history (a fresh input).
     pub fn reset(&mut self) {
+        let secret = self.secret;
         *self = LineEdit::new("");
+        self.secret = secret;
     }
 
     /// Take the text out, leaving a fresh empty input.

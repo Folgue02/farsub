@@ -953,7 +953,9 @@ fn draw_line_edit(
         p.ctx()
             .fonts_mut(|f| f.layout_no_wrap(s.to_string(), font.clone(), c.fg).size().x)
     };
-    let text = e.text();
+    // A password field draws dots, never its text.
+    let text = e.display_text();
+    let text = text.as_ref();
     let x_of = |col: usize| -> f32 {
         let b = text
             .char_indices()

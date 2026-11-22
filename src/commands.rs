@@ -204,6 +204,8 @@ pub enum Command {
     RemovePackage,
     BrowsePackages,
     ReloadPackages,
+    WakaTimeSetApiKey,
+    WakaTimeInstallCli,
     Quit,
 }
 
@@ -439,6 +441,9 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (RemovePackage, "Packages: Remove Package…", true),
     (BrowsePackages, "Packages: Browse Packages Folder", true),
     (ReloadPackages, "Packages: Reload Syntaxes & Themes", true),
+    // Listed only while WakaTime is on (see wakatime.rs).
+    (WakaTimeSetApiKey, "WakaTime: Set API Key…", true),
+    (WakaTimeInstallCli, "WakaTime: Install wakatime-cli", true),
     (Quit, "Quit", true),
 ];
 

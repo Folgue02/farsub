@@ -269,6 +269,45 @@ impl App {
         }
     }
 
+    /// A Plain Text file (no language from its name) gets one as soon as its first line is
+    /// a shebang that names one: typing `#!/usr/bin/env python3` into a new `run` file
+    /// highlights it as Python. A language picked by hand stays.
+    pub(super) fn redetect_shebang(&mut self) {
+        let i = self.cur;
+        let Some(b) = self.buffers.get(i) else { return };
+        let key = Some((b.id, b.version));
+        if self.shebang_seen == key {
+            return;
+        }
+        self.shebang_seen = key;
+        if b.hl.syntax != "Plain Text" || b.syntax_override || !b.lines[0].starts_with("#!") {
+            return;
+        }
+        let first = b.lines[0].clone();
+        let path = b.path.clone();
+        let Some(lang) = (self.config)
+            .language_for(path.as_deref().unwrap_or(Path::new("")), &first)
+            .cloned()
+        else {
+            return;
+        };
+        match path {
+            Some(p) => {
+                self.set_buffer_path(i, p);
+                self.lsp_open(i);
+            }
+            None => {
+                let grammar = self.grammar_of(&lang);
+                if grammar.is_none() {
+                    self.hint_grammar(&lang);
+                }
+                let b = &mut self.buffers[i];
+                b.apply_language(Some(&lang), &self.config.editor);
+                b.hl.reset(lang.name.clone(), grammar);
+            }
+        }
+    }
+
     pub fn open_new_path(&mut self, path: PathBuf) {
         let id = self.next_buf_id;
         self.next_buf_id += 1;
@@ -406,6 +445,7 @@ impl App {
                     );
                 }
                 self.msg(format!("Saved {name} ({lines} lines)"));
+                self.wakatime_saved();
                 let in_config =
                     saved
                         .as_ref()

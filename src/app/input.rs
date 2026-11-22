@@ -283,6 +283,10 @@ impl App {
         let Some(input) = self.active_input() else {
             return false;
         };
+        // A password field keeps its text: Copy and Cut do nothing.
+        if input.is_secret() {
+            return true;
+        }
         let t = match cmd {
             Command::Cut => input.cut(),
             _ => input.selected_text(),
@@ -448,6 +452,7 @@ impl App {
             AppEvent::Search(id, ev) => self.on_search_event(id, ev),
             AppEvent::Menu(id) => self.on_menu_command(&id),
             AppEvent::Disk(states) => self.on_disk_states(states),
+            AppEvent::WakaTime(ev) => self.on_wakatime_event(ev),
             AppEvent::Files(root, list) => {
                 self.indexing.remove(&root);
                 self.files.insert(root, list);

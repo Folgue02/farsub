@@ -12,6 +12,10 @@ farsub .                   # open the current folder (returns to the shell immed
 
 How it's supposed to behave is written down in [docs/SPEC.md](docs/SPEC.md) (an index of one page per area, in `docs/spec/`).
 
+Optional [WakaTime](https://wakatime.com) time tracking is built in, off by default: set
+`wakatime = true`, then use "WakaTime: Set API Key…" (or reuse the key already in
+`~/.wakatime.cfg`). See [docs/spec/wakatime.md](docs/spec/wakatime.md).
+
 ## Command line
 
 Usage:

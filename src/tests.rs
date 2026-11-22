@@ -4685,3 +4685,221 @@ fn switching_tabs_keeps_each_files_scroll() {
     press(&mut h, Modifiers::NONE, Key::ArrowDown);
     assert!(h.state().app.buf().unwrap().scroll_y < top);
 }
+
+/// Every piece of text painted in the last frame.
+fn painted_text(h: &Harness<'static, Gui>) -> String {
+    let mut out = String::new();
+    for s in &h.output().shapes {
+        collect_text(&s.shape, &mut out);
+    }
+    out
+}
+
+fn collect_text(s: &egui::Shape, out: &mut String) {
+    match s {
+        egui::Shape::Text(t) => {
+            out.push_str(t.galley.text());
+            out.push('\n');
+        }
+        egui::Shape::Vec(v) => v.iter().for_each(|s| collect_text(s, out)),
+        _ => {}
+    }
+}
+
+fn palette_labels(h: &Harness<'static, Gui>, filter: &str) -> Vec<String> {
+    match &h.state().app.modal {
+        Some(Modal::Palette(p)) => p
+            .items
+            .iter()
+            .map(|i| i.label.clone())
+            .filter(|l| l.contains(filter))
+            .collect(),
+        _ => vec![],
+    }
+}
+
+#[test]
+fn wakatime_api_key_prompt_is_masked() {
+    let d = project("waka-key", &[("a.rs", "fn main() {}\n")]);
+    let home = d.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut h = harness(&d);
+    h.state_mut().app.wakatime.home = Some(home.clone());
+    steps(&mut h, 2);
+
+    // Off by default: the WakaTime commands aren't in the palette, and don't run.
+    assert!(!h.state().app.config.editor.wakatime);
+    press(&mut h, CMD | Modifiers::SHIFT, Key::P);
+    assert!(palette_labels(&h, "WakaTime").is_empty());
+    press(&mut h, Modifiers::NONE, Key::Escape);
+    h.state_mut().app.run(crate::commands::Command::WakaTimeSetApiKey);
+    steps(&mut h, 1);
+    assert!(h.state().app.modal.is_none());
+
+    h.state_mut().app.config.editor.wakatime = true;
+    press(&mut h, CMD | Modifiers::SHIFT, Key::P);
+    assert_eq!(
+        palette_labels(&h, "WakaTime"),
+        ["WakaTime: Set API Key…", "WakaTime: Install wakatime-cli"]
+    );
+    typ(&mut h, "wakatime set api key");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+
+    // A fake key, split so secret scanners don't flag it.
+    let key = concat!("waka", "_", "00000000-0000-0000-0000-000000000000");
+    // Pasted text is masked like typed text.
+    h.event(Event::Paste(key.into()));
+    steps(&mut h, 2);
+    match &h.state().app.modal {
+        Some(Modal::Prompt(p)) => {
+            assert!(p.input.is_secret());
+            assert_eq!(p.input.text(), key);
+            assert_eq!(p.input.display_text(), "•".repeat(key.chars().count()));
+            assert!(!format!("{:?}", p.input).contains("89ab"));
+        }
+        _ => panic!("expected the key prompt"),
+    }
+    let painted = painted_text(&h);
+    assert!(painted.contains("WakaTime API key"), "{painted}");
+    assert!(painted.contains("•••"), "{painted}");
+    assert!(!painted.contains("89ab"), "the key is drawn: {painted}");
+    // Copy / Cut take nothing out of a password field.
+    press(&mut h, CMD, Key::A);
+    press(&mut h, CMD, Key::C);
+    press(&mut h, CMD, Key::X);
+    assert!(h.state().app.pending_copy.is_none());
+    assert!(matches!(&h.state().app.modal, Some(Modal::Prompt(p)) if p.input.text() == key));
+
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let cfg = std::fs::read_to_string(home.join(".wakatime.cfg")).unwrap();
+    assert_eq!(cfg, format!("[settings]\napi_key = {key}\n"));
+    assert!(h.state().app.wakatime.has_key());
+    // Never in the log, the status bar or on screen.
+    assert!(crate::log::entries(crate::log::Level::Debug, "89ab").is_empty());
+    let status = h.state().app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(status.contains("Saved the WakaTime API key"), "{status}");
+    assert!(!status.contains("89ab"));
+    steps(&mut h, 1);
+    assert!(!painted_text(&h).contains("89ab"));
+
+    // Something that isn't a key isn't saved.
+    h.state_mut().app.run(crate::commands::Command::WakaTimeSetApiKey);
+    typ(&mut h, "not-a-key");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(std::fs::read_to_string(home.join(".wakatime.cfg")).unwrap().contains(key));
+}
+
+#[test]
+fn wakatime_heartbeats_follow_the_guide() {
+    let d = project(
+        "waka-beats",
+        &[("src/a.rs", "fn main() {}\n"), ("tool.py", "print(1)\n")],
+    );
+    let home = d.join("home");
+    std::fs::create_dir_all(home.join(".wakatime")).unwrap();
+    let mut h = harness(&d);
+    h.state_mut().app.wakatime.home = Some(home.clone());
+    h.state_mut().app.config.editor.wakatime = true;
+    steps(&mut h, 2);
+    let sent = |h: &Harness<'static, Gui>| h.state().app.wakatime.sent.clone();
+
+    // No key yet: a notice, nothing sent.
+    h.state_mut().app.open_file(&d.join("src/a.rs"), true);
+    steps(&mut h, 2);
+    assert!(sent(&h).is_empty());
+    let status = h.state().app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(status.contains("WakaTime: Set API Key"), "{status}");
+
+    // A key but no wakatime-cli: a notice pointing at the install command.
+    std::fs::write(
+        home.join(".wakatime.cfg"),
+        "[settings]\napi_key = 00000000-0000-0000-0000-000000000000\n",
+    )
+    .unwrap();
+    typ(&mut h, "x");
+    assert!(sent(&h).is_empty());
+    let status = h.state().app.status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(status.contains("WakaTime: Install wakatime-cli"), "{status}");
+
+    // With both: an edit sends one heartbeat; more edits within 2 minutes don't.
+    std::fs::write(home.join(".wakatime").join(crate::wakatime::cli_name()), "").unwrap();
+    typ(&mut h, "y");
+    assert_eq!(sent(&h).len(), 1);
+    let a = sent(&h)[0].join(" ");
+    assert!(a.contains(&format!("--entity {}", d.join("src/a.rs").display())), "{a}");
+    assert!(a.contains("--language Rust"), "{a}");
+    assert!(a.contains("--lineno 1") && a.contains("--cursorpos 3"), "{a}");
+    assert!(a.contains("--alternate-project farsub-gui-waka-beats"), "{a}");
+    assert!(!a.contains("--write") && !a.contains("--key"), "{a}");
+    typ(&mut h, "z");
+    typ(&mut h, "w");
+    assert_eq!(sent(&h).len(), 1, "throttled");
+
+    // A save always sends, with --write.
+    press(&mut h, CMD, Key::S);
+    assert_eq!(sent(&h).len(), 2);
+    assert!(sent(&h)[1].contains(&"--write".to_string()));
+
+    // Another file sends right away, with its language.
+    h.state_mut().app.open_file(&d.join("tool.py"), true);
+    steps(&mut h, 2);
+    assert_eq!(sent(&h).len(), 3);
+    assert!(sent(&h)[2].join(" ").contains("--language Python"));
+    // And back to the first one: a different file than the last heartbeat.
+    h.state_mut().app.open_file(&d.join("src/a.rs"), true);
+    steps(&mut h, 2);
+    assert_eq!(sent(&h).len(), 4);
+
+    // The language picked by hand is the one reported.
+    let i = h.state().app.cur;
+    h.state_mut().app.set_syntax_at(i, "Plain Text");
+    press(&mut h, CMD, Key::S);
+    assert!(sent(&h).last().unwrap().join(" ").contains("--language Text"));
+
+    // Turned off: nothing more.
+    h.state_mut().app.config.editor.wakatime = false;
+    let n = sent(&h).len();
+    typ(&mut h, "q");
+    press(&mut h, CMD, Key::S);
+    assert_eq!(sent(&h).len(), n);
+}
+
+#[test]
+fn typed_shebang_picks_the_language() {
+    let d = project("shebang", &[("deploy", ""), ("notes", "hello\n")]);
+    let mut h = harness(&d);
+    steps(&mut h, 2);
+
+    // A file with no extension: its shebang names the language when it opens…
+    std::fs::write(d.join("run"), "#!/usr/bin/env python3\nprint(1)\n").unwrap();
+    h.state_mut().app.open_file(&d.join("run"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "python");
+
+    // …and as soon as one is typed into a Plain Text file.
+    h.state_mut().app.open_file(&d.join("deploy"), true);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "Plain Text");
+    typ(&mut h, "#!/bin/bash");
+    steps(&mut h, 1);
+    let b = h.state().app.buf().unwrap();
+    assert_eq!(b.hl.syntax, "bash");
+    assert_eq!(b.lang.as_deref(), Some("bash"));
+
+    // Untitled buffers too.
+    h.state_mut().app.run(crate::commands::Command::NewFile);
+    steps(&mut h, 1);
+    typ(&mut h, "#!/usr/bin/env node");
+    steps(&mut h, 1);
+    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "javascript");
+
+    // A language picked by hand stays.
+    h.state_mut().app.open_file(&d.join("notes"), true);
+    steps(&mut h, 1);
+    let i = h.state().app.cur;
+    h.state_mut().app.set_syntax_at(i, "Plain Text");
+    press(&mut h, CMD, Key::Home);
+    typ(&mut h, "#!/bin/sh\n");
+    steps(&mut h, 1);
+    assert_eq!(h.state().app.buf().unwrap().hl.syntax, "Plain Text");
+}

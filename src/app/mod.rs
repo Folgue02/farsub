@@ -70,6 +70,8 @@ pub enum AppEvent {
     Search(u64, crate::search::SearchEvent),
     /// The open files as found on disk (`start_disk_check`).
     Disk(Vec<buffers::DiskState>),
+    /// Background WakaTime work finished (wakatime.rs).
+    WakaTime(crate::wakatime::Event),
 }
 
 /// Event sender that also wakes the GUI so background results show up immediately.
@@ -178,6 +180,8 @@ pub enum PromptKind {
     OpenProject,
     SaveProjectAs,
     AddFolder,
+    /// The WakaTime API key (a password field).
+    WakaTimeKey,
 }
 
 impl PromptKind {
@@ -534,11 +538,15 @@ pub struct App {
     pub installing_grammars: HashSet<String>,
     /// Grammars we already told the user can be installed (once per session).
     grammar_hinted: HashSet<String>,
+    /// The focused buffer (id, version) last checked for a typed shebang.
+    shebang_seen: Option<(usize, i32)>,
     pub install_failed: HashMap<String, String>,
     /// Installed packages (folder names in Packages/).
     pub packages: Vec<String>,
     /// The clock, pomodoro and alarm at the right of the tab strip.
     pub timers: crate::timers::Timers,
+    /// WakaTime time tracking (`wakatime` setting).
+    pub wakatime: crate::wakatime::WakaTime,
     tx: EventTx,
 }
 
@@ -635,9 +643,11 @@ impl App {
             installing: HashSet::new(),
             installing_grammars: HashSet::new(),
             grammar_hinted: HashSet::new(),
+            shebang_seen: None,
             install_failed: HashMap::new(),
             packages: vec![],
             timers,
+            wakatime: Default::default(),
             config,
             tx,
         };
@@ -669,6 +679,8 @@ impl App {
 
     /// Expire the status message; returns true if the UI needs a repaint.
     pub fn tick(&mut self) -> bool {
+        self.redetect_shebang();
+        self.wakatime_tick(Instant::now());
         if self.timers.tick(crate::timers::now()) {
             return true;
         }

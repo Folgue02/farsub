@@ -10,4 +10,7 @@
   belong to the box's owner.
 - In an empty input, Backspace and Select All fall through to the owner (Select All with
   an empty console line selects the log text).
+- **Password fields** (the WakaTime API key): what's typed or pasted is drawn as one dot
+  per character. Copy and Cut do nothing there, and the text never reaches the log.
+  Editing otherwise works as in any input.
 - Dropped: the old Ctrl+U "clear input" shortcut; use Select All and type.

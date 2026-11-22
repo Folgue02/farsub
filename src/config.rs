@@ -85,6 +85,9 @@ pub struct EditorConfig {
     /// Per language (by name), which highlighter to use, over the language's own choice:
     /// `{ markdown = "tree-sitter" }`.
     pub highlighter: BTreeMap<String, Highlighter>,
+    /// Track coding time with WakaTime (off by default). Needs wakatime-cli and an API
+    /// key in ~/.wakatime.cfg; "WakaTime: Set API Key…" sets it.
+    pub wakatime: bool,
 }
 
 impl Default for EditorConfig {
@@ -118,6 +121,7 @@ impl Default for EditorConfig {
             hot_exit: true,
             restore_session: true,
             highlighter: BTreeMap::new(),
+            wakatime: false,
         }
     }
 }
@@ -1075,6 +1079,10 @@ highlighter = {}
 # Any bundled theme ("Monokai Extended", "OneHalfDark", "Nord", "Dracula", "GitHub",
 # "Solarized (dark)", "Catppuccin Mocha", "gruvbox-dark", …) or one from themes/ or a package.
 theme = "Monokai Extended"
+# Track coding time with WakaTime (wakatime.com). The API key is kept in ~/.wakatime.cfg,
+# shared with WakaTime's other plugins; with this on, the Command Palette has
+# "WakaTime: Set API Key…" and "WakaTime: Install wakatime-cli" (downloads it).
+wakatime = false
 
 # Example: a language defined inline here instead of languages/lua.toml.
 #

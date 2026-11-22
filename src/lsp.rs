@@ -471,7 +471,7 @@ pub fn from_lsp(lines: &[String], line: u32, character: u32) -> Pos {
     Pos::new(l, col)
 }
 
-fn which(cmd: &str) -> Option<PathBuf> {
+pub(crate) fn which(cmd: &str) -> Option<PathBuf> {
     let p = Path::new(cmd);
     if p.is_absolute() || cmd.contains('/') || cmd.contains('\\') {
         return p.is_file().then(|| p.to_path_buf());

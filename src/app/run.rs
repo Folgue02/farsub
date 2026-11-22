@@ -454,6 +454,11 @@ impl App {
                     packages::reveal(&d);
                 }
             }
+            WakaTimeSetApiKey | WakaTimeInstallCli if !self.config.editor.wakatime => {
+                self.msg("WakaTime is off: set wakatime = true in Preferences: Settings")
+            }
+            WakaTimeSetApiKey => self.wakatime_ask_key(),
+            WakaTimeInstallCli => self.wakatime_install(),
             ReloadPackages => {
                 // Icon packages live in the config (icons.toml files).
                 // Themes, highlight queries and icons from packages are all config data.

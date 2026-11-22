@@ -117,6 +117,7 @@ impl App {
             Mode::Commands => COMMANDS
                 .iter()
                 .filter(|c| c.2)
+                .filter(|c| self.config.editor.wakatime || !App::wakatime_command(c.0))
                 .map(|(c, name, _)| Item {
                     icon: None,
                     label: name.to_string(),

@@ -3,6 +3,11 @@
 - Language: chosen from the languages config (extensions, file names, first-line
   patterns); the status-bar picker (languages by title, plus Plain Text) overrides it per
   file, and highlighting, comment token, indentation defaults and LSP server follow.
+  The file name wins over the first line. A file with no language from its name (no
+  extension, or untitled) is detected by its shebang (`first_line` in the language file)
+  when it opens. It is also detected as soon as a shebang naming a language is typed
+  into its first line (decided 2026-11-22). A language picked by hand is never replaced
+  this way.
 - **Highlighting (tree-sitter):** 21 common grammars are compiled in (Bash, C, C++, CSS,
   Go, HTML, INI, Java, JavaScript, JSON, Lua, Make, Markdown, PHP, Python, Ruby, Rust,
   TOML, TSX, TypeScript, XML, YAML); the others are installed at runtime (below). Each buffer keeps a parser and
