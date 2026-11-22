@@ -9,12 +9,12 @@ scope: source.lakescript
 
 variables:
   name: '[A-Za-z_][A-Za-z0-9_]*'
-  builtin_types: '\b(?:void|any|string|number|bool|symbol|list|map|range|regex|result|command)\b'
-  builtin_classes: '\b(?:IEquals|IOrdered|IAdd|ISub|IMul|IDiv|IMod|IPow|INeg|IIndex|ISetIndex|IContains|Exception|IOError|FileNotFound|PermissionDenied|ValueError|UsageError|TypeError|IndexError|ArithmeticError|CommandFailed)\b'
+  builtin_types: '\b(?:void|any|never|string|number|bool|symbol|list|map|range|regex|result|command)\b'
+  builtin_classes: '\b(?:IEquals|IOrdered|IAdd|ISub|IMul|IDiv|IMod|IPow|INeg|IIndex|ISetIndex|IContains|Exception|IOError|FileNotFound|PermissionDenied|ValueError|UsageError|TypeError|IndexError|ArithmeticError|CommandFailed|NetworkError|AssertionError)\b'
   # PascalCase: a capital first and at least one lowercase letter (SCREAMING_CASE is
   # an enum value).
   pascal: '\b[A-Z][A-Za-z0-9_]*[a-z][A-Za-z0-9_]*\b'
-  reserved: '(?:let|const|class|interface|enum|use|pub|if|else|for|in|while|switch|case|default|break|continue|return|yield|try|catch|finally|throw|true|false|null)\b'
+  reserved: '(?:let|const|class|interface|enum|use|pub|if|else|for|in|while|switch|case|default|break|continue|return|yield|try|catch|finally|throw|assert|true|false|null)\b'
 
 contexts:
   main:
@@ -182,7 +182,7 @@ contexts:
       push: use-line
     - match: '\b(?:return|yield)\b'
       scope: keyword.control.return.lakescript
-    - match: '\b(?:if|else|for|in|while|switch|case|default|break|continue|try|catch|finally|throw)\b'
+    - match: '\b(?:if|else|for|in|while|switch|case|default|break|continue|try|catch|finally|throw|assert)\b'
       scope: keyword.control.lakescript
     - match: '\b(?:true|false)\b'
       scope: constant.language.boolean.lakescript
@@ -210,6 +210,13 @@ contexts:
     # Test operators: a `-` directly followed by the word.
     - match: '(?<!-)-(?:notlike|notmatch|notin|like|match|in|f|d|x|r|w)\b'
       scope: keyword.operator.word.lakescript
+    # `!==` doesn't exist (nor `===`): `$a! == $b` is the valid form.
+    - match: '!=='
+      scope: invalid.illegal.operator.lakescript
+    # Postfix `!` (non-null assertion), right after a value: `$x!`, `$list[0]!`,
+    # `f()!`, `@part2!`. `$x!=null` stays `!=`; prefix `!` is NOT (below).
+    - match: '(?<=[\w\])])!(?!=)'
+      scope: keyword.operator.lakescript
     - match: '=>|->|\.\.\.|\.\.=?|\?\?|\?\.|\*\*=?|<<=?|>>>=?|>>=?|&&|\|\||\+\+|--|[-+*/%&|^=!<>]=?|[~?:]'
       scope: keyword.operator.lakescript
     - match: '\.'

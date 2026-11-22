@@ -37,7 +37,7 @@
 - A language names its grammar with `grammar = "…"` (default: its name); `grammar = ""`
   means no tree-sitter grammar (the regex fallback below still applies). Languages with no
   tree-sitter grammar at all yet: AWK, BibTeX, Clojure, Crystal,
-  .env, GraphQL, Just, LakeScript, LaTeX, Meson, Nim, Perl, Terraform, Typst, WGSL (a test keeps this
+  .env, GraphQL, Just, LakeScript, LakeScript Template, LaTeX, Meson, Nim, Perl, Terraform, Typst, WGSL (a test keeps this
   list current, checks every recipe has a bundled query, and, for recipes whose source is
   on the machine (cargo registry or `FARSUB_GRAMMAR_SOURCES`), that the query compiles
   against the grammar).
@@ -76,7 +76,7 @@
   regex grammar (syntect, which reads Sublime Text's `.sublime-syntax` format) instead
   of shown as plain text. Once the tree-sitter grammar is installed the file switches to it. The fallback grammars are
   two-face's set (bat's, ~220) plus `runtime/syntaxes/*.sublime-syntax` (Gleam, Just, KDL,
-  LakeScript, Meson, Prisma), precompiled at build time and loaded only when a file first needs one
+  LakeScript, LakeScript Template, Meson, Prisma), precompiled at build time and loaded only when a file first needs one
   (the release binary grew from 34 to 36 MB). A language's fallback is found by title,
   name, then file extension / file name; `fallback_syntax = "…"` (a grammar name) pins it,
   `""` turns it off. TextMate scopes become theme captures through `scopes.toml` (longest
@@ -116,12 +116,12 @@
   there. Block-comment support is still to do.
 - **LakeScript** (`.lks`, `#!…lks` scripts; decided 2026-11-18, temporary until it has a
   tree-sitter grammar): a built-in language with a bundled regex grammar
-  (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.7.1's lexical
-  syntax (updated 2026-11-20):
+  (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.8.0's lexical
+  syntax (updated 2026-11-21: `assert`, `NetworkError`, `AssertionError`):
   - Names: `$variables` (also `Self::$count`), `@field`, `@method()`, a lone `@` and
     `@super`, calls and declarations (`bool empty?(…)`, `pub static Point origin()`),
     PascalCase types, `IName` interfaces, `Enum::VALUE` enum values, `module::` members.
-  - Keywords, built-in types (`string`, `number`, `command`…), built-in interfaces and
+  - Keywords, built-in types (`string`, `number`, `command`, `never`…), built-in interfaces and
     exceptions (`IMul`, `ValueError`…). Contextual words are keywords only where they
     mean something: `extends`, `implement`, `override`, `static`, `new(` and `Self` in
     class / interface / enum bodies; `command Name {`, `subcommand`, `optional`, `flag`
@@ -134,6 +134,19 @@
     span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` / `%i[…]` lists,
     `:symbols`, numbers (hex, octal, binary, `_`), named arguments (`name: value`).
   - Test operators (`-f`, `-like`, `-notin`…: a `-` directly followed by the word) and
-    the other operators.
+    the other operators. Postfix `!` (non-null assertion, right after a value with no
+    space: `$x!`, `$list[0]!`, `@part2!`) is an operator like prefix `!`; `$x!=null` is
+    still `!=`. `!==` doesn't exist in LakeScript and is scoped as an error (plain in
+    themes without an error color); `$a! == $b` is the valid form (added 2026-11-22,
+    with the `never` return type).
 
   Toggle Comment uses `//`; indentation 4 spaces.
+- **LakeScript templates** (`.elks`, "embedded LakeScript", like `.erb`; decided
+  2026-11-21): LakeScript 0.8.0's `std/template` files have no extension of their own
+  and share `{{ }}` with Jinja and Handlebars, so farsub doesn't guess from `.html`;
+  `page.elks` or `page.html.elks` is a template, and View › Set Syntax › LakeScript
+  Template works on any file. The grammar
+  (`runtime/syntaxes/LakeScript Template.sublime-syntax`) is HTML with every `{{ … }}`
+  highlighted as LakeScript, including inside attribute values; `endfor` / `endif` /
+  `endwhile` are keywords, `{{ // … }}` is a comment up to the first `}}`, and map
+  braces inside a tag don't close it. Indentation 2 spaces.

@@ -1,0 +1,4 @@
+name = "lks_lsp"
+command = "lks-lsp"
+root_markers = ["ferry.toml"]
+description = "LakeScript language server (ships with the LakeScript toolchain)"

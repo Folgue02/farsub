@@ -1,0 +1,46 @@
+%YAML 1.2
+---
+# Bundled with farsub. LakeScript templates (.elks, "embedded LakeScript"): HTML with
+# {{ }} tags holding LakeScript code, for LakeScript 0.8.0's std/template.
+name: LakeScript Template
+file_extensions: [elks]
+scope: text.html.lakescript
+
+contexts:
+  main:
+    - match: ''
+      push: scope:text.html.basic
+      with_prototype:
+        - include: tags
+
+  tags:
+    # `{{ // comment }}` ends at the first `}}`.
+    - match: '\{\{(?=\s*//)'
+      scope: punctuation.section.embedded.begin.lakescript
+      push:
+        - meta_scope: comment.block.lakescript
+        - match: '\}\}'
+          scope: punctuation.section.embedded.end.lakescript
+          pop: true
+    - match: '\{\{'
+      scope: punctuation.section.embedded.begin.lakescript
+      push: tag
+
+  tag:
+    - meta_scope: source.lakescript.embedded
+    - match: '\}\}'
+      scope: punctuation.section.embedded.end.lakescript
+      pop: true
+    - match: '\b(?:endfor|endif|endwhile)\b'
+      scope: keyword.control.lakescript
+    - match: '\{'
+      push: braces
+    - include: scope:source.lakescript
+
+  # Map braces inside a tag: their `}}` doesn't close it.
+  braces:
+    - match: '\}'
+      pop: true
+    - match: '\{'
+      push: braces
+    - include: scope:source.lakescript

@@ -251,6 +251,7 @@ farsub, or found on PATH) runs. Built-in definitions:
 | Swift | sourcekit_lsp | no (ships with Xcode / Swift) |
 | Haskell, OCaml | hls, ocamllsp | no (ghcup / opam: must match your compiler) |
 | Dart, Erlang, Nix | dartls, erlang_ls, nil_ls / nixd | no (Dart SDK, your OTP version, Nix) |
+| LakeScript | lks_lsp | no (`lks-lsp`, from the LakeScript toolchain) |
 
 Languages with highlighting, comments and indentation defaults but no server yet: SQL,
 GraphQL, Protocol Buffers, PowerShell, Batch, Perl, Julia, Fish, AWK, Groovy / Gradle /

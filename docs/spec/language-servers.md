@@ -33,7 +33,8 @@
   - On PATH only, because they're tied to a toolchain you already have: sourcekit_lsp
     (Xcode / Swift), dartls (Dart / Flutter SDK), hls (ghcup, matches your GHC), ocamllsp
     (opam, matches your switch), erlang_ls (builds per Erlang/OTP version), nil_ls and
-    nixd (Nix). Their descriptions say how to get them.
+    nixd (Nix), lks_lsp (`lks-lsp`, LakeScript's toolchain; finds its ferry.toml project
+    itself). Their descriptions say how to get them.
 - Recipe parts (in `[install]`), besides the sources: `needs = ["java"]` + `needs_hint`
   (checked before downloading: "`java` not found — install a JDK 21 or newer…"),
   `bin_windows` (when the executable isn't `<bin>.exe`, e.g. a `.bat`), `[install.url]

@@ -1054,7 +1054,7 @@ mod coverage {
         assert_ne!(at(4, 0), Some(style("string")), "an unclosed string ends with its line");
     }
 
-    /// LakeScript 0.7.1's sample script: `@` fields, contextual words (`command`, `flag`,
+    /// LakeScript 0.7.1's sample script, plus 0.8.0's `assert`: `@` fields, contextual words (`command`, `flag`,
     /// `count`, `new`, `Self`, `implement`), enum values, doc comments, test operators.
     #[test]
     fn lakescript_contextual_words_and_fields() {
@@ -1100,7 +1100,12 @@ if (-f $files[0] && $files[0] -like '*.txt') {
 const $n = (try process::shell('ls | wc -l').output()).orElse('0');
 outln($args.subcommand?.is(Todo::Add) ?? false);
 command $c = %x"ls";
-if ($files.empty?()) { outln(@); }"#
+if ($files.empty?()) { outln(@); }
+assert $n != '' catch (NetworkError $e) {}
+const $first = $list[0]! ?? $map['key']!.trim();
+never fail(string $m) { exit(1); }
+if (!$done && $x!=null && @part2! == $user?.address!.city) {}
+$bad = $a!==$b;"#
             .lines()
             .map(|l| l.to_string())
             .collect();
@@ -1181,6 +1186,82 @@ if ($files.empty?()) { outln(@); }"#
         check("use std/process", "use", "keyword.import");
         check("use std/process", "process", "module");
         assert!(at("outln(@)", "@)").is_some(), "a lone @ is the object");
+        // 0.8.0: `assert` and the new exceptions.
+        check("assert $n", "assert", "keyword");
+        check("assert $n", "NetworkError", "type.builtin");
+        // Postfix `!` (non-null assertion) is an operator like prefix `!`; `!==` is an error.
+        check("$list[0]!", "! ??", "operator");
+        check("$list[0]!", "!.trim", "operator");
+        check("$list[0]!", "trim", "function.call");
+        check("@part2!", "!$done", "operator");
+        check("@part2!", "! ==", "operator");
+        check("@part2!", "!.city", "operator");
+        check("@part2!", "!=null", "operator");
+        // Themes that style `error` show it as one; this one has none, so it's plain.
+        assert_eq!(m.capture("invalid.illegal.operator.lakescript"), Some("error"));
+        assert_ne!(at("$bad =", "!=="), style("operator"), "`!==` isn't an operator");
+        check("never fail", "never", "type.builtin");
+        check("never fail", "fail", "function");
+    }
+
+    /// LakeScript templates (`.elks`): HTML around `{{ }}` tags holding LakeScript.
+    #[test]
+    fn lakescript_templates_are_highlighted() {
+        use super::HlCache;
+        let mut s = super::Syntax::load("Monokai Extended");
+        let c = crate::config::Config::builtin();
+        s.set_languages(&c.languages);
+        let lang = c.language_for(std::path::Path::new("page.html.elks"), "").unwrap();
+        assert_eq!(lang.name, "lakescript_template");
+        let text: Vec<String> = r#"<!doctype html>
+<title>{{ $title }}</title>
+{{ // The values come escaped }}
+{{ if ($products.empty?()) }}
+<p>Nothing for sale.</p>
+{{ else }}
+  {{ for ($p in $products) }}
+  <li><a href="{{ $p['url'] }}">{{ $p['name'] }}</a> {{ if ($n > 1) 'items' else 'item' }}</li>
+  {{ endfor }}
+{{ endif }}
+{{ const $m = {a: {b: 1}} }}<footer>{{ raw($footer) }}</footer>"#
+            .lines()
+            .map(|l| l.to_string())
+            .collect();
+        let mut hl = HlCache::new("lakescript_template".into());
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(hl.fallback_name(), Some("LakeScript Template"));
+        let ln = |pat: &str| text.iter().position(|l| l.contains(pat)).unwrap();
+        let at = |line: &str, word: &str| {
+            let n = ln(line);
+            let col = text[n].find(word).unwrap();
+            hl.line(n)
+                .unwrap()
+                .iter()
+                .find(|sp| sp.0 <= col && col < sp.1)
+                .map(|sp| sp.2)
+        };
+        let style = |c: &str| s.theme.style_for(c);
+        let check = |line: &str, word: &str, cap: &str| {
+            assert!(style(cap).is_some(), "the theme styles {cap}");
+            assert_eq!(at(line, word), style(cap), "`{word}` in `{line}` is {cap}");
+        };
+        check("<title>", "title", "tag");
+        check("{{ // The", "The values", "comment");
+        check("{{ if ($products", "if", "keyword");
+        check("{{ if ($products", "empty?", "function.call");
+        check("{{ for", "for", "keyword");
+        check("{{ endfor", "endfor", "keyword");
+        check("{{ endif", "endif", "keyword");
+        check("'items'", "'items'", "string");
+        check("raw($footer)", "raw", "function.call");
+        // A tag inside an attribute value is code, not part of the string.
+        assert_ne!(at("href=", "$p['url']"), at("href=", "\"{{"), "tag in an attribute");
+        // Map braces don't close the tag: the HTML after it is HTML again.
+        check("<footer>", "footer", "tag");
+        assert_eq!(at("<footer>", "const"), style("keyword"));
+        // Text between tags stays plain HTML.
+        assert_ne!(at("<p>Nothing", "Nothing"), style("keyword"));
     }
 
     #[test]
@@ -1240,6 +1321,7 @@ if ($files.empty?()) { outln(@); }"#
                 "graphql",
                 "just",
                 "lakescript",
+                "lakescript_template",
                 "latex",
                 "meson",
                 "nim",

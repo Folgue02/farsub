@@ -4,6 +4,8 @@ title = "LakeScript"
 # (runtime/syntaxes/LakeScript.sublime-syntax).
 grammar = ""
 extensions = ["lks"]
+# On PATH only: comes with LakeScript (cargo install --path crates/lks-lsp).
+servers = ["lks_lsp"]
 first_line = '^#!.*\blks\b'
 comment = "//"
 tab_size = 4

@@ -1,0 +1,8 @@
+name = "lakescript_template"
+title = "LakeScript Template"
+# LakeScript templates ("embedded LakeScript"): HTML with {{ }} tags holding LakeScript
+# code. Highlighted by the bundled regex grammar
+# (runtime/syntaxes/LakeScript Template.sublime-syntax).
+grammar = ""
+extensions = ["elks"]
+tab_size = 2

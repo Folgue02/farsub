@@ -553,6 +553,56 @@ fn lsp_through_the_gui() {
     h.state_mut().app.lsp.shutdown();
 }
 
+#[test]
+fn lakescript_lsp_through_the_gui() {
+    if std::process::Command::new("lks-lsp").stdin(std::process::Stdio::null()).spawn().map(|mut c| c.kill()).is_err() {
+        eprintln!("lks-lsp not found; skipping");
+        return;
+    }
+    // Positions after non-ASCII text must still line up.
+    let src = "string greet(string $name) = f\"Hi {$name}\";\nconst $wave = 'olé'; outln(greet($wave));\noutln($missing);\n";
+    let d = project("lks-lsp", &[("main.lks", src)]);
+    let path = d.join("main.lks");
+    let mut h = harness(&d);
+    h.state_mut().app.open_file(&path, true);
+    assert!(
+        wait(&mut h, 20, |g| g
+            .app
+            .diagnostics
+            .get(&path)
+            .is_some_and(|d| d.iter().any(|x| x.severity == 1))),
+        "diagnostics: {:?}",
+        h.state().app.diagnostics.get(&path)
+    );
+
+    // F12 on `greet` after the emoji goes to its declaration on line 0.
+    h.state_mut().app.buf_mut().unwrap().goto(crate::editor::Pos::new(1, 27));
+    press(&mut h, Modifiers::NONE, Key::F12);
+    assert!(wait(&mut h, 10, |g| g.app.buf().unwrap().cursor.line == 0), "definition");
+
+    // Cmd+I hover on `greet` shows its declaration.
+    h.state_mut().app.buf_mut().unwrap().goto(crate::editor::Pos::new(1, 27));
+    press(&mut h, CMD, Key::I);
+    assert!(
+        wait(&mut h, 10, |g| g.app.hover.as_ref().is_some_and(|hv| hv.lines.iter().any(|l| l.contains("greet")))),
+        "hover: {:?}",
+        h.state().app.hover.as_ref().map(|hv| &hv.lines)
+    );
+    h.state_mut().app.hover = None;
+
+    // Completion after `$` replaces the `$` with the item's text edit.
+    h.state_mut().app.buf_mut().unwrap().goto(crate::editor::Pos::new(3, 0));
+    typ(&mut h, "outln($wa");
+    assert!(
+        wait(&mut h, 10, |g| g.app.completion.as_ref().is_some_and(|c| !c.shown.is_empty())),
+        "completion"
+    );
+    press(&mut h, Modifiers::CTRL, Key::N);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().app.buf().unwrap().lines[3], "outln($wave)");
+    h.state_mut().app.lsp.shutdown();
+}
+
 fn click(h: &mut Harness<'static, Gui>, pos: egui::Pos2) {
     h.event(Event::PointerMoved(pos));
     for pressed in [true, false] {
