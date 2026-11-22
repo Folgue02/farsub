@@ -34,3 +34,5 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
   alerts and theme colors
 - [Licenses and attribution](spec/licenses.md): the Help page listing every crate and
   bundled data in the build, with license texts
+- [Releases](spec/releases.md): versions, the GitHub release workflow and what each
+  platform's archive holds

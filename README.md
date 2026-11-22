@@ -544,30 +544,41 @@ version is 0.x, a minor bump may still change behaviour.
    git push --follow-tags
    ```
 
-2. Build the archives: `scripts/release.sh` puts them in `dist/<version>/` with a
-   `SHA256SUMS.txt`:
-   - `farsub-<version>-macos-<arch>.zip`: `farsub.app` (a universal app when rustup has
-     both `aarch64-apple-darwin` and `x86_64-apple-darwin`, otherwise this Mac's
-     architecture).
-   - `farsub-<version>-windows-x86_64.zip`: `farsub.exe`. Build it on Windows with
-     `scripts\release.ps1` (needs rustup and Visual Studio Build Tools), or cross-compile
-     it from a Mac (one-time setup below).
+2. Pushing the tag runs the **Release** workflow (`.github/workflows/release.yml`). It
+   builds every platform with `scripts/release.sh` on GitHub's macOS, Windows and Linux
+   machines and publishes a pre-release with:
+   - `farsub-<version>-macos-universal.zip`: `farsub.app` (Apple Silicon and Intel).
+   - `farsub-<version>-windows-x86_64.zip`: `farsub.exe`.
+   - `farsub-<version>-linux-x86_64.tar.gz`: `farsub` (built on Ubuntu 22.04, so it runs
+     on that and newer).
+   - `SHA256SUMS.txt`.
 
-   One-time setup to build everything from a Mac (rustup stays out of your PATH; the
-   script finds it, llvm and lld through Homebrew):
+   Its notes are GitHub's list of changes since the last tag; edit them on the release
+   page or with `gh release edit vX.Y.Z --notes-file NOTES.md`. Running the workflow by
+   hand (Actions › Release › Run workflow) only builds, and keeps the archives as the
+   run's artifacts.
 
-   ```bash
-   brew install rustup llvm lld
-   $(brew --prefix rustup)/bin/rustup toolchain install stable --profile minimal \
-       --target aarch64-apple-darwin --target x86_64-apple-darwin --target x86_64-pc-windows-msvc
-   cargo install --locked cargo-xwin
-   ```
+To build the archives yourself instead, `scripts/release.sh` puts them in
+`dist/<version>/` with a `SHA256SUMS.txt`. macOS needs a Mac (a universal app when rustup
+has both `aarch64-apple-darwin` and `x86_64-apple-darwin`, otherwise this Mac's
+architecture) and Linux needs Linux. Windows builds on Windows with `scripts\release.ps1`
+(needs rustup and Visual Studio Build Tools), or cross-compiles from a Mac (one-time
+setup below).
 
-   The first Windows build downloads Microsoft's Windows SDK and C runtime (accepting
-   their license). If Homebrew's own `rust` stops working after llvm is upgraded
-   (`Symbol not found … libLLVM`), `brew upgrade rust` fixes it.
+One-time setup to build macOS and Windows from a Mac (rustup stays out of your PATH; the
+script finds it, llvm and lld through Homebrew):
 
-3. On GitHub, create a release from the tag and upload the zips and `SHA256SUMS.txt`.
+```bash
+brew install rustup llvm lld
+$(brew --prefix rustup)/bin/rustup toolchain install stable --profile minimal \
+    --target aarch64-apple-darwin --target x86_64-apple-darwin --target x86_64-pc-windows-msvc
+cargo install --locked cargo-xwin
+```
+
+The first Windows build downloads Microsoft's Windows SDK and C runtime (accepting
+their license). If Homebrew's own `rust` stops working after llvm is upgraded
+(`Symbol not found … libLLVM`), `brew upgrade rust` fixes it. Then create the release on
+GitHub from the tag and upload the archives and `SHA256SUMS.txt`.
 
 The macOS app is ad-hoc signed, so on another Mac the first launch needs right-click →
 Open (or `xattr -dr com.apple.quarantine farsub.app`). Set `MACOS_SIGN_IDENTITY` to sign it
