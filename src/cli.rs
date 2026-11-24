@@ -145,7 +145,7 @@ fn abs(cwd: &Path, p: &str) -> PathBuf {
     } else {
         cwd.join(p)
     };
-    p.canonicalize()
+    crate::paths::canonical(&p)
         .unwrap_or_else(|_| crate::project::normalize(&p))
 }
 

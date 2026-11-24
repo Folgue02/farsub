@@ -153,3 +153,8 @@
   the cursor (typing, keys, Goto) scrolls the view to it.
 - Scrollbars only scroll; the cursor doesn't move. The mouse wheel scrolls anywhere over
   the pane, including over the scrollbars.
+- **Paths on Windows** (decided 2026-11-24): file, folder and project paths are resolved
+  to their real location without Windows' `\\?\` "verbatim" prefix (`C:\…`, not
+  `\\?\C:\…`), so titles, terminals' start folders (PowerShell showed
+  `Microsoft.PowerShell.Core\FileSystem::\\?\C:\…`) and paths sent to language servers
+  are the usual form. Paths too long for it keep the prefix.

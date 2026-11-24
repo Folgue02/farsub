@@ -254,7 +254,7 @@ pub fn parse_where(
                 match path.filter(|p| p.exists()) {
                     Some(p) => {
                         any_root = true;
-                        let p = p.canonicalize().unwrap_or(p);
+                        let p = crate::paths::canonical(&p).unwrap_or(p);
                         // A project folder (or one inside it) keeps the project's excludes.
                         let folder = folders.iter().find(|f| p.starts_with(&f.path)).cloned();
                         w.roots.push((p, folder));

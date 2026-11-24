@@ -6,7 +6,7 @@ impl App {
     // ===================================================================== files & buffers
 
     pub fn open_file(&mut self, path: &Path, focus: bool) -> Option<usize> {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path = crate::paths::canonical(&path).unwrap_or_else(|_| path.to_path_buf());
         if let Some(i) = self
             .buffers
             .iter()

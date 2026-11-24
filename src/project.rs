@@ -254,7 +254,7 @@ impl Project {
                 } else {
                     base.join(p)
                 };
-                let abs = abs.canonicalize().unwrap_or_else(|_| normalize(&abs));
+                let abs = crate::paths::canonical(&abs).unwrap_or_else(|_| normalize(&abs));
                 Folder::new(abs, d)
             })
             .collect();
@@ -319,7 +319,7 @@ impl Project {
     /// Write the project file (folders relative to it), keeping other keys as they were.
     pub fn save_as(&mut self, file: &Path) -> Result<(), String> {
         let base = file.parent().unwrap_or(Path::new("."));
-        let base = base.canonicalize().unwrap_or_else(|_| base.to_path_buf());
+        let base = crate::paths::canonical(&base).unwrap_or_else(|_| base.to_path_buf());
         let defs: Vec<FolderDef> = self
             .folders
             .iter()

@@ -9,7 +9,7 @@
 //! `FARSUB_CONFIG` (the config file) and `FARSUB_DATA` (the data folder) override them.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn env(name: &str) -> Option<OsString> {
     std::env::var_os(name).filter(|v| !v.is_empty())
@@ -79,8 +79,49 @@ fn data_with(windows: bool, var: Env) -> Option<PathBuf> {
         .map(|b| b.join("farsub"))
 }
 
+/// `Path::canonicalize` without Windows' verbatim prefix: there it returns `\\?\C:\…`
+/// (and `\\?\UNC\server\share\…`), which shells and other programs show or handle
+/// badly (PowerShell's prompt becomes `Microsoft.PowerShell.Core\FileSystem::\\?\C:\…`).
+/// Paths too long for the plain form keep the prefix.
+pub fn canonical(p: &Path) -> std::io::Result<PathBuf> {
+    let c = p.canonicalize()?;
+    if cfg!(windows) {
+        if let Some(s) = c.to_str().and_then(strip_verbatim) {
+            return Ok(PathBuf::from(s));
+        }
+    }
+    Ok(c)
+}
+
+/// `\\?\C:\x` → `C:\x`, `\\?\UNC\srv\x` → `\\srv\x`; None when there's nothing to strip
+/// or the result would pass Windows' 260-character limit.
+fn strip_verbatim(s: &str) -> Option<String> {
+    let rest = s.strip_prefix(r"\\?\")?;
+    let plain = if let Some(unc) = rest.strip_prefix(r"UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        let b = rest.as_bytes();
+        if b.len() < 3 || !b[0].is_ascii_alphabetic() || b[1] != b':' || b[2] != b'\\' {
+            return None;
+        }
+        rest.to_string()
+    };
+    (plain.len() < 260).then_some(plain)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn verbatim_prefixes_are_stripped() {
+        use super::strip_verbatim as s;
+        assert_eq!(s(r"\\?\C:\Users\ana\proj").as_deref(), Some(r"C:\Users\ana\proj"));
+        assert_eq!(s(r"\\?\UNC\srv\share\x").as_deref(), Some(r"\\srv\share\x"));
+        assert_eq!(s(r"C:\plain"), None);
+        assert_eq!(s(r"\\?\Volume{abc}\x"), None);
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        assert_eq!(s(&long), None, "too long for the plain form");
+    }
+
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<OsString> {

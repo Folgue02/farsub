@@ -256,7 +256,7 @@ impl App {
                     return;
                 }
                 let path = self.resolve(&self.base_dir(), &input);
-                let path = path.canonicalize().unwrap_or(path);
+                let path = crate::paths::canonical(&path).unwrap_or(path);
                 if path.extension().is_some_and(|e| e == project::PROJECT_EXT) {
                     self.open_project_file(&path);
                 } else if path.is_dir() {
@@ -274,7 +274,7 @@ impl App {
                 let path = self.resolve(&self.base_dir(), &input);
                 if path.is_dir() {
                     self.switch_project(Project::from_folders(vec![
-                        path.canonicalize().unwrap_or(path),
+                        crate::paths::canonical(&path).unwrap_or(path),
                     ]));
                 } else {
                     self.open_project_file(&path);
@@ -314,7 +314,7 @@ impl App {
                     return;
                 }
                 let path = self.resolve(&self.base_dir(), &input);
-                let path = path.canonicalize().unwrap_or(path);
+                let path = crate::paths::canonical(&path).unwrap_or(path);
                 if !path.is_dir() {
                     return self.msg(format!("Not a folder: {input}"));
                 }
