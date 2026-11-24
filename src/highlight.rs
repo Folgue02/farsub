@@ -1291,7 +1291,8 @@ assert $n != '' catch (NetworkError $e) {}
 const $first = $list[0]! ?? $map['key']!.trim();
 never fail(string $m) { exit(1); }
 if (!$done && $x!=null && @part2! == $user?.address!.city) {}
-$bad = $a!==$b;"#
+$bad = $a!==$b;
+bytes $png = %b"\x89PNG\r\n"; type<User> $t = type<User>;"#
             .lines()
             .map(|l| l.to_string())
             .collect();
@@ -1388,6 +1389,11 @@ $bad = $a!==$b;"#
         assert_ne!(at("$bad =", "!=="), style("operator"), "`!==` isn't an operator");
         check("never fail", "never", "type.builtin");
         check("never fail", "fail", "function");
+        // 0.10: `%b"…"` bytes with `\xFF` escapes; `bytes` and `type` are built-in types.
+        check("bytes $png", "bytes", "type.builtin");
+        check("bytes $png", "PNG", "string");
+        check("bytes $png", "\\x89", "string.escape");
+        check("bytes $png", "type<", "type.builtin");
     }
 
     /// LakeScript templates (`.elks`): HTML around `{{ }}` tags holding LakeScript.

@@ -9,7 +9,7 @@ scope: source.lakescript
 
 variables:
   name: '[A-Za-z_][A-Za-z0-9_]*'
-  builtin_types: '\b(?:void|any|never|string|number|bool|list|map|range|regex|result|command)\b'
+  builtin_types: '\b(?:void|any|never|string|number|bool|bytes|type|list|map|range|regex|result|command)\b'
   builtin_classes: '\b(?:IEquals|IOrdered|IAdd|ISub|IMul|IDiv|IMod|IPow|INeg|IIndex|ISetIndex|IContains|Exception|IOError|FileNotFound|PermissionDenied|ValueError|UsageError|TypeError|IndexError|ArithmeticError|CommandFailed|NetworkError|AssertionError)\b'
   # PascalCase: a capital first and at least one lowercase letter (SCREAMING_CASE is
   # an enum value).
@@ -355,6 +355,16 @@ contexts:
       push:
         - meta_scope: string.quoted.raw.lakescript
         - match: '"\1'
+          pop: true
+    # %b"…" bytes (one line): `\xFF` is a byte; also \n \t \r \0 \\ \" \'.
+    - match: '%b"'
+      push:
+        - meta_scope: string.quoted.other.bytes.lakescript
+        - match: '\\(?:x[0-9a-fA-F]{2}|[ntr0\\"''])'
+          scope: constant.character.escape.lakescript
+        - match: '"'
+          pop: true
+        - match: '$'
           pop: true
     # %r"…"flags regexes: only \" is an escape, other backslashes are the regex's.
     - match: '%r"'

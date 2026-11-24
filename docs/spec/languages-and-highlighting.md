@@ -139,7 +139,7 @@
   - Names: `$variables` (also `Self::$count`), `@field`, `@method()`, a lone `@` and
     `@super`, calls and declarations (`bool empty?(…)`, `pub static Point origin()`),
     PascalCase types, `IName` interfaces, `Enum::VALUE` enum values, `module::` members.
-  - Keywords, built-in types (`string`, `number`, `command`, `never`…), built-in interfaces and
+  - Keywords, built-in types (`string`, `number`, `command`, `never`, `bytes`, `type`…), built-in interfaces and
     exceptions (`IMul`, `ValueError`…). Contextual words are keywords only where they
     mean something: `extends`, `implement`, `override`, `static`, `new(` and `Self` in
     class / interface / enum bodies; `command Name {`, `subcommand`, `optional`, `flag`
@@ -149,7 +149,8 @@
   - `//`, `/* */` and `///` doc comments (the `comment.documentation` color).
   - Literals: `'…'` and `"…"` (single-line), `"""…"""`, raw `r"…"` / `r#"…"#`, `f"…"`
     with `{…}` interpolation (`{{` / `}}` literal), `%x"…"` commands (interpolated, may
-    span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` word lists,
+    span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%b"…"` bytes (one line, `\xFF`
+    escapes), `%w[…]` word lists,
     numbers (hex, octal, binary, `_`), named arguments (`name: value`). LakeScript 0.10
     dropped symbols (`:name`, `%i[…]`, the `symbol` type), so a `:` before a name is just
     `:` (updated 2026-11-24).

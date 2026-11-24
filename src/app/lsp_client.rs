@@ -574,7 +574,13 @@ impl App {
                             filter: it.filter_text.clone().unwrap_or_else(|| it.label.clone()),
                             sort: it.sort_text.clone().unwrap_or_else(|| it.label.clone()),
                             kind: it.kind.map(|k| completion_kind(kind_num(&k))).unwrap_or(""),
-                            detail: it.detail.unwrap_or_default(),
+                            // `labelDetails.description` (e.g. the module a type would be
+                            // imported from) when the server gives no `detail`.
+                            detail: it
+                                .detail
+                                .filter(|d| !d.is_empty())
+                                .or_else(|| it.label_details.and_then(|l| l.description))
+                                .unwrap_or_default(),
                             label: it.label,
                             insert,
                             edit_start: start,

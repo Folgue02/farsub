@@ -5153,3 +5153,57 @@ fn terminal_tab_in_the_editor_area() {
     assert!(term_tab(h.state()).is_none());
     assert!(h.state().app.modal.is_none());
 }
+
+/// Accepting a completion applies its additional edits (an auto-import) with it, and the
+/// cursor ends after the completed name: imports above it move it down, edits below don't.
+#[test]
+fn completion_imports_keep_the_cursor_on_the_name() {
+    use crate::editor::Pos;
+    let accept = |src: &str, at: Pos, additional: Vec<(Pos, Pos, String)>| {
+        let d = project("compimport", &[("a.txt", src)]);
+        let mut h = harness(&d);
+        h.state_mut().app.open_file(&d.join("a.txt"), true);
+        steps(&mut h, 2);
+        h.state_mut().app.buf_mut().unwrap().goto(at);
+        let id = h.state().app.buf().unwrap().id;
+        let item = crate::app::CompItem {
+            label: "Date".into(),
+            detail: "std/time".into(),
+            kind: "class",
+            insert: "Date".into(),
+            edit_start: None,
+            filter: "Date".into(),
+            sort: "~Date".into(),
+            additional,
+        };
+        h.state_mut().app.completion = Some(crate::app::Completion {
+            buf_id: id,
+            start: Pos::new(at.line, at.col - 3),
+            items: vec![item],
+            shown: vec![0],
+            sel: Some(0),
+        });
+        press(&mut h, Modifiers::NONE, Key::Enter);
+        let b = h.state().app.buf().unwrap();
+        (b.lines.join("\n"), (b.cursor.line, b.cursor.col))
+    };
+    // An import line above, and an unrelated edit below.
+    let (text, cur) = accept(
+        "use std/fs;\n\nconst $d = Dat;\nend\n",
+        Pos::new(2, 14),
+        vec![
+            (Pos::new(1, 0), Pos::new(1, 0), "use std/time::Date;\n".into()),
+            (Pos::new(3, 3), Pos::new(3, 3), "\nmore".into()),
+        ],
+    );
+    assert_eq!(text, "use std/fs;\nuse std/time::Date;\n\nconst $d = Date;\nend\nmore\n");
+    assert_eq!(cur, (3, 15));
+    // A file with no imports: the line goes at the very start, before the name's line.
+    let (text, cur) = accept("Dat", Pos::new(0, 3), vec![(Pos::new(0, 0), Pos::new(0, 0), "use std/time::Date;\n\n".into())]);
+    assert_eq!(text, "use std/time::Date;\n\nDate");
+    assert_eq!(cur, (2, 4));
+    // An existing import rewritten on the name's own line before it.
+    let (text, cur) = accept("use a::X; Dat", Pos::new(0, 13), vec![(Pos::new(0, 7), Pos::new(0, 8), "{X, Date}".into())]);
+    assert_eq!(text, "use a::{X, Date}; Date");
+    assert_eq!(cur, (0, 22));
+}

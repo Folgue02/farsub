@@ -83,16 +83,25 @@ impl App {
             .map(|(_, e)| e)
             .filter(|e| *e > end)
             .unwrap_or(end);
+        // Where `start` ends up once the additional edits (imports) before it are made;
+        // ones after it don't move it.
+        let mut line = start.line as isize;
+        let mut col = start.col;
+        for (s, e, t) in &item.additional {
+            if (e.line, e.col) > (start.line, start.col) {
+                continue;
+            }
+            let nl = t.matches('\n').count();
+            line += nl as isize - (e.line - s.line) as isize;
+            if e.line == start.line {
+                let last = t.rsplit('\n').next().unwrap_or("").chars().count();
+                col = start.col - e.col + last + if nl == 0 { s.col } else { 0 };
+            }
+        }
         let mut edits = vec![(start, end, item.insert.clone())];
         edits.extend(item.additional.iter().cloned());
-        let before_lines = b.lines.len();
         b.apply_edits(edits);
-        // Place cursor after the inserted text (adjusting for lines added above by imports).
-        let added = b.lines.len() as isize
-            - before_lines as isize
-            - item.insert.matches('\n').count() as isize;
-        let line = (start.line as isize + added.max(0)) as usize;
-        let end = crate::editor::end_of(Pos::new(line, start.col), &item.insert);
+        let end = crate::editor::end_of(Pos::new(line.max(0) as usize, col), &item.insert);
         b.goto(end);
     }
 }
