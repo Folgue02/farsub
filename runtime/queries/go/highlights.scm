@@ -1,4 +1,9 @@
 ;; From tree-sitter-go 0.25.0: queries/highlights.scm
+;; FarSub: the general rules first, so the specific ones below win (the last matching pattern wins).
+(type_identifier) @type
+(field_identifier) @property
+(identifier) @variable
+
 ; Function calls
 
 (call_expression
@@ -22,9 +27,6 @@
 
 ; Identifiers
 
-(type_identifier) @type
-(field_identifier) @property
-(identifier) @variable
 
 ; Operators
 

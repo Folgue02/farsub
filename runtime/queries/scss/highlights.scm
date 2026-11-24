@@ -1,4 +1,8 @@
 ;; From tree-sitter-scss 1.0.0: queries/highlights.scm
+;; FarSub: the general rules first, so the specific ones below win (the last matching pattern wins).
+(identifier) @variable
+(variable) @variable
+
 [
   "@at-root"
   "@debug"
@@ -52,9 +56,7 @@
 
 (keyword_query) @function
 
-(identifier) @variable
 
-(variable) @variable
 
 (argument) @variable.parameter
 

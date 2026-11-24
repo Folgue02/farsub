@@ -1,4 +1,8 @@
 ;; From tree-sitter-gleam 1.0.0: queries/highlights.scm
+;; FarSub: the general rules first, so the specific ones below win (the last matching pattern wins).
+(identifier) @variable
+(label) @property
+
 ; Comments
 (module_comment) @comment
 (statement_comment) @comment
@@ -42,7 +46,6 @@
 ; Assumed to be intended to refer to a name for a field; something that comes
 ; before ":" or after "."
 ; e.g. record field names, tuple indices, names for named arguments, etc
-(label) @property
 (tuple_access
   index: (integer) @property)
 
@@ -77,7 +80,6 @@
  (#match? @error "^(auto|delegate|derive|else|implement|macro|test)$"))
 
 ; Variables
-(identifier) @variable
 (discard) @comment.unused
 
 ; Keywords

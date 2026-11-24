@@ -19,6 +19,19 @@
 - Highlight queries are data: `runtime/queries/<grammar>/highlights.scm` (copied from the
   grammar crates, licenses in `runtime/queries/LICENSES.md`), overridable per grammar
   from a package or `~/.config/farsub/queries/<grammar>/highlights.scm`.
+- **Which rule wins** (decided 2026-11-24): an inner node's color wins over the node
+  around it; when several patterns color the same node, the **last** one in the query
+  wins, as in tree-sitter's own highlighter. Queries list the general rule first
+  (`(identifier) @variable`) and the specific ones after it (function names, parameters,
+  JSX tags). FarSub used to let the first one win, which left function names, parameters
+  and JSX tags uncolored in C, C++, C#, Java, JavaScript/TypeScript, Python, Ruby and
+  others. The few bundled queries written the other way round (Go, Gleam, SCSS, Nix,
+  JSON) were reordered, each with a `;; FarSub:` comment; Ruby's "every name that isn't a
+  local variable is a method" rule is off, because FarSub doesn't track local variables.
+  Queries taken from Neovim also work: `#lua-match?` is read as `#match?` (the Lua pattern
+  turned into a regex), and `#has-parent?`, `#has-ancestor?` and their `not-` forms are
+  checked. Other predicates (`#is-not? local`, `#set!`) are ignored, so their patterns
+  always apply.
 - Themes are TOML (`themes/*.toml`): `[editor]` colors (background, foreground,
   selection, line_highlight, gutter, guide, active_guide, caret, find_highlight, and the
   [timer widget](timers.md) colors) and `[syntax]` styles

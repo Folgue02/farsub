@@ -602,7 +602,7 @@ mod tests {
             };
             let lib = run_install(&data, &local, &|_| {}).unwrap();
             let lang = load(&lib, &local.symbol()).unwrap();
-            if let Err(e) = tree_sitter::Query::new(&lang, query) {
+            if let Err(e) = tree_sitter::Query::new(&lang, &crate::highlight::prepare_query(query)) {
                 panic!("{}: bundled highlights.scm: {e}", r.name);
             }
             let _ = std::fs::remove_dir_all(&data);

@@ -168,7 +168,7 @@ impl Grammar {
     fn query(&self) -> Result<Arc<Query>, String> {
         self.query
             .get_or_init(|| {
-                Query::new(&self.language, &self.query_src)
+                Query::new(&self.language, &prepare_query(&self.query_src))
                     .map(Arc::new)
                     .map_err(|e| format!("{}: highlights.scm: {e}", self.name))
             })
@@ -693,9 +693,118 @@ impl<'a> TextProvider<&'a [u8]> for Lines<'a> {
     }
 }
 
+/// The predicates about a node's place in the tree that queries written for Neovim use
+/// (`#has-parent?`, `#has-ancestor?` and their `not-` forms: the capture, then node kinds).
+/// Tree-sitter itself only checks text predicates (`#eq?`, `#match?`, `#any-of?`); any
+/// other predicate (`#is-not? local`, `#set!`) is ignored, so its pattern always applies.
+fn tree_predicates_hold(query: &Query, m: &tree_sitter::QueryMatch<'_, '_>) -> bool {
+    use tree_sitter::QueryPredicateArg as A;
+    query.general_predicates(m.pattern_index).iter().all(|p| {
+        let (negate, ancestors) = match p.operator.as_ref() {
+            "has-parent?" => (false, false),
+            "not-has-parent?" => (true, false),
+            "has-ancestor?" => (false, true),
+            "not-has-ancestor?" => (true, true),
+            _ => return true,
+        };
+        let Some(A::Capture(cap)) = p.args.first() else {
+            return true;
+        };
+        let kinds: Vec<&str> = p.args[1..]
+            .iter()
+            .filter_map(|a| match a {
+                A::String(s) => Some(s.as_ref()),
+                A::Capture(_) => None,
+            })
+            .collect();
+        let Some(node) = m.captures().iter().find(|c| c.index == *cap).map(|c| c.node) else {
+            return true;
+        };
+        let mut up = node.parent();
+        let mut found = false;
+        while let Some(n) = up {
+            if kinds.contains(&n.kind()) {
+                found = true;
+                break;
+            }
+            if !ancestors {
+                break;
+            }
+            up = n.parent();
+        }
+        found != negate
+    })
+}
+
+/// Neovim's `#lua-match?` (a Lua pattern) as tree-sitter's `#match?` (a regex), so queries
+/// taken from Neovim work: `%u` → `[A-Z]`, `%d` → `[0-9]`, `%.` → `\.` and so on.
+pub fn prepare_query(src: &str) -> String {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r#"#(not-)?lua-match\?(\s+@[\w.]+\s+)"((?:[^"\\]|\\.)*)""#).unwrap()
+    });
+    re.replace_all(src, |c: &regex::Captures| {
+        let not = c.get(1).map_or("", |m| m.as_str());
+        format!("#{not}match?{}\"{}\"", &c[2], lua_to_regex(&c[3]))
+    })
+    .into_owned()
+}
+
+/// A Lua pattern (as written inside a query string) to a regex (likewise).
+fn lua_to_regex(p: &str) -> String {
+    let mut out = String::new();
+    let mut in_set = false;
+    let mut chars = p.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '[' if !in_set => {
+                in_set = true;
+                out.push(ch);
+            }
+            ']' if in_set => {
+                in_set = false;
+                out.push(ch);
+            }
+            '%' => {
+                let Some(k) = chars.next() else { break };
+                let class = match k {
+                    'a' => "A-Za-z",
+                    'd' => "0-9",
+                    'l' => "a-z",
+                    'u' => "A-Z",
+                    'w' => "A-Za-z0-9",
+                    'x' => "0-9A-Fa-f",
+                    's' => r"\\s",
+                    'p' => r"!-/:-@\\[-`{-~",
+                    _ => {
+                        // An escaped character: `%.` is a literal dot.
+                        if k.is_ascii_alphanumeric() {
+                            out.push(k);
+                        } else {
+                            out.push_str(r"\\");
+                            out.push(k);
+                        }
+                        continue;
+                    }
+                };
+                if in_set {
+                    out.push_str(class);
+                } else {
+                    out.push('[');
+                    out.push_str(class);
+                    out.push(']');
+                }
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
 /// Run the highlight query over lines `from..to` and turn captures into per-line spans.
-/// Inner nodes win over the nodes containing them; for the same node, the earliest pattern
-/// in the query wins (tree-sitter's usual precedence).
+/// Inner nodes win over the nodes containing them; for the same node, the latest pattern
+/// in the query wins, as in tree-sitter's own highlighter: a query lists the general rule
+/// (`(identifier) @variable`) first and the more specific ones after it.
 fn highlight_lines(
     tree: &Tree,
     query: &Query,
@@ -725,6 +834,9 @@ fn highlight_lines(
         let Some(style) = styles[c.index as usize] else {
             continue;
         };
+        if !tree_predicates_hold(query, m) {
+            continue;
+        }
         let n = c.node;
         found.push((
             n.start_byte(),
@@ -735,9 +847,9 @@ fn highlight_lines(
             n.end_position(),
         ));
     }
-    // Paint outer nodes first, inner ones over them; for the same node, later patterns first
-    // so the earliest pattern ends up on top.
-    found.sort_by_key(|f| (f.0, Reverse(f.1), Reverse(f.2)));
+    // Paint outer nodes first, inner ones over them; for the same node, earlier patterns
+    // first so the latest pattern ends up on top.
+    found.sort_by_key(|f| (f.0, Reverse(f.1), f.2));
     let mut paint: Vec<Vec<Option<Style>>> = vec![vec![]; out.len()];
     for (_, _, _, style, s, e) in found {
         for row in s.row.max(from)..=e.row.min(to - 1) {
@@ -895,6 +1007,76 @@ mod tests {
         // Only the requested range is highlighted.
         assert!(hl.ensure(&s, &text, 1, 2, far));
         assert!(hl.line(0).is_none() && hl.line(1).is_some() && hl.line(2).is_none());
+    }
+
+    /// The style of the first `word` on `line` of `src` highlighted with `grammar`.
+    fn style_of(s: &Syntax, grammar: &str, src: &str, line: usize, word: &str) -> Option<Style> {
+        let text = lines(src);
+        let mut hl = HlCache::new(grammar.into());
+        hl.reset(grammar.into(), Some(grammar.into()));
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(s, &text, 0, text.len(), far));
+        let col = text[line].find(word).unwrap();
+        hl.line(line)?.iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2)
+    }
+
+    /// For the same node, the last matching pattern wins, as the bundled queries expect:
+    /// C's starts with `(identifier) @variable` and marks calls and definitions after it;
+    /// JavaScript's JSX rules come after its identifier rules.
+    #[test]
+    fn later_patterns_win_for_the_same_node() {
+        let s = Syntax::load("Monokai Extended");
+        let st = |c: &str| s.theme.style_for(c);
+        let c = "int sum(int n) {\n    return printf(\"%d\", n);\n}\n";
+        assert_eq!(style_of(&s, "c", c, 0, "sum"), st("function"), "definition");
+        assert_eq!(style_of(&s, "c", c, 1, "printf"), st("function"), "call");
+        let tsx = "const v = <div className=\"a\">{x}</div>;\n";
+        assert_eq!(style_of(&s, "tsx", tsx, 0, "div"), st("tag"));
+        assert_eq!(style_of(&s, "tsx", tsx, 0, "className"), st("attribute"));
+        let ts = "function f(item: number) {}\n";
+        assert_eq!(style_of(&s, "typescript", ts, 0, "item"), st("variable.parameter"));
+        // Queries written the other way round were reordered: Go's function rules, JSON keys.
+        let go = "package main\nfunc join() { len(x) }\n";
+        assert_eq!(style_of(&s, "go", go, 1, "join"), st("function"));
+        assert_eq!(style_of(&s, "go", go, 1, "len"), st("function.builtin"));
+        let json = "{ \"key\": \"value\" }\n";
+        assert_ne!(style_of(&s, "json", json, 0, "key"), style_of(&s, "json", json, 0, "value"));
+    }
+
+    #[test]
+    fn neovim_predicates_work() {
+        // `#lua-match?` becomes `#match?` with the Lua pattern as a regex.
+        assert_eq!(
+            prepare_query(r#"((x) @c (#lua-match? @c "^[%u@][%u%d_]+$")) ((y) @d (#not-lua-match? @d "%.h$"))"#),
+            r#"((x) @c (#match? @c "^[A-Z@][A-Z0-9_]+$")) ((y) @d (#not-match? @d "\\.h$"))"#
+        );
+        // `#has-parent?` / `#not-has-parent?` / `#has-ancestor?` look at the tree.
+        let s = Syntax::load("Monokai Extended");
+        let g = s.grammar("c").unwrap();
+        let q = Query::new(
+            &g.language,
+            &prepare_query(
+                r#"((identifier) @function (#has-parent? @function call_expression))
+                   ((identifier) @string (#not-has-parent? @string call_expression init_declarator))
+                   ((identifier) @number (#has-ancestor? @number compound_statement)
+                                         (#lua-match? @number "^%u"))"#,
+            ),
+        )
+        .unwrap();
+        let text = lines("int a = f(b);\nvoid g() { Z; }\n");
+        let mut p = Parser::new();
+        p.set_language(&g.language).unwrap();
+        let tree = p.parse(text.join("\n"), None).unwrap();
+        let spans = highlight_lines(&tree, &q, &s.theme, &text, 0, 2);
+        let at = |ln: usize, word: &str| {
+            let col = text[ln].find(word).unwrap();
+            spans[ln].iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2)
+        };
+        let st = |c: &str| s.theme.style_for(c);
+        assert_eq!(at(0, "f"), st("function"), "parent is the call");
+        assert_eq!(at(0, "a"), None, "parent is init_declarator");
+        assert_eq!(at(0, "b"), st("string"), "parent is the argument list");
+        assert_eq!(at(1, "Z"), st("number"), "inside a block and upper case");
     }
 }
 
@@ -1337,3 +1519,4 @@ $bad = $a!==$b;"#
         );
     }
 }
+

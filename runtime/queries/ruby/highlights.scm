@@ -1,8 +1,10 @@
 ;; From tree-sitter-ruby 0.23.1: queries/highlights.scm
 (identifier) @variable
 
-((identifier) @function.method
- (#is-not? local))
+;; FarSub: off. Upstream marks every identifier that isn't a local variable as a method,
+;; which needs locals.scm tracking that FarSub doesn't do; without it every name is a method.
+;; ((identifier) @function.method
+;;  (#is-not? local))
 
 [
   "alias"
