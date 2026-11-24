@@ -9,7 +9,7 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
 - [Command line](spec/command-line.md): opening files and folders, `--wait`, `--empty`,
   New Window, headless commands
 - [Window layout](spec/window.md): areas of the window, `ui_scale`, editor groups
-  (columns)
+  (columns), tab dragging, pinned tabs, terminal tabs
 - [Editor](spec/editor.md): settings view, config folder window, caret, indentation, word wrap, files deleted or
   changed on disk, encodings, saving, hover, scrollbars and smooth scrolling
 - [Languages and highlighting](spec/languages-and-highlighting.md): language detection,
@@ -21,7 +21,8 @@ Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
 - [File icons](spec/file-icons.md): built-in icons and icon packages
 - [Completion](spec/completion.md): the LSP completion list
 - [Goto Anything](spec/goto-anything.md): the file finder
-- [Bottom panel](spec/bottom-panel.md): terminals and the console
+- [Bottom panel](spec/bottom-panel.md): terminals (in the panel or as editor tabs) and
+  the console
 - [Context menus](spec/context-menus.md)
 - [Packages](spec/packages.md)
 - [Sidebar](spec/sidebar.md)

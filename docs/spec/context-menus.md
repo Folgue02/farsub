@@ -7,7 +7,9 @@
   `menus.toml` (command ids, `"-"` separators); user files override per section.
 - Keyboard: arrows move, Enter runs, a letter runs the item starting with it, Esc or a
   click outside closes. Disabled items are dimmed and skipped; items that apply only to some targets (Open This
-  Project in New Window, for project files) are left out instead, and separators left
+  Project in New Window, for project files; Pin / Unpin Tab; Move Terminal into Editor
+  Area / to Panel) are left out instead; a terminal tab's menu also leaves out the items
+  that apply only to files, and separators left
   next to each other or at an end are dropped.
 - egui's own widget focus is never used: every key goes through the app's routing, so Tab
   never moves focus to (and Enter never "clicks") a menu-bar button.

@@ -43,7 +43,7 @@ impl App {
             self.hover = None;
             return true;
         }
-        if self.focus == Focus::Terminal && self.terminal_shown().is_some() {
+        if self.active_terminal().is_some() {
             return self.terminal_key(k);
         }
         if self.focus == Focus::Find && self.find.open {
@@ -114,25 +114,35 @@ impl App {
             self.run(cmd);
             return true;
         }
-        // Select tab N of the focused group: Cmd+N on macOS, Alt+N elsewhere
-        // (Ctrl+N focuses group N there).
-        let tab_mod = if cfg!(target_os = "macos") {
-            k.sup && !k.alt
-        } else {
-            k.alt && !k.ctrl
-        };
-        if let (KeyCode::Char(c @ '1'..='9'), true, false) = (k.code, tab_mod, k.shift) {
-            let n = c as usize - '1' as usize;
-            if let Some(&i) = self.group_tabs(self.group).get(n) {
-                self.set_cur(i);
-                self.focus = Focus::Editor;
-            }
+        if self.select_tab_key(k) {
             return true;
         }
         if sidebar {
             return false;
         }
         self.editor_key(k)
+    }
+
+    /// Select tab N of the focused group: Cmd+N on macOS, Alt+N elsewhere (Ctrl+N focuses
+    /// group N there). True if `k` was such a key.
+    pub(super) fn select_tab_key(&mut self, k: Key) -> bool {
+        let tab_mod = if cfg!(target_os = "macos") {
+            k.sup && !k.alt
+        } else {
+            k.alt && !k.ctrl
+        };
+        let KeyCode::Char(c @ '1'..='9') = k.code else {
+            return false;
+        };
+        if !tab_mod || k.shift {
+            return false;
+        }
+        let n = c as usize - '1' as usize;
+        if let Some(&i) = self.group_tabs(self.group).get(n) {
+            self.set_cur(i);
+            self.focus = Focus::Editor;
+        }
+        true
     }
 
     /// Typed text (already composed by the OS: shifted chars, dead keys, IME).
@@ -151,7 +161,7 @@ impl App {
                 self.input_changed();
                 continue;
             }
-            let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
+            let in_term = self.active_terminal().is_some();
             match &mut self.modal {
                 Some(Modal::Servers(_)) => self.servers_char(c),
                 Some(Modal::LspInfo(_)) => self.lsp_info_char(c),
@@ -169,7 +179,7 @@ impl App {
                     }
                 }
                 None if in_term => {
-                    if let Some(id) = self.terminal_shown()
+                    if let Some(id) = self.active_terminal()
                         && self.terminals.iter().any(|t| t.id == id && t.is_exited())
                     {
                         // "Press any key to close" covers letters too.
@@ -195,7 +205,7 @@ impl App {
             self.input_changed();
             return;
         }
-        let in_term = self.focus == Focus::Terminal && self.terminal_shown().is_some();
+        let in_term = self.active_terminal().is_some();
         match &mut self.modal {
             Some(_) => {}
             None if in_term => {
@@ -218,7 +228,7 @@ impl App {
         if self.modal.is_some() {
             return;
         }
-        if self.focus == Focus::Terminal && self.terminal_shown().is_some() {
+        if self.active_terminal().is_some() {
             // Copy the selection; with nothing selected the key goes to the shell (on
             // Windows/Linux, Ctrl+C / Ctrl+X arrive here as copy/cut events).
             if let Some(t) = self.current_terminal_mut() {

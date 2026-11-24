@@ -16,8 +16,8 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
   `TERM=xterm-256color`. Device status requests (`ESC[6n` cursor position, `ESC[5n`)
   are answered: Windows' pseudo-console asks for the cursor position when it starts and
   shows nothing until it gets an answer, which is why the shell never appeared there.
-- **Ctrl+Tab / Ctrl+Shift+Tab** cycle terminal tabs (wrapping) while a terminal has
-  focus; in the editor they keep switching files.
+- **Ctrl+Tab / Ctrl+Shift+Tab** cycle the panel's terminal tabs (wrapping) while a panel
+  terminal has focus; in the editor (terminal tabs included) they keep switching files.
 - Keys go to the shell, including Ctrl combinations (Ctrl+C interrupts). Cmd shortcuts on
   macOS stay app shortcuts and never reach the shell. A short list of app shortcuts always
   works in the terminal on every platform: toggle/new terminal, show console, command
@@ -31,6 +31,27 @@ terminal, `x` kills the current terminal (or hides the panel on the console tab)
   "[process exited with code N — press any key to close]".
 - Killing a tab (×, middle-click, Terminal: Kill Terminal, `x`) kills its shell.
   Terminals are not restored across restarts.
+
+## Terminals in the editor area (decided 2026-11-24)
+
+- **Terminal: New Terminal in Editor Area** (**Ctrl+Alt+`**, View menu) opens a terminal
+  as a tab of the focused editor group instead of in the panel. It starts like a panel
+  terminal (project folder, `terminal_shell`). How its tab looks and behaves as a tab
+  (dragging, pinning, Ctrl+Tab, what closing asks) is in [Window layout](window.md).
+- It's the same terminal: keys, copy/paste, selection, scrolling, the right-click menu,
+  and the exit rules (exit 0 closes the tab; a non-zero exit keeps it showing the code
+  until a key is pressed) all work as in the panel.
+- **Moving between the panel and a tab**: Terminal: Move Terminal into Editor Area
+  turns the panel's current terminal into a tab of the focused group; Terminal: Move
+  Terminal to Panel sends a terminal tab back to the panel. The shell keeps running and
+  keeps its screen and history either way. Both are in the command palette and the
+  terminal's right-click menu; Move Terminal to Panel is in the tab's right-click menu
+  too.
+- The panel lists only its own terminals ("TERMINAL n" counts those); Ctrl+` toggles
+  the panel and never picks a terminal that's in a tab.
+- Terminal: Kill Terminal kills the focused terminal, whether it's in the panel or a
+  tab, without asking (killing is what it was asked to do). Closing a running
+  terminal's tab with its × or Cmd+W asks first.
 
 ## Console (app log)
 

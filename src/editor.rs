@@ -286,6 +286,11 @@ pub struct Buffer {
     pub title: Option<String>,
     /// Set on the Find Results buffer: what each of its lines points at.
     pub results: Option<Box<crate::search::Results>>,
+    /// Pinned tab: drawn icon-only at the start of its group's strip, skipped by
+    /// Close Other Tabs / Close Tabs to the Right.
+    pub pinned: bool,
+    /// A terminal shown as an editor tab: the id of its terminal in `App::terminals`.
+    pub term: Option<usize>,
     /// With word wrap: which visual row of the `scroll_y` line is at the top.
     pub scroll_row: usize,
     /// Pixels the top row is scrolled past (smooth scrolling between whole rows).
@@ -363,6 +368,8 @@ impl Buffer {
             word_wrap: None,
             title: None,
             results: None,
+            pinned: false,
+            term: None,
             scroll_row: 0,
             scroll_px: 0.0,
             want_vx: None,

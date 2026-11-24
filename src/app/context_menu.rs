@@ -13,7 +13,13 @@ impl App {
     pub fn open_context_menu_at(&mut self, kind: menu::ContextKind, pos: Option<(f32, f32)>) {
         let mut items = self.contexts.get(kind.name()).cloned().unwrap_or_default();
         // Items only for some targets are left out elsewhere (not shown greyed out).
-        items.retain(|i| i.as_ref().is_none_or(|i| !only_when_enabled(i.cmd) || self.enabled(i.cmd)));
+        // A terminal tab's menu leaves out what only applies to files.
+        let term_tab =
+            kind == menu::ContextKind::Tab && self.buf().is_some_and(|b| b.term.is_some());
+        items.retain(|i| {
+            i.as_ref()
+                .is_none_or(|i| !(only_when_enabled(i.cmd) || term_tab) || self.enabled(i.cmd))
+        });
         tidy_separators(&mut items);
         if items.is_empty() {
             return;
@@ -107,7 +113,11 @@ impl App {
 
 /// Context menu items shown only where they apply.
 fn only_when_enabled(cmd: Command) -> bool {
-    matches!(cmd, Command::OpenProjectInNewWindow)
+    use Command::*;
+    matches!(
+        cmd,
+        OpenProjectInNewWindow | PinTab | UnpinTab | MoveTerminalToEditor | MoveTerminalToPanel
+    )
 }
 
 /// No separator first, last, or next to another.

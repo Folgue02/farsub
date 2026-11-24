@@ -12,7 +12,9 @@ impl Gui {
         let y = r.center().y;
         let mut left = String::new();
         let app = &self.app;
-        if let Some(b) = app.buf() {
+        // A terminal tab has no line, column, syntax or indentation.
+        let text_buf = app.buf().filter(|b| b.term.is_none());
+        if let Some(b) = text_buf {
             left = format!("Line {}, Column {}", b.cursor.line + 1, b.cursor.col + 1);
             if b.multi() {
                 // "3 selection regions" instead of the position.
@@ -58,7 +60,7 @@ impl Gui {
             });
         // Right side: each item is clickable.
         let mut right: Vec<(String, Option<crate::commands::Command>)> = vec![];
-        if let Some(b) = app.buf() {
+        if let Some(b) = text_buf {
             let lsp = app.lsp_status();
             let has_servers = b
                 .lang

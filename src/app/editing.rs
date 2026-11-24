@@ -225,7 +225,15 @@ impl App {
             }
             CloseBuffer => {
                 let b = &self.buffers[self.cur];
-                if b.deleted {
+                if self.terminal_running(self.cur) {
+                    self.modal = Some(Modal::Confirm(Confirm {
+                        message: format!(
+                            "The terminal {} is still running. Kill it and close the tab?",
+                            b.name()
+                        ),
+                        kind: ConfirmKind::CloseBuffer(b.id),
+                    }));
+                } else if b.deleted {
                     self.modal = Some(Modal::Confirm(Confirm {
                         message: format!(
                             "{} no longer exists on disk. Close it and lose its contents? (Save recreates the file.)",

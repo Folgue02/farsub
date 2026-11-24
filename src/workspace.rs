@@ -32,6 +32,9 @@ pub struct BufferState {
     /// Indentation chosen by hand: (use tabs, width).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub indent: Option<(bool, usize)>,
+    /// The tab is pinned.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -128,6 +131,7 @@ mod tests {
                     indent: Some((false, 2)),
                     group: 1,
                     word_wrap: Some(false),
+                    pinned: true,
                 },
                 BufferState {
                     path: None,

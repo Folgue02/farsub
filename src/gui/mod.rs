@@ -75,6 +75,11 @@ fn block(ui: &egui::Ui, r: Rect, what: &'static str) {
     ui.interact(r, Id::unique(("block", what)), Sense::click_and_drag());
 }
 
+/// The terminals' background (panel and terminal tabs): a shade darker than the editor.
+fn terminal_bg(c: &Palette) -> Color32 {
+    mix(c.bg, Color32::BLACK, 0.25)
+}
+
 fn pressed(ui: &egui::Ui, resp: &egui::Response) -> bool {
     resp.hovered() && ui.input(|i| i.pointer.primary_pressed())
 }

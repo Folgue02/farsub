@@ -402,6 +402,10 @@ Click a pane to focus it, and drag the divider to resize. Each pane has scrollba
 (vertical always, horizontal for long lines). The layout is saved with the
 workspace.
 
+Drag tabs to reorder them or move them to another pane. **Pin** a tab from its right-click
+menu or the command palette (File: Pin Tab): it shrinks to its icon, stays at the start of
+its pane's tabs, survives Close Other Tabs, and stays pinned after a restart.
+
 **Preferences: Settings** (Cmd+,) opens a settings window: the full,
 read-only `Default Settings.toml` on the left and your settings file on the right. Copy
 over what you want to change and save; every farsub window picks up the change. Closing
@@ -425,6 +429,13 @@ scroll for history (also Shift+Page Up/Down). Ctrl+Tab / Ctrl+Shift+Tab cycle te
 while a terminal is focused. `exit` closes the tab; a non-zero exit keeps it open showing the
 code until you press a key. Close any tab with its ×, a middle-click, or Terminal: Kill
 Terminal. `terminal_shell = "/bin/bash"` picks a different shell.
+
+**Ctrl+Alt+`** (Terminal: New Terminal in Editor Area) opens a terminal as an editor tab
+instead, next to your files. It has a darker background, a green `>_` icon and the shell
+and folder as its title. It drags between panes and switches with Ctrl+Tab like any tab,
+and asks before closing while its shell is still running. Terminal: Move Terminal to
+Panel / into Editor Area moves a terminal between the two places without restarting it.
+Terminal tabs aren't restored after a restart.
 
 ## Context menus
 

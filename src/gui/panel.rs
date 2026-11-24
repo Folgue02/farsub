@@ -12,7 +12,7 @@ impl Gui {
         c: &Palette,
     ) {
         use crate::app::PanelTab;
-        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        let bg = terminal_bg(c);
         p.rect_filled(r, 0.0, bg);
         p.line_segment([r.left_top(), r.right_top()], Stroke::new(1.0, c.border));
         // Resize by dragging the top edge.
@@ -32,10 +32,12 @@ impl Gui {
         let head = Rect::from_min_size(r.min, Vec2::new(r.width(), 26.0));
         let font = FontId::proportional(11.0);
         let mut x = r.left() + 8.0;
+        let in_panel = self.app.panel_terminals();
         let mut tabs: Vec<(PanelTab, String)> = self
             .app
             .terminals
             .iter()
+            .filter(|t| in_panel.contains(&t.id))
             .enumerate()
             .map(|(i, t)| {
                 (
@@ -188,7 +190,7 @@ impl Gui {
         }
         let body = Rect::from_min_max(Pos2::new(r.left(), head.bottom()), r.max);
         match self.app.panel.tab {
-            PanelTab::Terminal(id) => self.draw_terminal(ui, p, body, id, c),
+            PanelTab::Terminal(id) => self.draw_terminal(ui, p, body, id, c, None),
             PanelTab::Console => self.draw_console(ui, p, body, c),
         }
     }
@@ -211,8 +213,14 @@ impl Gui {
         r: Rect,
         id: usize,
         c: &Palette,
+        tab: Option<usize>,
     ) {
-        let focused = self.app.focus == Focus::Terminal && self.app.modal.is_none();
+        // In the panel, or (`tab`) as the shown tab of that editor group.
+        let focused = self.app.modal.is_none()
+            && match tab {
+                Some(g) => self.app.focus == Focus::Editor && self.app.group == g,
+                None => self.app.focus == Focus::Terminal,
+            };
         let font = FontId::monospace((self.app.font_size - 1.0).max(8.0));
         let (cw, rh) = ui
             .ctx()
@@ -221,7 +229,7 @@ impl Gui {
         let inner = r.shrink2(Vec2::new(10.0, 4.0));
         let cols = ((inner.width() / cw).floor() as u16).max(10);
         let rows = ((inner.height() / lh).floor() as u16).max(2);
-        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        let bg = terminal_bg(c);
         let Some(t) = self.app.terminals.iter_mut().find(|t| t.id == id) else {
             return;
         };
@@ -261,15 +269,22 @@ impl Gui {
                 t.sel = None;
             }
         }
-        if resp.clicked() || resp.drag_started() {
-            self.app.focus = Focus::Terminal;
-        }
+        let focus_click = resp.clicked() || resp.drag_started();
         let term_menu = resp
             .secondary_clicked()
             .then(|| resp.interact_pointer_pos())
             .flatten();
         let sel = t.sel.map(|(a, b)| if a <= b { (a, b) } else { (b, a) });
         let exited = t.is_exited();
+        if focus_click {
+            match tab {
+                Some(g) => self.app.focus_group(g),
+                None => self.app.focus = Focus::Terminal,
+            }
+        }
+        let Some(t) = self.app.terminals.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
         let clip = p.with_clip_rect(r);
         let fg = c.fg;
         t.with_screen(|s| {
@@ -379,7 +394,10 @@ impl Gui {
             );
         }
         if let Some(pos) = term_menu {
-            self.app.focus = Focus::Terminal;
+            match tab {
+                Some(g) => self.app.focus_group(g),
+                None => self.app.focus = Focus::Terminal,
+            }
             self.app
                 .open_context_menu(crate::menu::ContextKind::Terminal, (pos.x, pos.y));
         }
@@ -388,7 +406,7 @@ impl Gui {
     pub(super) fn draw_console(&mut self, ui: &mut egui::Ui, p: &Painter, r: Rect, c: &Palette) {
         use crate::log::Level;
         let focused = self.app.focus == Focus::Console && self.app.modal.is_none();
-        let bg = mix(c.bg, Color32::BLACK, 0.25);
+        let bg = terminal_bg(c);
         let small = FontId::proportional(11.5);
         let filt = &self.app.console.filter;
         let hint = format!(

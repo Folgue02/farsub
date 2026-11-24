@@ -10,18 +10,28 @@ impl App {
         use Command::*;
         let has_buf = self.buf().is_some();
         let lsp = self.buf().is_some_and(|b| b.lsp_client.is_some());
-        let in_panel = matches!(self.focus, Focus::Terminal | Focus::Console);
+        let in_panel = self.focus == Focus::Console || self.active_terminal().is_some();
+        let term_tab = self.buf().is_some_and(|b| b.term.is_some());
+        let pinned = self.buf().is_some_and(|b| b.pinned);
         match cmd {
+            PinTab => has_buf && !pinned,
+            UnpinTab => pinned,
+            MoveTerminalToEditor => self.terminal_shown().is_some(),
+            MoveTerminalToPanel => term_tab,
+            CloseTerminal => self.active_terminal().is_some() || self.terminal_shown().is_some(),
+            c if term_tab && !works_in_terminal_tab(c) => false,
             // Text commands edit the focused input (find, palette, console line…).
             c if crate::lineedit::accepts(c) && self.has_input() => true,
             Copy | Paste | SelectAll if in_panel => true,
-            CloseOtherTabs => has_buf && self.group_tabs(self.group).len() > 1,
+            CloseOtherTabs => {
+                has_buf
+                    && (self.group_tabs(self.group).into_iter())
+                        .any(|i| i != self.cur && !self.buffers[i].pinned)
+            }
             CloseTabsToRight => {
                 has_buf
-                    && self
-                        .group_tabs(self.group)
-                        .last()
-                        .is_some_and(|&l| l > self.cur)
+                    && (self.group_tabs(self.group).into_iter())
+                        .any(|i| i > self.cur && !self.buffers[i].pinned)
             }
             FocusGroup2 if self.layout < 2 => false,
             FocusGroup3 if self.layout < 3 => false,
@@ -32,7 +42,7 @@ impl App {
                 (self.focus == Focus::Sidebar && self.tree.selected_path().is_some())
                     || self.buf().is_some_and(|b| b.path.is_some())
             }
-            ClearTerminal => self.terminal_shown().is_some(),
+            ClearTerminal => self.active_terminal().is_some(),
             Copy | Paste | SelectAll => has_buf,
             SwitchBuffer => !self.buffers.is_empty(),
             c if needs_buffer(c) => has_buf,

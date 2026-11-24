@@ -24,6 +24,10 @@ impl App {
         if needs_buffer(cmd) && self.buf().is_none() {
             return;
         }
+        // A terminal tab has no text: file and editing commands do nothing there.
+        if self.buf().is_some_and(|b| b.term.is_some()) && !works_in_terminal_tab(cmd) {
+            return;
+        }
         match cmd {
             NewWindow => self.open_new_window(),
             ToggleWordWrap => {
@@ -264,21 +268,21 @@ impl App {
             OpenContextMenu => {
                 let kind = match self.focus {
                     Focus::Sidebar if self.sidebar_visible => menu::ContextKind::Sidebar,
-                    Focus::Terminal => menu::ContextKind::Terminal,
+                    _ if self.active_terminal().is_some() => menu::ContextKind::Terminal,
                     Focus::Console => menu::ContextKind::Console,
                     _ => menu::ContextKind::Editor,
                 };
                 self.open_context_menu_at(kind, None);
             }
             Copy | Cut | Paste | SelectAll
-                if matches!(self.focus, Focus::Terminal | Focus::Console) =>
+                if self.focus == Focus::Console || self.active_terminal().is_some() =>
             {
                 match cmd {
                     Copy => self.on_copy(false),
                     Cut => self.on_copy(true),
                     Paste => {
                         let t = self.clipboard_text();
-                        if self.focus == Focus::Terminal {
+                        if self.active_terminal().is_some() {
                             if let Some(term) = self.current_terminal_mut() {
                                 term.paste(&t);
                             }
@@ -322,15 +326,17 @@ impl App {
                     return;
                 };
                 let keep = self.cur;
+                // Pinned tabs stay.
                 let ids: Vec<usize> = self
                     .group_tabs(self.group)
                     .into_iter()
                     .filter(|&i| {
-                        if cmd == CloseOtherTabs {
-                            i != keep
-                        } else {
-                            i > keep
-                        }
+                        !self.buffers[i].pinned
+                            && if cmd == CloseOtherTabs {
+                                i != keep
+                            } else {
+                                i > keep
+                            }
                     })
                     .map(|i| self.buffers[i].id)
                     .collect();
@@ -339,12 +345,9 @@ impl App {
                     let Some(i) = self.buf_index(id) else {
                         continue;
                     };
-                    if self.buffers[i].modified && !self.config.editor.hot_exit {
-                        skipped += 1;
-                        continue;
-                    }
-                    if self.buffers[i].modified {
-                        // Hot exit would lose these on close; keep them open instead.
+                    // Unsaved files (hot exit would lose them on close) and terminals
+                    // still running stay open.
+                    if self.buffers[i].modified || self.terminal_running(i) {
                         skipped += 1;
                         continue;
                     }
@@ -354,9 +357,20 @@ impl App {
                     self.set_cur(i);
                 }
                 if skipped > 0 {
-                    self.msg(format!("Kept {skipped} tab(s) with unsaved changes"));
+                    self.msg(format!(
+                        "Kept {skipped} tab(s) with unsaved changes or a running terminal"
+                    ));
                 }
             }
+            PinTab | UnpinTab => {
+                let i = self.cur;
+                if self.buf().is_some() {
+                    self.set_pinned(i, cmd == PinTab);
+                }
+            }
+            NewTerminalTab => self.new_terminal_tab(),
+            MoveTerminalToEditor => self.move_terminal_to_editor(),
+            MoveTerminalToPanel => self.move_terminal_to_panel(),
             ClearTerminal => {
                 if let Some(t) = self.current_terminal_mut() {
                     t.write(b"\x0c");
@@ -385,10 +399,8 @@ impl App {
                     self.focus = Focus::Editor;
                 } else {
                     let id = match self.panel.tab {
-                        PanelTab::Terminal(id) if self.terminals.iter().any(|t| t.id == id) => {
-                            Some(id)
-                        }
-                        _ => self.terminals.last().map(|t| t.id),
+                        PanelTab::Terminal(id) if self.panel_terminals().contains(&id) => Some(id),
+                        _ => self.panel_terminals().last().copied(),
                     };
                     match id {
                         Some(id) => self.show_terminal(id),
@@ -398,7 +410,9 @@ impl App {
             }
             NewTerminal => self.new_terminal(),
             CloseTerminal => {
-                if let PanelTab::Terminal(id) = self.panel.tab {
+                if let Some(id) = self.active_terminal() {
+                    self.close_terminal(id);
+                } else if let PanelTab::Terminal(id) = self.panel.tab {
                     self.close_terminal(id);
                 }
             }

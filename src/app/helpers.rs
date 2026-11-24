@@ -228,6 +228,33 @@ pub(super) fn symbol_title(keyword: &str, rest: &str) -> Option<String> {
 }
 
 /// Commands that act on the focused group's current file.
+/// Commands that still do something while the current tab is a terminal.
+pub(super) fn works_in_terminal_tab(cmd: Command) -> bool {
+    use Command::*;
+    if crate::commands::is_find_command(cmd) {
+        return false;
+    }
+    !needs_buffer(cmd)
+        && !matches!(
+            cmd,
+            ToggleWordWrap
+                | SetSyntax
+                | Indentation
+                | GotoLine
+                | GotoSymbol
+                | RevertFile
+                | ConvertToUtf8
+                | Completion
+                | Hover
+                | GotoDefinition
+                | FindReferences
+                | Rename
+                | Format
+                | CodeActions
+        )
+        || matches!(cmd, CloseBuffer | Copy | Cut | Paste | SelectAll)
+}
+
 pub(super) fn needs_buffer(cmd: Command) -> bool {
     use Command::*;
     matches!(

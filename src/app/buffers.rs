@@ -470,6 +470,11 @@ impl App {
         if let Some(p) = &b.path {
             self.closed.push(p.clone());
         }
+        // Closing a terminal tab kills its shell (Move Terminal to Panel takes `term`
+        // out first to keep it).
+        if let Some(t) = b.term {
+            self.terminals.retain(|x| x.id != t);
+        }
         if let (Some(cid), Some(path)) = (b.lsp_client, &b.path)
             && let Some(c) = self.lsp.clients.get_mut(&cid)
         {

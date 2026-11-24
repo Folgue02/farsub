@@ -49,13 +49,34 @@ impl Gui {
         let focused_group = g == self.app.group;
         let shown_pos = tabs.iter().position(|&t| Some(t) == shown).unwrap_or(0);
         // Scroll the strip so the active tab is visible.
+        let mono = FontId::monospace(UI_SIZE);
+        // Terminal tabs: None while the shell runs, else its exit code.
+        let term_exit: Vec<Option<Option<u32>>> = tabs
+            .iter()
+            .map(|&i| {
+                let id = self.app.buffers[i].term?;
+                let t = self.app.terminals.iter().find(|t| t.id == id)?;
+                Some(
+                    t.is_exited()
+                        .then(|| t.exit_code.lock().unwrap().unwrap_or(1)),
+                )
+            })
+            .collect();
         let widths: Vec<f32> = tabs
             .iter()
-            .map(|&i| &self.app.buffers[i])
-            .map(|b| {
+            .zip(&term_exit)
+            .map(|(&i, ex)| {
+                let b = &self.app.buffers[i];
+                if b.pinned {
+                    return PINNED_W;
+                }
+                let (label, f) = match ex {
+                    Some(code) => (term_label(b, *code), mono.clone()),
+                    None => (tab_label(b), font.clone()),
+                };
                 let w = ui
                     .ctx()
-                    .fonts_mut(|f| f.layout_no_wrap(tab_label(b), font.clone(), c.fg).size().x);
+                    .fonts_mut(|fs| fs.layout_no_wrap(label, f, c.fg).size().x);
                 (w + 66.0).clamp(100.0, 280.0)
             })
             .collect();
@@ -79,49 +100,106 @@ impl Gui {
         off = off.clamp(0.0, (total - r.width()).max(0.0));
         self.tab_scroll.insert(g, (off, shown));
         x -= off;
-        let clip = p.with_clip_rect(Rect::from_min_max(
-            r.min,
-            Pos2::new(clip_right, r.bottom()),
-        ));
+        let clip = p.with_clip_rect(Rect::from_min_max(r.min, Pos2::new(clip_right, r.bottom())));
+        let green = {
+            let (r, g, b) = crate::terminal::palette(2);
+            Color32::from_rgb(r, g, b)
+        };
+        let tbg = terminal_bg(c);
         for (k, &i) in tabs.iter().enumerate() {
             let b = &self.app.buffers[i];
             let w = widths[k];
             let tr = Rect::from_min_size(Pos2::new(x, r.top()), Vec2::new(w, r.height()));
             x += w;
             let active = Some(i) == shown;
-            if active {
-                clip.rect_filled(tr, 0.0, c.bg);
-                // The accent bar marks the focused group's tab (the others are dimmed).
-                clip.rect_filled(
-                    Rect::from_min_size(tr.min, Vec2::new(w, 2.0)),
-                    0.0,
-                    if focused_group { c.accent } else { c.border },
-                );
+            let term = term_exit[k];
+            let pinned = b.pinned;
+            // A terminal tab has the terminal's darker background (a little lighter when
+            // not shown) and a green bar instead of the accent.
+            let bg = match (term.is_some(), active) {
+                (true, true) => tbg,
+                (true, false) => mix(c.chrome, tbg, 0.5),
+                (false, true) => c.bg,
+                (false, false) => c.chrome,
+            };
+            if bg != c.chrome {
+                clip.rect_filled(tr, 0.0, bg);
             }
+            if active {
+                // The bar marks the focused group's tab (the others are dimmed).
+                let bar = match (focused_group, term.is_some()) {
+                    (false, _) => c.border,
+                    (true, true) => green,
+                    (true, false) => c.accent,
+                };
+                clip.rect_filled(Rect::from_min_size(tr.min, Vec2::new(w, 2.0)), 0.0, bar);
+            }
+            // The last pinned tab has a heavier edge, between the pinned and the rest.
+            let last_pin = pinned
+                && tabs
+                    .get(k + 1)
+                    .is_some_and(|&n| !self.app.buffers[n].pinned);
             clip.line_segment(
                 [tr.right_top(), tr.right_bottom()],
-                Stroke::new(1.0, c.border),
+                Stroke::new(if last_pin { 2.0 } else { 1.0 }, c.border),
             );
             let name = b.name();
-            draw_icon(
-                &clip,
-                &self.app.config,
-                &mut self.icon_tex,
-                Pos2::new(tr.left() + 19.0, tr.center().y),
-                &name,
-                false,
-                false,
-                if active { 1.0 } else { 0.75 },
-                if active { c.bg } else { c.chrome },
-            );
-            let label = clip.text(
-                Pos2::new(tr.left() + 32.0, tr.center().y),
-                Align2::LEFT_CENTER,
-                &name,
-                font.clone(),
-                if active { c.fg } else { c.dim },
-            );
-            if b.deleted {
+            let icon_at = if pinned {
+                tr.center()
+            } else {
+                Pos2::new(tr.left() + 19.0, tr.center().y)
+            };
+            let alpha = if active { 1.0 } else { 0.75 };
+            match term {
+                Some(code) => {
+                    let col = if code.is_some() { c.err } else { green };
+                    draw_terminal_icon(&clip, icon_at, mix(bg, col, alpha));
+                }
+                None => draw_icon(
+                    &clip,
+                    &self.app.config,
+                    &mut self.icon_tex,
+                    icon_at,
+                    &name,
+                    false,
+                    false,
+                    alpha,
+                    bg,
+                ),
+            }
+            // The text stops short of the × (a long title is cut off); a terminal's exit
+            // code sits right before the ×.
+            let mut text_end = tr.right() - 28.0;
+            if let Some(Some(code)) = term
+                && !pinned
+            {
+                let ex = clip.text(
+                    Pos2::new(text_end, tr.center().y),
+                    Align2::RIGHT_CENTER,
+                    format!("exit {code}"),
+                    mono.clone(),
+                    c.err,
+                );
+                text_end = ex.left() - 8.0;
+            }
+            let label = if pinned {
+                Rect::from_center_size(icon_at, Vec2::ZERO)
+            } else {
+                let text_clip = clip
+                    .with_clip_rect(Rect::from_min_max(tr.min, Pos2::new(text_end, tr.bottom())));
+                text_clip.text(
+                    Pos2::new(tr.left() + 32.0, tr.center().y),
+                    Align2::LEFT_CENTER,
+                    &name,
+                    if term.is_some() {
+                        mono.clone()
+                    } else {
+                        font.clone()
+                    },
+                    if active { c.fg } else { c.dim },
+                )
+            };
+            if b.deleted && !pinned {
                 // The file is gone from disk.
                 clip.text(
                     Pos2::new(label.right() + 4.0, tr.center().y),
@@ -140,12 +218,19 @@ impl Gui {
             let resp = hit
                 .is_positive()
                 .then(|| ui.interact(hit, Id::unique(("tab", b.id)), Sense::click_and_drag()));
-            let hovered_close = resp
-                .as_ref()
-                .and_then(|r| r.hover_pos())
-                .is_some_and(|p| close.contains(p));
+            // A pinned tab has no ×; its name shows on hover.
+            let resp = resp.map(|r| if pinned { r.on_hover_text(&name) } else { r });
+            let hovered_close = !pinned
+                && resp
+                    .as_ref()
+                    .and_then(|r| r.hover_pos())
+                    .is_some_and(|p| close.contains(p));
             let hovered = resp.as_ref().is_some_and(|r| r.hovered());
-            if b.modified && !hovered_close {
+            if pinned {
+                if b.modified {
+                    clip.circle_filled(icon_at + Vec2::new(8.0, -7.0), 3.0, c.dim);
+                }
+            } else if b.modified && !hovered_close {
                 clip.circle_filled(close.center(), 4.0, c.dim);
             } else if active || hovered {
                 let k = 4.0;
@@ -205,7 +290,10 @@ impl Gui {
         let (pos, down) = ui.input(|i| (i.pointer.latest_pos(), i.pointer.primary_down()));
         let from = self.app.buf_index_of(id).map(|i| self.app.buffers[i].group);
         let target = pos.and_then(|pos| {
-            let g = self.group_cols.iter().position(|(_, col)| col.contains(pos))?;
+            let g = self
+                .group_cols
+                .iter()
+                .position(|(_, col)| col.contains(pos))?;
             let (strip, col) = self.group_cols[g];
             if !strip.contains(pos) {
                 // Over an editor: the end of that group (nothing to do over its own).
@@ -241,6 +329,28 @@ impl Gui {
             self.app.move_tab(id, g, before);
         }
     }
+}
+
+/// Width of a pinned (icon-only) tab.
+const PINNED_W: f32 = 40.0;
+
+/// A terminal tab's text (for sizing): its title, plus "exit N" once the shell exited.
+fn term_label(b: &Buffer, code: Option<u32>) -> String {
+    match code {
+        Some(code) => format!("{}  exit {code}", b.name()),
+        None => b.name(),
+    }
+}
+
+/// The terminal tab's icon: a prompt (">_") in a rounded frame.
+fn draw_terminal_icon(p: &Painter, at: Pos2, col: Color32) {
+    let r = Rect::from_center_size(at, Vec2::new(15.0, 12.0));
+    p.rect_stroke(r, 2.0, Stroke::new(1.2, col), StrokeKind::Inside);
+    let st = Stroke::new(1.3, col);
+    let o = r.left_center() + Vec2::new(3.5, 0.0);
+    p.line_segment([o + Vec2::new(0.0, -2.5), o + Vec2::new(2.5, 0.0)], st);
+    p.line_segment([o + Vec2::new(2.5, 0.0), o + Vec2::new(0.0, 2.5)], st);
+    p.line_segment([o + Vec2::new(4.5, 2.5), o + Vec2::new(8.0, 2.5)], st);
 }
 
 /// What a tab shows (for sizing): the name, plus "(deleted)" if the file is gone.

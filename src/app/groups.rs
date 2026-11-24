@@ -62,6 +62,7 @@ impl App {
             for g in n..MAX_GROUPS {
                 self.group_active[g] = None;
             }
+            self.order_pins(last);
         }
         self.layout = n;
         self.group_split = vec![1.0 / n as f32; n];
@@ -96,7 +97,10 @@ impl App {
         }
         self.leave_group(i);
         self.buffers[i].group = g;
-        self.set_cur(i);
+        self.order_pins(g);
+        if let Some(i) = self.buf_index(id) {
+            self.set_cur(i);
+        }
         self.focus = Focus::Editor;
     }
 
@@ -139,10 +143,64 @@ impl App {
                 .map_or(self.buffers.len(), |t| t + 1),
         };
         self.buffers.insert(at, b);
-        self.set_cur(at);
+        // A tab dropped on the wrong side of the pinned ones goes to the edge of them.
+        self.order_pins(g);
+        if let Some(i) = self.buf_index(id) {
+            self.set_cur(i);
+        }
         self.focus = Focus::Editor;
         self.completion = None;
         self.hover = None;
+    }
+
+    /// Pin or unpin tab `i`. Pinned tabs come first in their group: pinning puts the tab
+    /// after the other pinned ones, unpinning puts it first among the rest.
+    pub fn set_pinned(&mut self, i: usize, on: bool) {
+        let Some(b) = self.buffers.get_mut(i) else {
+            return;
+        };
+        if b.pinned == on {
+            return;
+        }
+        b.pinned = on;
+        let g = b.group;
+        let cur = self.buffers.get(self.cur).map(|b| b.id);
+        self.order_pins(g);
+        if let Some(c) = cur.and_then(|c| self.buf_index(c)) {
+            self.cur = c;
+        }
+    }
+
+    /// Reorder group `g`'s tabs so the pinned ones come first, keeping each side's order.
+    /// `cur` follows its buffer.
+    pub(super) fn order_pins(&mut self, g: usize) {
+        let slots = self.group_tabs(g);
+        let mut order = slots.clone();
+        order.sort_by_key(|&i| !self.buffers[i].pinned);
+        if order == slots {
+            return;
+        }
+        let cur = self.buffers.get(self.cur).map(|b| b.id);
+        let mut old: Vec<Option<Buffer>> = std::mem::take(&mut self.buffers)
+            .into_iter()
+            .map(Some)
+            .collect();
+        let mut from: Vec<usize> = (0..old.len()).collect();
+        for (slot, src) in slots.iter().zip(&order) {
+            from[*slot] = *src;
+        }
+        self.buffers = from.into_iter().map(|k| old[k].take().unwrap()).collect();
+        if let Some(c) = cur.and_then(|c| self.buf_index(c)) {
+            self.cur = c;
+        }
+    }
+
+    /// Whether tab `i` is a terminal whose shell is still running.
+    pub(super) fn terminal_running(&self, i: usize) -> bool {
+        self.buffers[i]
+            .term
+            .and_then(|id| self.terminals.iter().find(|t| t.id == id))
+            .is_some_and(|t| !t.is_exited())
     }
 
     /// After a buffer in group `g` closed at index `i`, show a neighbouring tab of the

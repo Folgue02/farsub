@@ -173,6 +173,12 @@ impl Gui {
             }
             return None;
         };
+        if let Some(id) = self.app.buffers[cur].term {
+            // A terminal tab: the terminal fills the editor area.
+            p.rect_filled(r, 0.0, terminal_bg(c));
+            self.draw_terminal(ui, p, r, id, c, Some(g));
+            return None;
+        }
         let (cw, lh, rh) = self.metrics(ui);
         let font = self.mono();
         let visible = ((r.height() / lh).ceil() as usize).max(1);

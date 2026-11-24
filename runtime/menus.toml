@@ -28,7 +28,7 @@ items = ["focus_sidebar", "reveal_in_sidebar", "-", "sidebar_new_file", "sidebar
 
 [[menu]]
 title = "View"
-items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_columns2", "layout_columns3", "layout_columns4", "focus_next_group", "move_to_group1", "move_to_group2", "-", "toggle_word_wrap", "set_syntax", "indentation", "-", "toggle_terminal", "new_terminal", "toggle_console", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
+items = ["toggle_sidebar", "toggle_menu_bar", "-", "layout_single", "layout_columns2", "layout_columns3", "layout_columns4", "focus_next_group", "move_to_group1", "move_to_group2", "-", "toggle_word_wrap", "set_syntax", "indentation", "-", "toggle_terminal", "new_terminal", "new_terminal_tab", "toggle_console", "-", "next_buffer", "prev_buffer", "-", "zoom_in", "zoom_out", "zoom_reset"]
 
 [[menu]]
 title = "Tools"
@@ -51,10 +51,10 @@ items = ["cut", "copy", "paste", "-", "select_all", "-", "goto_definition", "fin
 items = ["sidebar_new_file", "sidebar_new_folder", "-", "sidebar_rename", "sidebar_duplicate", "-", "sidebar_copy", "sidebar_cut", "sidebar_paste", "sidebar_copy_path", "-", "open_terminal_here", "reveal_in_file_manager", "open_project_in_new_window", "-", "sidebar_delete", "-", "remove_folder"]
 
 [context.tab]
-items = ["close_buffer", "close_other_tabs", "close_tabs_to_right", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager", "open_project_in_new_window", "-", "set_syntax"]
+items = ["close_buffer", "close_other_tabs", "close_tabs_to_right", "-", "pin_tab", "unpin_tab", "move_terminal_to_panel", "-", "copy_file_path", "reveal_in_sidebar", "reveal_in_file_manager", "open_project_in_new_window", "-", "set_syntax"]
 
 [context.terminal]
-items = ["copy", "paste", "clear_terminal", "-", "new_terminal", "close_terminal"]
+items = ["copy", "paste", "clear_terminal", "-", "new_terminal", "move_terminal_to_editor", "move_terminal_to_panel", "close_terminal"]
 
 [context.console]
 items = ["copy", "select_all", "-", "console_toggle_wrap", "console_clear"]

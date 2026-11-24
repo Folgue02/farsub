@@ -59,6 +59,8 @@ pub struct Terminal {
     pub id: usize,
     /// "zsh", "bash", … (the shell's name; programs can set a title too).
     pub shell: String,
+    /// The folder it started in.
+    pub cwd: std::path::PathBuf,
     parser: Arc<Mutex<Parser>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     master: Box<dyn MasterPty + Send>,
@@ -185,6 +187,7 @@ impl Terminal {
         Ok(Terminal {
             id,
             shell,
+            cwd: cwd.to_path_buf(),
             parser,
             writer,
             master: pair.master,

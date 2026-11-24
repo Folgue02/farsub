@@ -4953,3 +4953,203 @@ fn typed_shebang_picks_the_language() {
     steps(&mut h, 1);
     assert_eq!(h.state().app.buf().unwrap().hl.syntax, "Plain Text");
 }
+
+/// Pinned tabs: icon-only at the start of their strip, kept there when dragging, skipped
+/// by Close Other Tabs, and remembered by the workspace.
+#[test]
+fn pinned_tabs_stay_first_and_are_remembered() {
+    use crate::commands::Command;
+    let d = project(
+        "pins",
+        &[("a.txt", "a\n"), ("b.txt", "b\n"), ("c.txt", "c\n"), ("d.txt", "d\n")],
+    );
+    let proj = || crate::project::Project::from_folders(vec![d.clone()]);
+    let mut h = project_harness(proj(), test_config(&d));
+    for f in ["a.txt", "b.txt", "c.txt", "d.txt"] {
+        h.state_mut().app.open_file(&d.join(f), true);
+    }
+    steps(&mut h, 2);
+    let names = |h: &Harness<'static, Gui>| -> Vec<String> {
+        let app = &h.state().app;
+        app.group_tabs(0)
+            .into_iter()
+            .map(|i| app.buffers[i].name())
+            .collect()
+    };
+    let tab = |h: &Harness<'static, Gui>, name: &str| -> egui::Rect {
+        let app = &h.state().app;
+        let id = app.buffers.iter().find(|b| b.name() == name).unwrap().id;
+        h.state().tab_hits.iter().find(|t| t.1 == id).unwrap().2
+    };
+    let select = |h: &mut Harness<'static, Gui>, name: &str| {
+        let i = (h.state().app.buffers.iter())
+            .position(|b| b.name() == name)
+            .unwrap();
+        h.state_mut().app.set_cur(i);
+        steps(h, 1);
+    };
+    // The palette command pins c.txt: it moves to the front and is drawn icon-only.
+    select(&mut h, "c.txt");
+    let wide = tab(&h, "c.txt").width();
+    h.state_mut().app.run(Command::PinTab);
+    steps(&mut h, 2);
+    assert_eq!(names(&h), ["c.txt", "a.txt", "b.txt", "d.txt"]);
+    assert!(tab(&h, "c.txt").width() < wide / 2.0, "compact");
+    assert_eq!(h.state().app.buf().unwrap().name(), "c.txt", "still current");
+    // The tab's right-click menu pins d.txt; it goes after the other pinned tab.
+    let at = tab(&h, "d.txt").center();
+    right_click(&mut h, at);
+    let cm = h.state().app.context_menu.as_ref().expect("tab menu");
+    let has = |c: Command| cm.items.iter().position(|i| i.as_ref().is_some_and(|i| i.cmd == c));
+    assert!(has(Command::UnpinTab).is_none(), "only the one that applies");
+    let pin = has(Command::PinTab).expect("Pin Tab offered");
+    h.state_mut().app.context_activate(pin);
+    steps(&mut h, 2);
+    assert_eq!(names(&h), ["c.txt", "d.txt", "a.txt", "b.txt"]);
+    shot(&mut h, "pinned_tabs");
+    // Dragging a file in among the pinned tabs puts it right after them.
+    let from = tab(&h, "b.txt").center();
+    let to = tab(&h, "c.txt").left_center() + egui::vec2(3.0, 0.0);
+    drag(&mut h, from, to);
+    assert_eq!(names(&h), ["c.txt", "d.txt", "b.txt", "a.txt"]);
+    // A pinned tab dragged past the others stays with the pinned ones.
+    let from = tab(&h, "c.txt").center();
+    let to = tab(&h, "a.txt").right_center() - egui::vec2(3.0, 0.0);
+    drag(&mut h, from, to);
+    assert_eq!(names(&h), ["d.txt", "c.txt", "b.txt", "a.txt"]);
+    // Close Other Tabs leaves the pinned ones.
+    select(&mut h, "a.txt");
+    h.state_mut().app.run(Command::CloseOtherTabs);
+    steps(&mut h, 2);
+    assert_eq!(names(&h), ["d.txt", "c.txt", "a.txt"]);
+    assert!(!h.state().app.enabled(Command::CloseOtherTabs), "only pinned ones left");
+    // Unpinning puts the tab first among the unpinned ones.
+    select(&mut h, "d.txt");
+    h.state_mut().app.run(Command::UnpinTab);
+    assert_eq!(names(&h), ["c.txt", "d.txt", "a.txt"]);
+    // The pin survives a restart.
+    h.state_mut().app.run(Command::Quit);
+    let mut h2 = project_harness(proj(), test_config(&d));
+    h2.state_mut().app.restore_workspace();
+    steps(&mut h2, 2);
+    let app = &h2.state().app;
+    let pins: Vec<(String, bool)> = (app.group_tabs(0).into_iter())
+        .map(|i| (app.buffers[i].name(), app.buffers[i].pinned))
+        .collect();
+    assert_eq!(
+        pins,
+        [
+            ("c.txt".to_string(), true),
+            ("d.txt".to_string(), false),
+            ("a.txt".to_string(), false)
+        ]
+    );
+}
+
+/// A terminal as an editor tab: it opens next to files, takes keys, switches with
+/// Ctrl+Tab, moves to the panel and back, asks before killing a running shell, and shows
+/// a failed exit on its tab.
+#[test]
+#[cfg(unix)]
+fn terminal_tab_in_the_editor_area() {
+    use crate::commands::Command;
+    let d = project("termtab", &[("a.txt", "x\n")]);
+    let proj = || crate::project::Project::from_folders(vec![d.clone()]);
+    let mut h = project_harness(proj(), test_config(&d));
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    // Ctrl+Alt+` opens a terminal as a tab of the focused group, focused.
+    press(&mut h, Modifiers::CTRL | Modifiers::ALT, Key::Backtick);
+    let term_tab = |g: &Gui| g.app.buffers.iter().position(|b| b.term.is_some());
+    let i = term_tab(h.state()).expect("terminal tab");
+    let id = h.state().app.buffers[i].term.unwrap();
+    {
+        let app = &h.state().app;
+        assert_eq!(app.cur, i);
+        assert_eq!(app.focus, Focus::Editor);
+        assert!(!app.panel.visible, "not in the panel");
+        assert!(app.panel_terminals().is_empty());
+        let folder = d.file_name().unwrap().to_string_lossy().to_string();
+        assert_eq!(app.buffers[i].name(), format!("sh · {folder}"));
+    }
+    let screen = |g: &Gui, id: usize| {
+        (g.app.terminals.iter())
+            .find(|t| t.id == id)
+            .map(|t| t.with_screen(|s| s.contents()))
+            .unwrap_or_default()
+    };
+    std::thread::sleep(Duration::from_millis(300));
+    typ(&mut h, "echo tab-$((6*7))");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        wait(&mut h, 10, |g| screen(g, id).contains("tab-42")),
+        "{}",
+        screen(h.state(), id)
+    );
+    shot(&mut h, "terminal_tab");
+    // File commands do nothing there (Save would ask where to save).
+    h.state_mut().app.run(Command::Save);
+    assert!(h.state().app.file_request.is_none());
+    assert!(!h.state().app.enabled(Command::SetSyntax));
+    // Ctrl+Tab switches to the recent file, as from any tab.
+    press(&mut h, Modifiers::CTRL, Key::Tab);
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().name(), "a.txt");
+    // The tab number selects it, and from it the file's (Cmd+N; Alt+N off macOS).
+    let num = if cfg!(target_os = "macos") { CMD } else { Modifiers::ALT };
+    press(&mut h, num, Key::Num2);
+    let i = term_tab(h.state()).unwrap();
+    assert_eq!(h.state().app.cur, i);
+    press(&mut h, num, Key::Num1);
+    assert_eq!(h.state().app.buf().unwrap().name(), "a.txt");
+    press(&mut h, num, Key::Num2);
+    assert_eq!(h.state().app.cur, i);
+    // Terminal tabs aren't kept in the workspace.
+    let ws = h.state().app.capture_workspace();
+    assert_eq!(ws.buffers.len(), 1);
+    assert_eq!(ws.active, 1, "points past the kept tabs, not at a wrong one");
+    // To the panel and back: the same shell, still running.
+    h.state_mut().app.run(Command::MoveTerminalToPanel);
+    steps(&mut h, 2);
+    {
+        let app = &h.state().app;
+        assert!(term_tab(h.state()).is_none());
+        assert_eq!(app.terminal_shown(), Some(id));
+        assert_eq!(app.focus, Focus::Terminal);
+    }
+    assert!(screen(h.state(), id).contains("tab-42"));
+    h.state_mut().app.run(Command::MoveTerminalToEditor);
+    steps(&mut h, 2);
+    assert_eq!(
+        term_tab(h.state()).map(|i| h.state().app.buffers[i].term),
+        Some(Some(id))
+    );
+    assert!(!h.state().app.panel.visible, "its panel tab went with it");
+    // It drags between groups like any tab.
+    h.state_mut().app.run(Command::LayoutColumns2);
+    h.state_mut().app.move_to_group(1);
+    steps(&mut h, 2);
+    assert_eq!(h.state().app.buf().unwrap().term, Some(id));
+    assert_eq!(h.state().app.group, 1);
+    // Closing a running shell's tab asks first.
+    h.state_mut().app.run(Command::CloseBuffer);
+    assert!(matches!(h.state().app.modal, Some(Modal::Confirm(_))));
+    typ(&mut h, "y");
+    assert!(term_tab(h.state()).is_none());
+    assert!(h.state().app.terminals.is_empty(), "killed");
+    // A failed exit stays on the tab (red icon, "exit 3"); a key closes it.
+    h.state_mut().app.run(Command::NewTerminalTab);
+    steps(&mut h, 2);
+    std::thread::sleep(Duration::from_millis(300));
+    typ(&mut h, "exit 3");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(wait(&mut h, 10, |g| g.app.terminals.iter().any(|t| t.is_exited())));
+    steps(&mut h, 3);
+    assert!(term_tab(h.state()).is_some(), "kept after a non-zero exit");
+    shot(&mut h, "terminal_tab_exited");
+    // Exited: no question when closing.
+    typ(&mut h, "q");
+    assert!(term_tab(h.state()).is_none());
+    assert!(h.state().app.modal.is_none());
+}

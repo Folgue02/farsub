@@ -22,6 +22,40 @@
   group's), it goes where the accent bar shows, between two tabs; onto another group's
   editor (which is tinted), it goes to the end of that group's tabs. The moved file
   becomes current and focus follows it. Dropping it anywhere else does nothing.
+- **Pinned tabs** (decided 2026-11-24): File: Pin Tab / File: Unpin Tab, in the command
+  palette and the tab's right-click menu (which shows only the one that applies).
+  - A pinned tab is drawn **icon only** (about 40px, no ×), and its name shows on hover.
+    A modified pinned file shows a small dot by its icon. The last pinned tab has a
+    heavier right edge, separating the pinned tabs from the rest.
+  - Pinned tabs sit at the **start** of their group's strip. Pinning puts the tab after
+    the other pinned ones; unpinning puts it first among the unpinned ones.
+  - Dragging keeps that order: an unpinned tab dropped among the pinned ones goes right
+    after them, and a pinned tab dropped among the unpinned ones goes right before them.
+    Moved to another group, a tab keeps its pin and joins that group's pinned tabs.
+  - **Close Other Tabs** and **Close Tabs to the Right** leave pinned tabs open. Closing
+    a pinned tab itself (Cmd+W, middle-click, File: Close) still closes it.
+  - Pins are kept in the workspace, so they survive restarts and project switches.
+  - Pinning doesn't change the Ctrl+Tab recent order or the tab numbers (Cmd+1–9 count
+    pinned tabs first, as they're drawn).
+- **Terminal tabs** (decided 2026-11-24): Terminal: New Terminal in Editor Area
+  (**Ctrl+Alt+`**, View menu, command palette) opens a shell as a tab of the focused
+  group, next to files. See [Bottom panel](bottom-panel.md) for how terminals behave.
+  - It looks different from a file tab: the terminal's own darker background, a green
+    bar on top instead of the accent one, a green `>_` icon, and a monospace title of
+    the shell and the folder it started in (`zsh · editor`). When the shell exits with a
+    non-zero code the icon turns red and `exit N` shows before the ×.
+  - It's a tab like any other: it drags between groups, pins, takes part in Ctrl+Tab
+    recent switching and Next/Previous File, and Cmd+1–9 selects it. With it focused,
+    keys go to the shell, except Cmd shortcuts on macOS, the terminal's few
+    always-available shortcuts, and switching tabs and groups (Ctrl+Tab, Ctrl+PageUp/
+    PageDown, Focus Group).
+  - File and editing commands (Save, Find, Set Syntax, …) do nothing in it and are
+    greyed out in menus; the status bar shows no line, column or syntax.
+  - Closing it while its shell is still running **asks first** ("The terminal … is
+    still running. Kill it and close the tab?"); an exited one closes without asking.
+    Close Other Tabs / Tabs to the Right keep running terminals open (and say so).
+  - Terminal tabs aren't kept by the workspace or hot exit (a shell can't be brought
+    back), and Reopen Closed File doesn't bring them back.
 - The right end of the (rightmost) tab strip holds the alarm, pomodoro and clock
   widgets; see [Clock, pomodoro and alarm](timers.md).
 
@@ -49,8 +83,9 @@
   recent. So Ctrl+Tab, released, flips between the last two files. Ctrl+Shift+Tab goes
   the other way (from the least recent). No list pops up: the tabs switch as you go.
   From the command palette ("View: Switch to Recent File") it acts like one press.
-  Next/Previous File in tab order stay on Ctrl+PageDown/PageUp and Cmd+Alt+→/←. In a
-  terminal, Ctrl+Tab still cycles terminal tabs. On macOS, farsub turns off the system's
+  Next/Previous File in tab order stay on Ctrl+PageDown/PageUp and Cmd+Alt+→/←. In the
+  bottom panel's terminal, Ctrl+Tab still cycles the panel's terminals; in a terminal
+  tab it switches tabs like anywhere in the editor area. On macOS, farsub turns off the system's
   window tabbing, whose "Show Next Tab" / "Show Previous Tab" Window-menu items would
   otherwise take Ctrl+Tab and Ctrl+Shift+Tab (farsub windows are separate windows).
 - A group whose last tab closes stays focused and empty; editing commands do nothing

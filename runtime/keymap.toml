@@ -526,8 +526,9 @@ command = "switch_project"
 keys = "Cmd+Alt+I"
 command = "lsp_info"
 
-# VS Code: Ctrl+` toggles the terminal, Ctrl+Shift+` opens another one. The console
-# (app log) is opened from the command palette: "View: Show Console".
+# Ctrl+` toggles the terminal, Ctrl+Shift+` opens another one, Ctrl+Alt+` opens one as
+# an editor tab. The console (app log) is opened from the command palette:
+# "View: Show Console".
 [[keys]]
 keys = "Ctrl+`"
 command = "toggle_terminal"
@@ -535,6 +536,10 @@ command = "toggle_terminal"
 [[keys]]
 keys = "Ctrl+Shift+`"
 command = "new_terminal"
+
+[[keys]]
+keys = "Ctrl+Alt+`"
+command = "new_terminal_tab"
 
 # Context menu for the focused pane, from the keyboard.
 [[keys]]

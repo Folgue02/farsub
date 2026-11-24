@@ -147,11 +147,14 @@ impl App {
 
     pub fn capture_workspace(&self) -> Workspace {
         let hot = self.config.editor.hot_exit;
+        // Terminal tabs aren't kept (a shell can't be brought back).
+        let kept = |b: &&Buffer| b.term.is_none() && (b.path.is_some() || (hot && b.modified));
         let buffers = self
             .buffers
             .iter()
-            .filter(|b| b.path.is_some() || (hot && b.modified))
+            .filter(kept)
             .map(|b| BufferState {
+                pinned: b.pinned,
                 group: b.group,
                 word_wrap: b.word_wrap,
                 path: b.path.clone(),
@@ -180,7 +183,8 @@ impl App {
             .filter(|f| !self.tree.expanded.contains(&f.path));
         let mut ws = Workspace {
             buffers,
-            active: self.cur,
+            // The active tab's place among the kept ones.
+            active: self.buffers.iter().take(self.cur).filter(kept).count(),
             sidebar_visible: self.sidebar_visible,
             show_hidden: self.show_hidden,
             expanded,
@@ -265,6 +269,7 @@ impl App {
                 b.cursor = b.clamp(Pos::new(bs.cursor.0, bs.cursor.1));
                 b.anchor = bs.anchor.map(|a| b.clamp(Pos::new(a.0, a.1)));
                 b.want_col = b.cursor.col;
+                b.pinned = bs.pinned;
                 b.scroll_y = bs.scroll.0.min(b.lines.len().saturating_sub(1));
                 b.scroll_x = bs.scroll.1;
                 if let Some(sx) = &bs.syntax {
