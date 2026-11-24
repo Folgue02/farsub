@@ -36,4 +36,4 @@ Remove-Item -Recurse -Force $stage
 
 $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
 "$hash  $name.zip" | Out-File -Encoding ascii (Join-Path $out "SHA256SUMS.txt")
-Write-Host "farsub $version -> $zip"
+Write-Host "FarSub $version -> $zip"

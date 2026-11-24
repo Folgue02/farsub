@@ -3,7 +3,7 @@ command = "jdtls"
 root_markers = ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle"]
 description = "Eclipse JDT language server for Java (needs Java 21 or newer)"
 
-# The latest build from eclipse.org, started through a launcher farsub writes (no Python
+# The latest build from eclipse.org, started through a launcher FarSub writes (no Python
 # needed, unlike jdtls's own script). Each project gets its own workspace folder.
 [install]
 needs = ["java"]

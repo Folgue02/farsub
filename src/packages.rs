@@ -1,4 +1,4 @@
-//! farsub packages: folders under `<config>/Packages/` that add data — `themes/*.toml`,
+//! FarSub packages: folders under `<config>/Packages/` that add data — `themes/*.toml`,
 //! `queries/<grammar>/highlights.scm` (highlight overrides) and `icons.toml` (icon
 //! packages). A package can be installed with `git clone` from a repository URL.
 

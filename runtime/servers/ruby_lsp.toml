@@ -3,7 +3,7 @@ command = "ruby-lsp"
 root_markers = ["Gemfile"]
 description = "Ruby LSP (needs Ruby)"
 
-# The gem goes into farsub's own folder (not your Ruby's gems).
+# The gem goes into FarSub's own folder (not your Ruby's gems).
 [install]
 needs = ["gem"]
 needs_hint = "install Ruby (ruby-lang.org), then try again"

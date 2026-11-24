@@ -6,7 +6,7 @@
   2026-11-20): each platform builds on its own GitHub machine with `scripts/release.sh`,
   and one job publishes the pre-release with every archive and a combined
   `SHA256SUMS.txt`. The tag must match `Cargo.toml`'s version or the build fails.
-  - macOS: a universal `farsub.app` (Apple Silicon and Intel), ad-hoc signed.
+  - macOS: a universal `FarSub.app` (Apple Silicon and Intel), ad-hoc signed.
   - Windows: `farsub.exe` for x86_64.
   - Linux: `farsub` for x86_64 in a `.tar.gz`, built on Ubuntu 22.04 so it runs on
     distributions with that glibc or newer.

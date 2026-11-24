@@ -25,7 +25,7 @@
   itself.
 - **Open This Project in New Window** (decided 2026-11-18; "this" because it opens the
   project file at hand, not the window's own project): opens a `.farsub-project` file as
-  its project in another farsub window. The file is the one selected in the sidebar (when
+  its project in another FarSub window. The file is the one selected in the sidebar (when
   the sidebar has focus), else the current file. In the Project menu and the command
   palette, and in the sidebar, tab and editor right-click menus, which show it only for
   project files.

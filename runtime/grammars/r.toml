@@ -1,4 +1,4 @@
-# Installable grammar: farsub downloads the crate source and compiles it with your C compiler.
+# Installable grammar: FarSub downloads the crate source and compiles it with your C compiler.
 name = "r"
 crate = "tree-sitter-r"
 version = "1.3.0"

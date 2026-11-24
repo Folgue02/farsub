@@ -2,9 +2,9 @@ name = "taplo"
 command = "taplo"
 args = ["lsp", "stdio"]
 root_markers = [".taplo.toml", "taplo.toml"]
-description = "TOML language server (Taplo); checks farsub's own config files against their schemas"
+description = "TOML language server (Taplo); checks FarSub's own config files against their schemas"
 
-# farsub adds `evenBetterToml.schema.associations` for its own files (settings, key
+# FarSub adds `evenBetterToml.schema.associations` for its own files (settings, key
 # bindings, projects, languages/, servers/) when it starts the server.
 [settings.evenBetterToml.schema]
 enabled = true

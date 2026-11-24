@@ -1,4 +1,4 @@
-# farsub
+# FarSub
 
 A code editor in Rust (egui/eframe): Goto Anything, command palette,
 symbol search, tree-sitter syntax highlighting, LSP with a built-in server
@@ -101,8 +101,8 @@ folder override them:
   recent.toml          recent projects and the last session
 ```
 
-Saving any of these files inside farsub applies it immediately (Cmd+, opens `config.toml`,
-created from a short template the first time farsub starts).
+Saving any of these files inside FarSub applies it immediately (Cmd+, opens `config.toml`,
+created from a short template the first time FarSub starts).
 
 Opening and saving use the system's file dialogs: **Cmd+O** opens a file, **File › Open
 Folder…** a folder, and Save As / Open Project / Add Folder ask the same way. "File: Open
@@ -213,9 +213,9 @@ asks first, then leaves the changed files open and unsaved; File › Save All wr
 ## Language servers (lspconfig + mason)
 
 Languages list servers in order of preference; the first one that is installed (by
-farsub, or found on PATH) runs. Built-in definitions:
+FarSub, or found on PATH) runs. Built-in definitions:
 
-| Language | Servers | Installable from farsub |
+| Language | Servers | Installable from FarSub |
 | --- | --- | --- |
 | Python | pyright, basedpyright, pylsp | yes (npm / pip) |
 | JavaScript, TypeScript, JSX, TSX | ts_ls (typescript-language-server) | yes (npm) |
@@ -243,7 +243,7 @@ farsub, or found on PATH) runs. Built-in definitions:
 | Java | jdtls | yes (eclipse.org; needs Java 21+) |
 | Kotlin | kotlin_lsp (JetBrains), kotlin_language_server | yes (kotlin_lsp brings its own Java, ~370 MB; the other needs Java ≤ 21) |
 | Scala | metals | yes (Coursier; needs Java) |
-| Ruby | ruby_lsp, solargraph | yes (gem, into farsub's folder; needs Ruby) |
+| Ruby | ruby_lsp, solargraph | yes (gem, into FarSub's folder; needs Ruby) |
 | C# | csharp_ls | yes (dotnet tool; needs the .NET SDK) |
 | Gleam, Odin, Terraform | gleam, ols, terraformls | yes (prebuilt downloads) |
 | Elixir, Nim | elixir_ls, nimlangserver | yes (need Elixir / Nim) |
@@ -260,7 +260,7 @@ WGSL, Starlark / Bazel, Make, Just, KDL and Meson.
 
 Highlighting uses tree-sitter. 21 common grammars are compiled in; 37 more (C#,
 Swift, Kotlin, Groovy / Gradle, Haskell, SQL, Zig, Dockerfile, Vue, …) **install
-themselves** the first time you open such a file: farsub downloads the grammar's source and
+themselves** the first time you open such a file: FarSub downloads the grammar's source and
 compiles it in the background with your C compiler (Xcode Command Line Tools, gcc/clang,
 or Visual Studio Build Tools). Turn this off with `auto_install = false`; then
 **Tools → Install Grammar…** installs them. Language servers never install by themselves:
@@ -270,7 +270,7 @@ Any other tree-sitter grammar installs from a source folder or archive on your c
 `farsub --list-grammars` shows them all.
 Until a file's tree-sitter grammar is installed (or when it can't be compiled), and for
 the languages with no tree-sitter grammar yet (AWK, BibTeX, Clojure, Crystal, .env,
-GraphQL, Just, LaTeX, Meson, Nim, Perl, Terraform, Typst and WGSL), farsub highlights it
+GraphQL, Just, LaTeX, Meson, Nim, Perl, Terraform, Typst and WGSL), FarSub highlights it
 with a bundled regex grammar (syntect, Sublime Text's `.sublime-syntax` format) instead,
 so nothing shows as plain text.
 Override the fallback with `fallback_syntax = "Grammar Name"` in a language file, and how
@@ -278,9 +278,9 @@ its scopes map to theme colors with a `scopes.toml` in the config folder.
 
 **Tools → Language Servers** (Cmd+Alt+L) is a Mason-like manager: it lists every server
 with its status (installed, on PATH, not installed, failed), and `i` installs, `u` updates,
-`x` uninstalls, Enter shows details and the install log. Installs go into farsub's own data
+`x` uninstalls, Enter shows details and the install log. Installs go into FarSub's own data
 folder: npm packages under a private prefix, pip packages in a private venv, cargo/go
-binaries in a private bin, GitHub release binaries downloaded and unpacked by farsub itself
+binaries in a private bin, GitHub release binaries downloaded and unpacked by FarSub itself
 (no `curl`/`tar`/`sh` needed, so it works the same on Windows), so nothing touches your system. Opening a file whose server is
 missing tells you which ones can be installed.
 
@@ -408,9 +408,9 @@ its pane's tabs, survives Close Other Tabs, and stays pinned after a restart.
 
 **Preferences: Settings** (Cmd+,) opens a settings window: the full,
 read-only `Default Settings.toml` on the left and your settings file on the right. Copy
-over what you want to change and save; every farsub window picks up the change. Closing
+over what you want to change and save; every FarSub window picks up the change. Closing
 either pane closes the window. The settings file and its folder are created the first time
-farsub starts.
+FarSub starts.
 
 **Preferences › Font…** lists the fonts installed on your computer (monospaced first) and
 previews each one in the editor as you move through them; Enter keeps it (written to your
@@ -471,7 +471,7 @@ level, with the block around the cursor highlighted (`indent_guides = false` hid
 
 If an open file is deleted on disk, its tab and the window title say "(deleted)"; the
 contents stay (as unsaved changes) until you close the tab, which warns you first, or save
-to recreate the file. If another program changes an open file, farsub reloads it (undo
+to recreate the file. If another program changes an open file, FarSub reloads it (undo
 gets your version back), or asks first when you have unsaved edits there; saving over an
 outside change asks too. Files keep their encoding: a Latin-1, Windows-1252, Shift_JIS or
 UTF-16 file saves back exactly as it was (the status bar shows the encoding; **File:
@@ -501,7 +501,7 @@ language server follow it, so choosing "Bash" for an extension-less script also 
 
 ## Themes, highlighting and packages
 
-Highlighting is tree-sitter based, and everything visual is data in farsub's own formats:
+Highlighting is tree-sitter based, and everything visual is data in FarSub's own formats:
 
 - **Themes** are TOML (`runtime/themes/*.toml`; add your own in `~/.config/farsub/themes/`):
   an `[editor]` table of colors and a `[syntax]` table keyed by highlight capture, with
@@ -563,7 +563,7 @@ version is 0.x, a minor bump may still change behaviour.
 2. Pushing the tag runs the **Release** workflow (`.github/workflows/release.yml`). It
    builds every platform with `scripts/release.sh` on GitHub's macOS, Windows and Linux
    machines and publishes a pre-release with:
-   - `farsub-<version>-macos-universal.zip`: `farsub.app` (Apple Silicon and Intel).
+   - `farsub-<version>-macos-universal.zip`: `FarSub.app` (Apple Silicon and Intel).
    - `farsub-<version>-windows-x86_64.zip`: `farsub.exe`.
    - `farsub-<version>-linux-x86_64.tar.gz`: `farsub` (built on Ubuntu 22.04, so it runs
      on that and newer).
@@ -597,7 +597,7 @@ their license). If Homebrew's own `rust` stops working after llvm is upgraded
 GitHub from the tag and upload the archives and `SHA256SUMS.txt`.
 
 The macOS app is ad-hoc signed, so on another Mac the first launch needs right-click →
-Open (or `xattr -dr com.apple.quarantine farsub.app`). Set `MACOS_SIGN_IDENTITY` to sign it
+Open (or `xattr -dr com.apple.quarantine FarSub.app`). Set `MACOS_SIGN_IDENTITY` to sign it
 with a Developer ID certificate instead; notarizing isn't automated. To use the `farsub`
 command from a terminal, link it:
-`ln -s /Applications/farsub.app/Contents/MacOS/farsub /usr/local/bin/farsub`.
+`ln -s /Applications/FarSub.app/Contents/MacOS/farsub /usr/local/bin/farsub`.

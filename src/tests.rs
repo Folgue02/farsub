@@ -325,7 +325,7 @@ fn settings_add_language_and_theme() {
     let d = project("cfg", &[("init.lua", "local x = 1\n")]);
     let mut h = harness(&d);
     steps(&mut h, 2);
-    // Cmd+, opens the settings in a window of their own (another farsub process)...
+    // Cmd+, opens the settings in a window of their own (another FarSub process)...
     press(&mut h, CMD, Key::Comma);
     let spawned = h.state().app.spawned.clone();
     assert_eq!(spawned.len(), 1);
@@ -949,7 +949,7 @@ fn project_folders_excludes_and_settings() {
     let mut h = project_harness(p, test_config(&d));
     steps(&mut h, 2);
     let app = &h.state().app;
-    assert_eq!(app.title(), "App — farsub");
+    assert_eq!(app.title(), "App — FarSub");
     let names: Vec<_> = app.tree.nodes.iter().map(|n| n.name.clone()).collect();
     assert!(
         names.contains(&"App".to_string()) && names.contains(&"lib".to_string()),
@@ -4194,7 +4194,7 @@ fn taplo_available() -> bool {
         .is_ok()
 }
 
-/// Taplo checks the settings file against farsub's schema: a misspelled setting is an
+/// Taplo checks the settings file against FarSub's schema: a misspelled setting is an
 /// error, and hovering a setting explains it.
 #[test]
 fn taplo_checks_settings_against_the_schema() {
@@ -4229,7 +4229,7 @@ fn taplo_checks_settings_against_the_schema() {
         h.state().app.hover.as_ref().map(|h| &h.lines)
     );
     shot(&mut h, "taplo_settings_hover");
-    // A project file isn't `*.toml`, but farsub's Taplo config includes it: it's checked
+    // A project file isn't `*.toml`, but FarSub's Taplo config includes it: it's checked
     // (not "this document has been excluded").
     let proj = d.join("App.farsub-project");
     std::fs::write(&proj, "[[folders]]\npaht = \".\"\n").unwrap();
@@ -4468,7 +4468,7 @@ fn mouse_selection_by_character_word_line_and_outside() {
     assert_eq!(h.state().app.buf().unwrap().cursor.line, line_up, "released: it stops");
 }
 
-/// Preferences: Open farsub's Config Folder opens the folder holding config.toml (created
+/// Preferences: Open FarSub's Config Folder opens the folder holding config.toml (created
 /// if missing) in a new window with the same config, and it's in the File menu.
 #[test]
 fn open_config_folder_in_a_new_window() {
@@ -4489,7 +4489,7 @@ fn open_config_folder_in_a_new_window() {
     assert!(app.status.as_ref().unwrap().0.contains(&dir.display().to_string()));
     // This window is untouched: still the same project folder.
     assert!(app.buffers.iter().all(|b| b.path.as_ref().is_none_or(|p| !p.starts_with(&dir))));
-    assert_eq!(crate::commands::name(Command::OpenConfigFolder), "Preferences: Open farsub's Config Folder");
+    assert_eq!(crate::commands::name(Command::OpenConfigFolder), "Preferences: Open FarSub's Config Folder");
     let (menus, errs) = crate::menu::build(&app.config.menus);
     assert!(errs.is_empty(), "{errs:?}");
     assert!(menus.iter().any(|m| m.title == "File"

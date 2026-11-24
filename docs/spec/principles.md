@@ -1,13 +1,13 @@
 # Principles
 
-What farsub is trying to be; every other page follows from these.
+What FarSub is trying to be; every other page follows from these.
 
 - **Familiar editor feel.** Layout, keys, palettes and behaviors follow the conventions of
   established desktop code editors unless a decision below says otherwise. Where VS Code
   has the better-known convention (integrated terminal), we follow VS Code.
-- **Own formats.** farsub borrows good experiences (layout, keys, behaviors) from other
+- **Own formats.** FarSub borrows good experiences (layout, keys, behaviors) from other
   editors but not their file formats or engines: no `.tmTheme` themes or other editors'
-  packages. Highlighting is tree-sitter; themes, queries and packages are farsub's own
+  packages. Highlighting is tree-sitter; themes, queries and packages are FarSub's own
   formats (decided 2026-11-14, done the same day). The one exception: the fallback for
   languages without a tree-sitter grammar uses syntect, which reads Sublime Text's
   `.sublime-syntax` grammar format (bat's ~220 grammars plus `runtime/syntaxes/`).

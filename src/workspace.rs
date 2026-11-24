@@ -105,7 +105,7 @@ impl Workspace {
         write_atomic(
             path,
             &format!(
-                "# farsub session state (open files, unsaved changes). Safe to delete.\n{text}"
+                "# FarSub session state (open files, unsaved changes). Safe to delete.\n{text}"
             ),
         )
         .map_err(|e| e.to_string())

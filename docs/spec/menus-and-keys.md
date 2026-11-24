@@ -22,7 +22,7 @@
 - Keymap viewer: Cmd+Shift+/ lists all bindings; user overrides in `keymap.toml`
   (`command = ""` unbinds, `platforms` limits), edited with Preferences: Key Bindings
   (File › Key Bindings…) beside the defaults; see [Editor](editor.md). File › Open Config
-  Folder ("Preferences: Open farsub's Config Folder") opens the folder holding them in a
+  Folder ("Preferences: Open FarSub's Config Folder") opens the folder holding them in a
   new window.
 - **Every shortcut shown comes from the keymap** (decided 2026-11-16): menus, context
   menus, the palette, the find panel, the empty window's hints, the menu bar's hint and

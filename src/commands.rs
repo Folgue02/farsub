@@ -238,7 +238,7 @@ pub const COMMANDS: &[(Command, &str, bool)] = &[
     (OpenPath, "File: Open Path… (type it)", true),
     (OpenSettings, "Preferences: Settings & Languages", true),
     (OpenKeymap, "Preferences: Key Bindings", true),
-    (OpenConfigFolder, "Preferences: Open farsub's Config Folder", true),
+    (OpenConfigFolder, "Preferences: Open FarSub's Config Folder", true),
     (SelectTheme, "Preferences: Select Color Theme", true),
     (SelectFont, "Preferences: Select Font", true),
     (ShowKeymap, "Help: Keyboard Shortcuts", true),

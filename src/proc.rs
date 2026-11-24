@@ -2,7 +2,7 @@
 
 use std::process::Command;
 
-/// On Windows farsub is a windowed app, and every console program it starts gets a
+/// On Windows FarSub is a windowed app, and every console program it starts gets a
 /// console window of its own unless told not to: a terminal popping up for each language
 /// server, install step or compile. This keeps them hidden; elsewhere it does nothing.
 pub fn hidden(c: &mut Command) -> &mut Command {

@@ -1,11 +1,11 @@
 # Editor
 
 - **Settings** (Preferences: Settings, Cmd+,): a **window of its own**
-  (decided 2026-11-15; another farsub process, `--settings`, with the same config and data
+  (decided 2026-11-15; another FarSub process, `--settings`, with the same config and data
   folders) with two panes. On the left, `Default Settings.toml`: read-only, every setting
   with its default and an explanation, regenerated from the running version. On the
   right, your settings file, focused. A new user file starts nearly empty;
-  you copy over only what you change. Saving applies it in every window: each farsub
+  you copy over only what you change. Saving applies it in every window: each FarSub
   window checks the settings file about once a second and reloads it when it changes
   (unless it has the file open with unsaved edits). Closing either pane closes both (the
   other only if it has no unsaved changes) and then the window.
@@ -18,18 +18,18 @@
   Running Settings or Key Bindings inside that window opens the other pair there too;
   the window closes when the last pair does. Project › Edit Project is the same kind of
   window for a project file (see [Projects](projects.md)).
-- **Config folder** ("Preferences: Open farsub's Config Folder", File › Open Config
+- **Config folder** ("Preferences: Open FarSub's Config Folder", File › Open Config
   Folder, decided 2026-11-19): opens the folder that holds `config.toml` (`keymap.toml`,
   `languages/`, `servers/`, `grammars/`, `queries/`, `themes/`; where a custom language's
   `languages/<name>.toml` goes) as a folder in a **new window**, like `farsub <folder>`
   with the same `--config` / `--data-dir`, so the current window's project is untouched.
   It's the settings file's folder (`--config` / `FARSUB_CONFIG`), else the standard place
   below; created first if missing. The status bar shows its path.
-- With taplo installed (Tools › Language Servers), these files are checked against farsub's schemas: a misspelled setting or an
+- With taplo installed (Tools › Language Servers), these files are checked against FarSub's schemas: a misspelled setting or an
   unknown command id is an error, keys complete, and hovering one explains it (see
   [Language servers](language-servers.md)).
 - **Config folder created on first start** (decided 2026-11-15): if the settings file
-  doesn't exist, farsub creates its folder and a starter `config.toml`, so a new user always
+  doesn't exist, FarSub creates its folder and a starter `config.toml`, so a new user always
   has one to open. Standard places per platform: `%APPDATA%\farsub` on Windows (data in
   `%LOCALAPPDATA%\farsub`), `$XDG_CONFIG_HOME/farsub` or `~/.config/farsub` elsewhere (data
   in `$XDG_DATA_HOME/farsub` or `~/.local/share/farsub`). Windows has no `$HOME` by

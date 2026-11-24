@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub.
+# Bundled with FarSub.
 name: Gleam
 file_extensions: [gleam]
 scope: source.gleam

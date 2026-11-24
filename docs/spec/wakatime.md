@@ -3,7 +3,7 @@
 Built-in time tracking with [WakaTime](https://wakatime.com) (decided 2026-11-22). It is
 one self-contained module (`src/wakatime.rs`) so a plugin can replace it later. It follows
 WakaTime's plugin guide (wakatime.com/help/creating-plugin) and uses only what the guide
-sanctions: the official `wakatime-cli` sends every heartbeat. farsub never calls
+sanctions: the official `wakatime-cli` sends every heartbeat. FarSub never calls
 WakaTime's API itself.
 
 ## Turning it on
@@ -21,11 +21,11 @@ WakaTime's API itself.
 - **WakaTime: Set API Key…** (Command Palette) asks for the key in a password field (see
   [Text input boxes](inputs.md)). It checks the key's format (a UUID, optionally starting
   with `waka_`, as the official plugins accept) and writes it to `~/.wakatime.cfg`. Only
-  `api_key` changes; the rest of the file stays as it was. A file farsub creates is
+  `api_key` changes; the rest of the file stays as it was. A file FarSub creates is
   readable only by its owner.
 - The key never appears on a command line (wakatime-cli is never given `--key`), in the
   log or console, in status messages or on screen.
-- With no key, the first heartbeat attempt shows a notice naming the command. farsub does
+- With no key, the first heartbeat attempt shows a notice naming the command. FarSub does
   not open the prompt by itself.
 
 ## Heartbeats
@@ -40,10 +40,10 @@ WakaTime's API itself.
   server rejected the key) shows a notice. Offline or backing-off codes (102, 112) are
   only logged at debug level: wakatime-cli queues those heartbeats and sends them later.
   Any other failure is logged as a warning.
-- Arguments: `--entity <absolute path>`, `--plugin "farsub/<version> farsub-wakatime/<version>"`,
+- Arguments: `--entity <absolute path>`, `--plugin "FarSub/<version> farsub-wakatime/<version>"` (WakaTime shows the editor as FarSub),
   `--lineno`, `--cursorpos` (1-based column), `--lines-in-file`, `--write` on save, and
   `--is-unsaved-entity` for a new file that isn't on disk yet.
-- **Language:** the file's current language in farsub is reported (a language picked in
+- **Language:** the file's current language in FarSub is reported (a language picked in
   the status bar included). It is passed as `--language` (used when WakaTime knows the
   name) and as `--alternate-language` (used when WakaTime can't detect one itself). A few
   titles map to WakaTime's names: Plain Text → Text, JavaScript (JSX) → JSX,

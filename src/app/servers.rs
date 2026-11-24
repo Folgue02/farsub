@@ -382,7 +382,7 @@ impl App {
         self.msg(m);
     }
 
-    /// A language's tree-sitter grammar, if farsub has it and the language uses it
+    /// A language's tree-sitter grammar, if FarSub has it and the language uses it
     /// (`highlighter`; with "regex" it's highlighted with the regex grammar instead).
     pub(super) fn grammar_of(&self, l: &crate::config::LanguageConfig) -> Option<String> {
         if self.config.highlighter_for(l) == crate::config::Highlighter::Regex {

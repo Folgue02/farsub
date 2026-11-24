@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build farsub release archives for GitHub Releases, into dist/<version>/.
+# Build FarSub release archives for GitHub Releases, into dist/<version>/.
 #
 #   scripts/release.sh                 # every platform this machine can build
 #   scripts/release.sh macos           # only macOS
@@ -8,7 +8,7 @@
 #   scripts/release.sh --allow-dirty   # build even with uncommitted changes (testing)
 #
 # What it makes:
-#   farsub-<version>-macos-<arch>.zip     farsub.app (arm64, x86_64 or universal)
+#   farsub-<version>-macos-<arch>.zip     FarSub.app (arm64, x86_64 or universal)
 #   farsub-<version>-windows-x86_64.zip   farsub.exe
 #   farsub-<version>-linux-<arch>.tar.gz  farsub
 #   SHA256SUMS.txt
@@ -127,7 +127,7 @@ build_macos() {
             "run: rustup target add aarch64-apple-darwin x86_64-apple-darwin" >&2
     fi
 
-    local app="$out/farsub.app"
+    local app="$out/FarSub.app"
     mkdir -p "$app/Contents/MacOS"
     if [ ${#bins[@]} -eq 2 ]; then
         lipo -create "${bins[@]}" -output "$app/Contents/MacOS/farsub"
@@ -141,8 +141,8 @@ build_macos() {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>farsub</string>
-    <key>CFBundleDisplayName</key><string>farsub</string>
+    <key>CFBundleName</key><string>FarSub</string>
+    <key>CFBundleDisplayName</key><string>FarSub</string>
     <key>CFBundleIdentifier</key><string>io.github.folgue02.farsub</string>
     <key>CFBundleExecutable</key><string>farsub</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -221,7 +221,7 @@ if [ ${#built[@]} -gt 0 ]; then
 fi
 
 echo
-echo "farsub $version → $out/"
+echo "FarSub $version → $out/"
 for b in ${built[@]+"${built[@]}"}; do echo "  built    $b"; done
 for s in ${skipped[@]+"${skipped[@]}"}; do echo "  skipped  $s"; done
 [ ${#built[@]} -gt 0 ] || exit 1

@@ -1,6 +1,6 @@
 # Highlight query sources
 
-The `highlights.scm` files here are copied from the tree-sitter grammar crates farsub
+The `highlights.scm` files here are copied from the tree-sitter grammar crates FarSub
 bundles, under each crate's license:
 
 | Crate | Version | License |

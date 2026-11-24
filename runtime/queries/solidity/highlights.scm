@@ -88,7 +88,7 @@
 
 ; Structs and members
 (member_expression property: (identifier) @property)
-;; farsub: rewritten from `((expression(identifier)) @type .)`, which tree-sitter 0.27 rejects.
+;; FarSub: rewritten from `((expression(identifier)) @type .)`, which tree-sitter 0.27 rejects.
 (struct_expression type: (expression (identifier) @type))
 (struct_field_assignment name: (identifier) @property)
 

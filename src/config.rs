@@ -8,7 +8,7 @@
 //!   servers/*.toml       language servers, nvim-lspconfig style, with mason-style [install]
 //!   keymap.toml          extra/overriding [[keys]]
 //!   menus.toml           replaces the menu layout
-//!   Packages/            farsub packages: themes/*.toml, queries/<grammar>/highlights.scm, icons.toml
+//!   Packages/            FarSub packages: themes/*.toml, queries/<grammar>/highlights.scm, icons.toml
 //! ~/.local/share/farsub/servers/<name>/   servers installed by the server manager
 //! ```
 
@@ -288,7 +288,7 @@ pub struct UrlSource {
     pub file: Option<String>,
 }
 
-/// `[install.wrapper]`: the launcher farsub writes into the install folder.
+/// `[install.wrapper]`: the launcher FarSub writes into the install folder.
 #[derive(Clone, Debug, Deserialize, Default, PartialEq, schemars::JsonSchema)]
 pub struct Wrapper {
     /// A program on PATH (resolved when installing), or a path under the install folder
@@ -388,7 +388,7 @@ pub struct ServerConfig {
     /// The name languages list in `servers` (servers/<name>.toml: defaults to the file name).
     #[serde(default)]
     pub name: String,
-    /// The executable: a program on PATH, or the one farsub installed (`[install]`).
+    /// The executable: a program on PATH, or the one FarSub installed (`[install]`).
     pub command: String,
     /// Arguments; `${root}`, `${root_id}`, `${home}` and `${install_dir}` are replaced.
     #[serde(default)]
@@ -629,7 +629,7 @@ pub fn default_keymap_reference() -> String {
         .collect();
     let w = ids.iter().map(|(i, _)| i.len()).max().unwrap_or(0);
     let mut s = String::from(
-        "# farsub default key bindings (read-only reference).\n\
+        "# FarSub default key bindings (read-only reference).\n\
          #\n\
          # Don't edit this file: copy the bindings you want to change into your keymap (the\n\
          # other pane) and save it there.\n\
@@ -1001,7 +1001,7 @@ impl Config {
 
 /// The file a new user settings file starts as (nearly empty; the defaults
 /// are shown beside it by Preferences: Settings).
-pub const TEMPLATE: &str = r##"# farsub settings. Anything here overrides the defaults shown in the other pane
+pub const TEMPLATE: &str = r##"# FarSub settings. Anything here overrides the defaults shown in the other pane
 # (Preferences: Settings). Copy a line over, change it, save to apply.
 
 [editor]
@@ -1009,7 +1009,7 @@ pub const TEMPLATE: &str = r##"# farsub settings. Anything here overrides the de
 
 /// Every editor setting with its default and an explanation, shown read-only beside the
 /// user's file. A test keeps it in sync with `EditorConfig::default()`.
-pub const DEFAULT_SETTINGS: &str = r##"# farsub default settings (read-only reference).
+pub const DEFAULT_SETTINGS: &str = r##"# FarSub default settings (read-only reference).
 #
 # Every setting with its default value. Don't edit this file: copy the lines you want to
 # change into your settings file (the other pane) and save it there. Your file only needs
@@ -1052,7 +1052,7 @@ word_wrap = true
 # PowerShell (PowerShell 7's pwsh when installed, else powershell.exe).
 # terminal_shell = "/bin/zsh"        # or "cmd.exe", "pwsh", "C:\\msys64\\usr\\bin\\bash.exe"
 # Install a file's highlighting grammar automatically (in the background) when it opens.
-# Off: farsub tells you what's missing and you install from the Tools menu. Language
+# Off: FarSub tells you what's missing and you install from the Tools menu. Language
 # servers are never installed automatically: Tools › Language Servers installs them.
 auto_install = true
 # Languages whose language servers don't run, by name ("*" for all): ["python"]. In a

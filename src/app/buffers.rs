@@ -79,7 +79,7 @@ impl App {
         self.window_args("--empty")
     }
 
-    /// Arguments for another farsub window of this setup (`--empty` or `--settings`).
+    /// Arguments for another FarSub window of this setup (`--empty` or `--settings`).
     pub fn window_args(&self, kind: &str) -> Vec<std::ffi::OsString> {
         let mut args: Vec<std::ffi::OsString> = vec![kind.into()];
         if let Some(c) = &self.config.path {
@@ -93,13 +93,13 @@ impl App {
         args
     }
 
-    /// File › New Window: start another farsub with a clean window (its own process).
+    /// File › New Window: start another FarSub with a clean window (its own process).
     pub fn open_new_window(&mut self) {
         let args = self.new_window_args();
         self.spawn_window(args);
     }
 
-    /// Start another farsub process with these arguments, detached from this one.
+    /// Start another FarSub process with these arguments, detached from this one.
     pub(super) fn spawn_window(&mut self, args: Vec<std::ffi::OsString>) {
         #[cfg(test)]
         {

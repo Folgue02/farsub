@@ -1,4 +1,4 @@
-//! Installing tree-sitter grammars at runtime, so only a core set is compiled into farsub.
+//! Installing tree-sitter grammars at runtime, so only a core set is compiled into FarSub.
 //!
 //! A recipe (`grammars/<name>.toml`, from runtime/, the config folder or a package) names a
 //! grammar's source: a crates.io crate (downloaded as its source tarball) or a local folder.
@@ -214,7 +214,7 @@ pub fn run_install(
         let lib = dir.join(r.lib_file());
         log(format!("compiling {}", src.display()));
         compile(&src, &lib)?;
-        // Keep the grammar's own highlight query (used when farsub ships none for it).
+        // Keep the grammar's own highlight query (used when FarSub ships none for it).
         for q in [
             base.join("queries/highlights.scm"),
             root.join("queries/highlights.scm"),

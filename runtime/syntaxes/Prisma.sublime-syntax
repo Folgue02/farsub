@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub. Prisma schema files.
+# Bundled with FarSub. Prisma schema files.
 name: Prisma
 file_extensions: [prisma]
 scope: source.prisma

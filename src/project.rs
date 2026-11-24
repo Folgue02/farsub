@@ -37,7 +37,7 @@ path = "."                    # relative to where you save this file
 "##;
 
 /// The read-only sample shown beside a project file (Project › Edit Project).
-pub const EXAMPLE_PROJECT: &str = r##"# farsub example project (read-only reference).
+pub const EXAMPLE_PROJECT: &str = r##"# FarSub example project (read-only reference).
 #
 # A project file (NAME.farsub-project) lists the folders a window shows and settings that
 # apply only in that window. Don't edit this file: copy what you need into your project

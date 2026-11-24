@@ -30,7 +30,7 @@
   nvim-treesitter's old `@text.*` ones (a test checks). Tree-sitter grammars don't
   get language injections yet (Markdown's inline grammar, code in HTML/Svelte/Vue), which
   is why Markdown uses the regex highlighter by default (see below). 29 of the bundled themes were converted once
-  from the color schemes farsub used before. "Tsoding" was converted from the MIT-licensed
+  from the color schemes FarSub used before. "Tsoding" was converted from the MIT-licensed
   [Tsoding Color Theme](https://github.com/JoaoAJMatos/Tsoding-Color-Theme) for VS Code;
   a theme taken from elsewhere carries its source and license notice in a comment at the
   top of its file.
@@ -55,7 +55,7 @@
   installable but missing installs it in the background (once per session per grammar;
   a failure is logged with its reason and the file keeps the regex fallback). Language servers
   are not (decided 2026-11-19): they install only from Tools › Language Servers (see
-  [Language servers](language-servers.md)). With it off, farsub says what's missing and
+  [Language servers](language-servers.md)). With it off, FarSub says what's missing and
   the Tools menu installs it.
 - **From this computer:** "Grammars: Install Grammar from File…/Folder…" (system file
   picker) or `--install-grammar PATH` compiles a grammar source folder or archive
@@ -67,7 +67,7 @@
 - Needs a C compiler (Xcode Command Line Tools, gcc/clang, or Visual Studio Build Tools);
   without one the install fails with that advice. Libraries stay loaded for the session
   (an update loads as a new file, versioned by name).
-- An installed grammar uses farsub's bundled query (`runtime/queries/<name>/`), else the
+- An installed grammar uses FarSub's bundled query (`runtime/queries/<name>/`), else the
   one from its source. Opening a file whose grammar is installable but missing shows it
   with the regex fallback and says once (status bar + console) how to install it.
 - **Regex fallback** (decided 2026-11-14): whenever tree-sitter can't highlight a file (the
@@ -145,7 +145,7 @@
   Toggle Comment uses `//`; indentation 4 spaces.
 - **LakeScript templates** (`.elks`, "embedded LakeScript", like `.erb`; decided
   2026-11-21): LakeScript 0.8.0's `std/template` files have no extension of their own
-  and share `{{ }}` with Jinja and Handlebars, so farsub doesn't guess from `.html`;
+  and share `{{ }}` with Jinja and Handlebars, so FarSub doesn't guess from `.html`;
   `page.elks` or `page.html.elks` is a template, and View › Set Syntax › LakeScript
   Template works on any file. The grammar
   (`runtime/syntaxes/LakeScript Template.sublime-syntax`) is HTML with every `{{ … }}`

@@ -110,18 +110,18 @@ impl NativeMenu {
             mi
         };
         // Application menu, macOS style.
-        let app_menu = Submenu::new("farsub", true);
+        let app_menu = Submenu::new("FarSub", true);
         let about = PredefinedMenuItem::about(
             None,
             Some(AboutMetadata {
-                name: Some("farsub".into()),
+                name: Some("FarSub".into()),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
                 ..Default::default()
             }),
         );
         let settings = item(Command::OpenSettings, "Settings…");
         let servers = item(Command::ManageServers, "Language Servers…");
-        let quit = item(Command::Quit, "Quit farsub");
+        let quit = item(Command::Quit, "Quit FarSub");
         app_menu
             .append_items(&[
                 &about,

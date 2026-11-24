@@ -307,7 +307,7 @@ impl App {
                 if b.deleted { " (deleted)" } else { "" },
                 if b.modified { " •" } else { "" }
             ),
-            None => format!("{root} — farsub"),
+            None => format!("{root} — FarSub"),
         }
     }
 

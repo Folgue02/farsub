@@ -1,4 +1,4 @@
-//! The tree-sitter grammars compiled into farsub, by name: a core of common languages.
+//! The tree-sitter grammars compiled into FarSub, by name: a core of common languages.
 //! Others are installed at runtime from recipes in `grammars/*.toml` (see
 //! grammar_install.rs). A language picks one with
 //! `grammar = "…"` in its TOML (default: the language's own name). Each grammar's highlight

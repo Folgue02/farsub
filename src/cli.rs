@@ -88,7 +88,7 @@ pub struct Args {
     #[arg(long, value_name = "NAME")]
     pub install_server: Vec<String>,
 
-    /// Uninstall a server installed by farsub, then exit. Repeatable.
+    /// Uninstall a server installed by FarSub, then exit. Repeatable.
     #[arg(long, value_name = "NAME")]
     pub uninstall_server: Vec<String>,
 

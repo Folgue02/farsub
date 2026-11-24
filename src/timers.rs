@@ -2,7 +2,7 @@
 //!
 //! Everything here is a function of "now" (Unix seconds) so it can be tested; the state
 //! is saved in `timers.toml` in the data folder, so a running pomodoro and a set alarm
-//! survive restarts (they keep going by the wall clock while farsub is closed).
+//! survive restarts (they keep going by the wall clock while FarSub is closed).
 //!
 //! Alerts (system notification + sound) are fired by a small background thread when a
 //! deadline passes, so they arrive even while the window is minimized and not drawing;
@@ -190,7 +190,7 @@ impl Pomodoro {
         self.advance();
         let d = self.duration(self.phase);
         self.run = if self.auto_start {
-            // Keep the schedule; if farsub was closed past it, start from now.
+            // Keep the schedule; if FarSub was closed past it, start from now.
             let next = ends + d;
             Run::Running {
                 ends: if next > now { next } else { now + d },
@@ -273,7 +273,7 @@ impl Alarm {
         self.at = None;
     }
 
-    /// Rang (and whether it was missed while farsub was closed): repeat rearms it for
+    /// Rang (and whether it was missed while FarSub was closed): repeat rearms it for
     /// the next day, else it's cleared (its time stays for next time).
     pub fn tick(&mut self, now: i64) -> Option<bool> {
         let at = self.at?;
@@ -469,9 +469,9 @@ impl Timers {
                 format!("Alarm {}", self.alarm.time),
                 match (self.alarm.label.trim(), late) {
                     ("", false) => "farsub alarm".into(),
-                    ("", true) => "Rang while farsub was closed".into(),
+                    ("", true) => "Rang while FarSub was closed".into(),
                     (l, false) => l.to_string(),
-                    (l, true) => format!("{l} (rang while farsub was closed)"),
+                    (l, true) => format!("{l} (rang while FarSub was closed)"),
                 },
             ));
         }

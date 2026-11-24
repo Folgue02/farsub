@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub. Meson build files.
+# Bundled with FarSub. Meson build files.
 name: Meson
 file_extensions: [meson.build, meson_options.txt, meson.options]
 scope: source.meson

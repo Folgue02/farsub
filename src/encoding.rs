@@ -6,7 +6,7 @@
 
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
 
-/// A file's encoding as farsub keeps it.
+/// A file's encoding as FarSub keeps it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextEncoding {
     pub encoding: &'static Encoding,

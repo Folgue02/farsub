@@ -17,9 +17,9 @@ impl App {
             .find_map(|s| installer::resolve(data, s).map(|bin| (s.clone(), bin)))
     }
 
-    /// Taplo (the TOML server) gets farsub's schemas for its own files, so they're checked
+    /// Taplo (the TOML server) gets FarSub's schemas for its own files, so they're checked
     /// and their keys complete with explanations; and, where the project root has no Taplo
-    /// config of its own, farsub's, so `.farsub-project` files are checked at all.
+    /// config of its own, FarSub's, so `.farsub-project` files are checked at all.
     fn with_schemas(
         &self,
         mut server: crate::config::ServerConfig,

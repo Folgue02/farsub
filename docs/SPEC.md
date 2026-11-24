@@ -1,8 +1,13 @@
-# farsub — product specification
+# FarSub — product specification
 
-The living description of how farsub works and should behave, one page per area. When a
+The living description of how FarSub works and should behave, one page per area. When a
 decision changes, the page is corrected (not appended to). "Cmd" means Cmd on macOS and
 Ctrl on Windows/Linux; "Ctrl" means the Control key on every platform.
+
+The product is written **FarSub** (decided 2026-11-24) in the interface, the docs, the
+macOS app (`FarSub.app`) and WakaTime. Anything typed or stored stays lowercase `farsub`:
+the command, `.farsub-project` / `.farsub-workspace` files, config and data folders,
+`FARSUB_*` variables, the bundle id and the release archive names.
 
 - [Principles](spec/principles.md): familiar editor feel, own file formats,
   frictionless, keyboard first, nothing hard-coded, never lose work

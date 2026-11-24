@@ -47,5 +47,5 @@ if [ "$new" != "$cur" ]; then
     git add Cargo.toml Cargo.lock
     git commit -q -m "Release v$new"
 fi
-git tag -a "v$new" -m "farsub $new"
+git tag -a "v$new" -m "FarSub $new"
 echo "Tagged v$new. Push with: git push --follow-tags"

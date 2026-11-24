@@ -1,4 +1,4 @@
-//! JSON Schemas for farsub's own TOML files (settings, key bindings, projects, languages,
+//! JSON Schemas for FarSub's own TOML files (settings, key bindings, projects, languages,
 //! servers), generated from the structs that read them so they can't drift. The TOML
 //! language server (Taplo) uses them to check those files, complete their keys and show
 //! each setting's explanation on hover.
@@ -119,7 +119,7 @@ pub fn all() -> Vec<(&'static str, Value)> {
 }
 
 /// Write the schemas into `<data>/schemas/` (rewritten each time, so they match this
-/// version of farsub) and return which files use which: Taplo's
+/// version of FarSub) and return which files use which: Taplo's
 /// `schema.associations`, a document-URI regex → schema URL.
 pub fn associations(config: &Config, defaults: &[(PathBuf, &str)]) -> Map<String, Value> {
     let mut out = Map::new();
@@ -170,7 +170,7 @@ pub const TAPLO_CONFIG_FILES: [&str; 2] = [".taplo.toml", "taplo.toml"];
 
 /// Taplo only checks `*.toml` files unless its config file says otherwise; without one,
 /// a `.farsub-project` gets just "this document has been excluded". For roots with no
-/// Taplo config of their own, farsub writes one that includes project files too and
+/// Taplo config of their own, FarSub writes one that includes project files too and
 /// points Taplo at it. `None`: the root has its own (which wins), or it couldn't be
 /// written.
 pub fn taplo_config(config: &Config, root: &Path) -> Option<PathBuf> {
@@ -181,8 +181,8 @@ pub fn taplo_config(config: &Config, root: &Path) -> Option<PathBuf> {
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("taplo.toml");
     let text = format!(
-        "# Written by farsub for folders without a .taplo.toml of their own: Taplo checks\n\
-         # only *.toml files by default, and farsub's project files are TOML too.\n\
+        "# Written by FarSub for folders without a .taplo.toml of their own: Taplo checks\n\
+         # only *.toml files by default, and FarSub's project files are TOML too.\n\
          include = [\"**/*.toml\", \"**/*.{}\"]\n",
         crate::project::PROJECT_EXT
     );
@@ -206,7 +206,7 @@ mod tests {
         assert!(errs.is_empty(), "{what}: {errs:?}");
     }
 
-    /// Everything farsub ships passes its own schema, and typos don't.
+    /// Everything FarSub ships passes its own schema, and typos don't.
     #[test]
     fn shipped_files_match_their_schemas() {
         let settings = validator("settings.json");
@@ -237,7 +237,7 @@ mod tests {
         assert!(bad(&project, "[settings]\ntab_sise = 2\n"));
     }
 
-    /// Roots without their own Taplo config get farsub's, which includes project files.
+    /// Roots without their own Taplo config get FarSub's, which includes project files.
     #[test]
     fn taplo_config_only_where_the_root_has_none() {
         let d = std::env::temp_dir().join(format!("farsub-taplocfg-{}", std::process::id()));

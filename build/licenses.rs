@@ -96,11 +96,11 @@ pub fn generate(manifest_dir: &Path, runtime: &Path, target: &str) -> String {
     let _ = writeln!(
         md,
         "# Licenses and attribution\n\n\
-         farsub is built on the work of many open-source projects. This lists the third-party\n\
+         FarSub is built on the work of many open-source projects. This lists the third-party\n\
          code and data compiled into this build ({target}), the license each is under, and\n\
          the license texts, each text once, followed by what it covers. Numbers in brackets\n\
          point to those texts.\n\n\
-         Language servers and tree-sitter grammars that farsub downloads for you aren't part\n\
+         Language servers and tree-sitter grammars that FarSub downloads for you aren't part\n\
          of this build; they come from their own authors under their own licenses.\n"
     );
     let _ = writeln!(md, "## Bundled data\n");
@@ -159,7 +159,7 @@ fn metadata(dir: &Path, target: &str) -> Value {
     serde_json::from_slice(&out.stdout).expect("cargo metadata: bad JSON")
 }
 
-/// The crates linked into the binary: normal dependencies of farsub, transitively, for
+/// The crates linked into the binary: normal dependencies of FarSub, transitively, for
 /// this target. Proc-macros (and what only they use) run at compile time and are left out.
 fn crates_in_binary(meta: &Value) -> Vec<Item> {
     let pkgs: HashMap<&str, &Value> = meta["packages"]
@@ -236,8 +236,8 @@ fn crates_in_binary(meta: &Value) -> Vec<Item> {
                     files.extend(extra.iter().map(|s| s.to_string()));
                 }
             }
-            // Under "A OR B" farsub uses the permissive option: a GPL text in a dual-licensed
-            // crate would only suggest farsub is under GPL. SPDX files are metadata.
+            // Under "A OR B" FarSub uses the permissive option: a GPL text in a dual-licensed
+            // crate would only suggest FarSub is under GPL. SPDX files are metadata.
             let license = p["license"].as_str().unwrap_or("");
             files.retain(|f| {
                 let u = f.to_uppercase();

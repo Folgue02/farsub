@@ -2,16 +2,16 @@
 //!
 //! Everything WakaTime-specific lives here so it can move to a plugin later. It follows
 //! WakaTime's plugin guide (wakatime.com/help/creating-plugin):
-//! - Heartbeats are sent by the official `wakatime-cli`, run in the background; farsub
+//! - Heartbeats are sent by the official `wakatime-cli`, run in the background; FarSub
 //!   never talks to WakaTime's API itself.
 //! - A heartbeat goes out when the focused file changes, when it's edited, and when it's
 //!   saved (`--write`). An edit or focus on the same file sends again only after
 //!   2 minutes; a save or another file always sends.
 //! - The API key lives in `~/.wakatime.cfg` (`[settings]` `api_key`), shared with every
 //!   other WakaTime plugin. wakatime-cli reads it from there, so the key is never on a
-//!   command line, in farsub's log or on screen.
+//!   command line, in FarSub's log or on screen.
 //! - wakatime-cli is found where the official plugins install it
-//!   (`~/.wakatime/wakatime-cli-<os>-<arch>`) or on PATH. When it's missing, farsub says
+//!   (`~/.wakatime/wakatime-cli-<os>-<arch>`) or on PATH. When it's missing, FarSub says
 //!   so; "WakaTime: Install wakatime-cli" downloads the official release.
 //!
 //! `$WAKATIME_HOME`, when set, replaces the home folder for both, as in wakatime-cli.
@@ -69,7 +69,7 @@ impl Heartbeat {
             "--entity".to_string(),
             self.file.to_string_lossy().into_owned(),
             "--plugin".into(),
-            format!("farsub/{v} farsub-wakatime/{v}"),
+            format!("FarSub/{v} farsub-wakatime/{v}"),
             "--lineno".into(),
             self.line.to_string(),
             "--cursorpos".into(),
@@ -81,8 +81,8 @@ impl Heartbeat {
             a.push("--write".into());
         }
         if let Some(l) = &self.language {
-            // farsub's language wins when WakaTime knows it; otherwise wakatime-cli
-            // detects one and falls back to farsub's.
+            // FarSub's language wins when WakaTime knows it; otherwise wakatime-cli
+            // detects one and falls back to FarSub's.
             a.extend(["--language".into(), l.clone()]);
             a.extend(["--alternate-language".into(), l.clone()]);
         }
@@ -334,7 +334,7 @@ pub fn valid_key(key: &str) -> bool {
             .all(|(p, n)| p.len() == n && p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// WakaTime's name for a farsub language title, where they differ. WakaTime matches
+/// WakaTime's name for a FarSub language title, where they differ. WakaTime matches
 /// names without regard to case.
 pub fn language_name(title: &str) -> String {
     match title {
@@ -612,7 +612,7 @@ mod tests {
         let a = hb.args().join(" ");
         let v = env!("CARGO_PKG_VERSION");
         assert!(a.starts_with("--entity /p/src/main.rs "), "{a}");
-        assert!(a.contains(&format!("--plugin farsub/{v} farsub-wakatime/{v}")), "{a}");
+        assert!(a.contains(&format!("--plugin FarSub/{v} farsub-wakatime/{v}")), "{a}");
         for f in [
             "--write",
             "--lineno 3",

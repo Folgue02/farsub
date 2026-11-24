@@ -213,7 +213,7 @@ impl Gui {
         crate::log::info(
             "app",
             format!(
-                "farsub {} — {}",
+                "FarSub {} — {}",
                 env!("CARGO_PKG_VERSION"),
                 g.app.project.name()
             ),
@@ -1087,7 +1087,7 @@ impl Gui {
                 OpenFolder => dialog().set_title("Open Folder").pick_folder(),
                 OpenProject => dialog()
                     .set_title("Open Project")
-                    .add_filter("farsub project", &project)
+                    .add_filter("FarSub project", &project)
                     .pick_file(),
                 AddFolder => dialog().set_title("Add Folder to Project").pick_folder(),
                 SaveAs(_) => {
@@ -1101,7 +1101,7 @@ impl Gui {
                 SaveProjectAs => {
                     let d = dialog()
                         .set_title("Save Project As")
-                        .add_filter("farsub project", &project);
+                        .add_filter("FarSub project", &project);
                     match &name {
                         Some(n) => d.set_file_name(n),
                         None => d,

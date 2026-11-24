@@ -31,7 +31,7 @@ impl App {
         ]
     }
 
-    /// Preferences: Settings — a window of its own (another farsub process,
+    /// Preferences: Settings — a window of its own (another FarSub process,
     /// `--settings`) with the defaults on the left and your file on the right. Saving there
     /// applies to every window (each one notices the file changed).
     pub(super) fn open_settings(&mut self) {
@@ -92,14 +92,14 @@ impl App {
         self.spawn_window(args);
     }
 
-    /// farsub's config folder: `config.toml`'s folder (`--config` / `FARSUB_CONFIG`), else
+    /// FarSub's config folder: `config.toml`'s folder (`--config` / `FARSUB_CONFIG`), else
     /// the standard place. Created if missing.
     pub fn config_folder(&self) -> Option<PathBuf> {
         let file = self.config.path.clone().or_else(config::config_path)?;
         Some(file.parent()?.to_path_buf())
     }
 
-    /// Preferences: Open farsub's Config Folder: that folder (languages/, servers/,
+    /// Preferences: Open FarSub's Config Folder: that folder (languages/, servers/,
     /// keymap.toml, …) in a new window, so this window's project is left alone.
     pub(super) fn open_config_folder(&mut self) {
         let Some(dir) = self.config_folder() else {
@@ -111,7 +111,7 @@ impl App {
         let mut args = self.window_args("--");
         args[0] = dir.clone().into();
         self.spawn_window(args);
-        self.msg(format!("Opened farsub's config folder in a new window: {}", dir.display()));
+        self.msg(format!("Opened FarSub's config folder in a new window: {}", dir.display()));
     }
 
     /// Project › Edit Project: like Preferences: Settings, a window of its own
@@ -169,7 +169,7 @@ impl App {
         (p.extension().is_some_and(|e| e == project::PROJECT_EXT) && p.is_file()).then_some(p)
     }
 
-    /// Open This Project in New Window: another farsub window with that project.
+    /// Open This Project in New Window: another FarSub window with that project.
     pub(super) fn open_project_in_new_window(&mut self) {
         let Some(file) = self.project_file_target() else {
             return self.msg("Select a .farsub-project file first");
@@ -229,7 +229,7 @@ impl App {
         if let Some(parent) = defaults.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        // Always rewritten, so it matches this version of farsub.
+        // Always rewritten, so it matches this version of FarSub.
         if let Err(e) = std::fs::write(&defaults, text) {
             return self.msg(format!("Could not write {}: {e}", defaults.display()));
         }

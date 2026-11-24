@@ -4,7 +4,7 @@ args = ["--no-echo", "-e", "languageserver::run()"]
 root_markers = []
 description = "R language server (needs R)"
 
-# The R package goes into farsub's own folder; the launcher points R at it.
+# The R package goes into FarSub's own folder; the launcher points R at it.
 [install]
 needs = ["Rscript"]
 needs_hint = "install R (cran.r-project.org), then try again"

@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub. Justfiles (https://just.systems).
+# Bundled with FarSub. Justfiles (https://just.systems).
 name: Just
 file_extensions: [just, justfile, Justfile, .justfile]
 scope: source.just

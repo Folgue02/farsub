@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub. KDL document language (https://kdl.dev), v1 and v2.
+# Bundled with FarSub. KDL document language (https://kdl.dev), v1 and v2.
 name: KDL
 file_extensions: [kdl]
 scope: source.kdl

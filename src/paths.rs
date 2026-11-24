@@ -1,4 +1,4 @@
-//! Standard folders per platform: the user's home, farsub's config folder and its data
+//! Standard folders per platform: the user's home, FarSub's config folder and its data
 //! folder. Windows has no $HOME by default, so everything goes through here.
 //!
 //! | | config | data |
@@ -20,12 +20,12 @@ pub fn home_dir() -> Option<PathBuf> {
     home_with(&env)
 }
 
-/// farsub's config folder (not created here).
+/// FarSub's config folder (not created here).
 pub fn config_dir() -> Option<PathBuf> {
     config_with(cfg!(windows), &env)
 }
 
-/// farsub's data folder: installed servers, grammars, logs, workspaces (not created here).
+/// FarSub's data folder: installed servers, grammars, logs, workspaces (not created here).
 pub fn data_dir() -> Option<PathBuf> {
     data_with(cfg!(windows), &env)
 }

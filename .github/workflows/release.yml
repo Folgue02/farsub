@@ -87,5 +87,5 @@ jobs:
           cat SHA256SUMS.txt
           gh release create "$GITHUB_REF_NAME" *.zip *.tar.gz SHA256SUMS.txt \
             --repo "$GITHUB_REPOSITORY" \
-            --title "farsub ${GITHUB_REF_NAME#v}" \
+            --title "FarSub ${GITHUB_REF_NAME#v}" \
             --generate-notes --verify-tag --prerelease

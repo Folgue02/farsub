@@ -33,8 +33,8 @@ widens to show its time when used. They're hidden when the strip is too narrow
   terminal bell).
 - **Persistence**: `timers.toml` in the data folder holds the settings, a running
   pomodoro (its end time) and the alarm, so they survive restarts and keep going by the
-  wall clock. A phase that ended or an alarm that rang while farsub was closed alerts on
-  the next start ("rang while farsub was closed"). The file is shared by every farsub
+  wall clock. A phase that ended or an alarm that rang while FarSub was closed alerts on
+  the next start ("rang while FarSub was closed"). The file is shared by every FarSub
   window (decided 2026-11-18): each window checks it about once a second and takes
   another window's change (starting a pomodoro, setting the alarm). A due alert's
   notification and sound come from one window only: the first to claim it, by creating

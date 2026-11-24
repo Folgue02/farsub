@@ -1,7 +1,7 @@
 # Language servers
 
 - nvim-lspconfig-style server files (`servers/*.toml`) and languages listing servers in
-  preference order; the first installed (by farsub, or on PATH) is used.
+  preference order; the first installed (by FarSub, or on PATH) is used.
 - Mason-like manager (Tools → Language Servers): install via npm / pip venv / cargo / go /
   GitHub release / download URL / install commands / script into the data folder; status,
   logs, update, uninstall. Placeholders `${install_dir}`, `${root}`, `${root_id}` (a short
@@ -28,8 +28,8 @@
     (releases.hashicorp.com), kotlin_lsp (JetBrains' Kotlin server, from its VS Code
     package; brings its own Java runtime, ~370 MB; Kotlin's first choice).
   - Install commands: metals (Coursier, downloaded first; needs Java), ruby_lsp and
-    solargraph (`gem`, into farsub's folder; need Ruby), csharp_ls (`dotnet tool`; needs
-    the .NET SDK), r_language_server (the R package into farsub's folder; needs R).
+    solargraph (`gem`, into FarSub's folder; need Ruby), csharp_ls (`dotnet tool`; needs
+    the .NET SDK), r_language_server (the R package into FarSub's folder; needs R).
   - On PATH only, because they're tied to a toolchain you already have: sourcekit_lsp
     (Xcode / Swift), dartls (Dart / Flutter SDK), hls (ghcup, matches your GHC), ocamllsp
     (opam, matches your switch), erlang_ls (builds per Erlang/OTP version), nil_ls and
@@ -41,7 +41,7 @@
   assets` (download URLs keyed like the GitHub assets; `all` fits every platform; `.zip`,
   `.vsix`, `.tar.gz`, `.tar.xz`, `.gz`), `[[install.run]]` commands run without a shell (so
   they work the same on Windows) with `{dir}` / `{dir/}` for the install folder, and
-  `[install.wrapper]`: farsub writes a launcher (`launch-<bin>`, a `.cmd` on Windows) that
+  `[install.wrapper]`: FarSub writes a launcher (`launch-<bin>`, a `.cmd` on Windows) that
   runs a program with fixed arguments and environment (`{dir}`, `{os}` = mac/linux/win,
   `{arm}`, `*` globs resolved at install time, `{root_id}` filled in per project when the
   server starts). Java servers and jdtls start through one, so no Python is needed.
@@ -57,7 +57,7 @@
 - GitHub release source (`[install.github]`, like Mason's): `repo`, optional `tag` (latest
   by default), and `assets` globs keyed `"<os>-<arch>"` or `"<os>"` (os: macos, linux,
   windows; arch: x86_64, aarch64). The download, `.zip` / `.tar.gz` / `.tar.xz` / `.gz` extraction and
-  executable lookup all happen inside farsub, so they don't depend on `curl`, `tar` or `sh`
+  executable lookup all happen inside FarSub, so they don't depend on `curl`, `tar` or `sh`
   and work the same on Windows. `GITHUB_TOKEN` is used if set (API rate limit).
 - LSP Info (Cmd+Alt+I / status bar): this file's language/syntax, configured servers and
   their status, attached server details (command, root, pid, sync, capabilities, stderr),
@@ -88,8 +88,8 @@
   formatting fails). Saving again while it waits saves right away, so a server that
   never answers can't block saving. Files without a server that can format are saved
   directly.
-- **Schemas for farsub's own TOML files** (decided 2026-11-18): there's no TOML-native
-  schema standard; TOML tools use JSON Schema. farsub generates one per kind of file from
+- **Schemas for FarSub's own TOML files** (decided 2026-11-18): there's no TOML-native
+  schema standard; TOML tools use JSON Schema. FarSub generates one per kind of file from
   the structs that read them (so they can't drift; doc comments become the
   explanations) and writes them to `<data>/schemas/` whenever taplo starts. taplo gets
   them through its `evenBetterToml.schema.associations` setting: your settings file and
@@ -99,12 +99,12 @@
   completion, and hover explanations. Your own associations in taplo's settings win.
   Taplo only checks `*.toml` files unless its config file includes others (a
   `.farsub-project` would just get "this document has been excluded"), so for a root
-  with no `.taplo.toml` / `taplo.toml` of its own farsub writes `<data>/schemas/taplo.toml`
+  with no `.taplo.toml` / `taplo.toml` of its own FarSub writes `<data>/schemas/taplo.toml`
   (`include = ["**/*.toml", "**/*.farsub-project"]`) and sets
   `evenBetterToml.taplo.configFile.path` to it. A root's own Taplo config, or a
   `configFile.path` in your taplo server settings, wins. An unsaved buffer (New
   Project's, before its first save) has no language server; checks start once it's
   saved.
   taplo learns its settings after the file is already open and doesn't re-check it, so
-  when it reports a new association (`taplo/didChangeSchemaAssociation`) farsub sends
+  when it reports a new association (`taplo/didChangeSchemaAssociation`) FarSub sends
   the document again.

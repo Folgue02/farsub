@@ -245,7 +245,7 @@ impl Syntax {
     }
 
     /// Grammars installed from recipes (compiled libraries in the data folder). Built-in
-    /// grammars win; the query is farsub's bundled one, else the one from the source.
+    /// grammars win; the query is FarSub's bundled one, else the one from the source.
     pub fn add_installed(&mut self, data: &Path) {
         use crate::grammar_install::{installed, installed_query, load};
         for (r, lib) in installed(data) {

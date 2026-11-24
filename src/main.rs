@@ -1,4 +1,4 @@
-//! farsub — a code editor with a keyboard-driven sidebar, projects,
+//! FarSub — a code editor with a keyboard-driven sidebar, projects,
 //! syntax packages and LSP support.
 
 // A GUI app on Windows: no console window opens with it. Started from a terminal, it
@@ -144,7 +144,7 @@ fn main() -> ExitCode {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([480.0, 320.0])
-            .with_title("farsub"),
+            .with_title("FarSub"),
         ..Default::default()
     };
     let res = eframe::run_native(

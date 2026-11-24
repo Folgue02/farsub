@@ -1,4 +1,4 @@
-//! A small mason.nvim: installs language servers into farsub's own data folder
+//! A small mason.nvim: installs language servers into FarSub's own data folder
 //! (`<data>/servers/<name>/`) from npm, pip (a private venv), cargo, go, a GitHub release
 //! (prebuilt binaries, downloaded and extracted in-process on every platform) or a script,
 //! so nothing touches the system. Output is streamed back as log lines.
@@ -371,7 +371,7 @@ fn write_wrapper(
         let q = |s: &str| {
             format!("'{}'", s.replace('\'', "'\\''")).replace("{root_id}", "'\"$FARSUB_ROOT_ID\"'")
         };
-        let mut t = String::from("#!/bin/sh\n# Written by farsub's installer.\n");
+        let mut t = String::from("#!/bin/sh\n# Written by FarSub's installer.\n");
         for (k, v) in &env {
             t.push_str(&format!("export {k}={}\n", q(v)));
         }

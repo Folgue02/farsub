@@ -1,6 +1,6 @@
 %YAML 1.2
 ---
-# Bundled with farsub. LakeScript templates (.elks, "embedded LakeScript"): HTML with
+# Bundled with FarSub. LakeScript templates (.elks, "embedded LakeScript"): HTML with
 # {{ }} tags holding LakeScript code, for LakeScript 0.8.0's std/template.
 name: LakeScript Template
 file_extensions: [elks]

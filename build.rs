@@ -63,7 +63,7 @@ fn main() {
 }
 
 /// The fallback (regex) grammars: two-face's set (bat's) plus runtime/syntaxes, dumped once
-/// here so farsub only deserializes them, and only when a file first needs one.
+/// here so FarSub only deserializes them, and only when a file first needs one.
 fn bundle_syntaxes(dir: &Path, out: &Path) {
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .map(|rd| rd.flatten().map(|e| e.path()).collect())
