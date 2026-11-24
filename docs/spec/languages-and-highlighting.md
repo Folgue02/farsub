@@ -124,9 +124,14 @@
   / shebang detection, line-comment token, indentation defaults, grammar, and servers.
   Invariants (enforced by tests): no two built-in languages claim the same extension or
   file name, every named grammar exists, and every listed
-  server exists. Languages whose only comments are block comments (HTML, CSS, XML,
-  Markdown, OCaml, Svelte, Vue) have no comment token yet, so Toggle Comment does nothing
-  there. Block-comment support is still to do.
+  server exists.
+- **Toggle Comment in block-comment languages** (decided 2026-11-24): a language with no
+  line comment can give `block_comment = ["<!--", "-->"]`; Toggle Comment then wraps each
+  non-empty selected line (`<!-- line -->`, the opening marker at the lines' smallest
+  indentation, the closing one after the last non-space character) and unwraps them when
+  every line already is. Blank lines are left alone. HTML, XML, Markdown, Svelte and Vue
+  use `<!-- -->`, CSS `/* */`, OCaml `(* *)`. A language with a line comment always uses
+  that. JSON has no comments, so it does nothing there.
 - **LakeScript** (`.lks`, `#!…lks` scripts; decided 2026-11-18, temporary until it has a
   tree-sitter grammar): a built-in language with a bundled regex grammar
   (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.10's lexical

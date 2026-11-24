@@ -1,4 +1,5 @@
 name = "vue"
 title = "Vue"
 extensions = ["vue"]
+block_comment = ["<!--", "-->"]
 tab_size = 2

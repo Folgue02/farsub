@@ -434,6 +434,10 @@ pub struct LanguageConfig {
     /// Line comment marker for Toggle Comment ("//", "#").
     #[serde(default)]
     pub comment: Option<String>,
+    /// Block comment markers, used by Toggle Comment when there's no line comment
+    /// (["<!--", "-->"], ["/*", "*/"]): each line is wrapped in them.
+    #[serde(default)]
+    pub block_comment: Option<(String, String)>,
     /// Indentation width for this language, over the editor's `tab_size`.
     #[serde(default)]
     pub tab_size: Option<usize>,

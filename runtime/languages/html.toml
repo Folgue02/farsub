@@ -1,5 +1,6 @@
 name = "html"
 title = "HTML"
 extensions = ["html", "htm", "xhtml", "shtml"]
+block_comment = ["<!--", "-->"]
 tab_size = 2
 servers = ["html_ls"]

@@ -1,5 +1,6 @@
 name = "ocaml"
 title = "OCaml"
 extensions = ["ml", "mli"]
+block_comment = ["(*", "*)"]
 tab_size = 2
 servers = ["ocamllsp"]

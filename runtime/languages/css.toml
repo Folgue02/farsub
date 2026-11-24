@@ -1,5 +1,6 @@
 name = "css"
 title = "CSS"
 extensions = ["css"]
+block_comment = ["/*", "*/"]
 tab_size = 2
 servers = ["cssls"]

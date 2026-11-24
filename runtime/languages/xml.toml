@@ -1,5 +1,6 @@
 name = "xml"
 title = "XML"
 extensions = ["xml", "xsd", "xsl", "xslt", "svg", "plist", "xaml", "csproj", "fsproj", "props", "targets"]
+block_comment = ["<!--", "-->"]
 first_line = '^<\?xml'
 tab_size = 2

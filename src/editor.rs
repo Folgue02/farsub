@@ -264,6 +264,8 @@ pub struct Buffer {
     pub hl: HlCache,
     pub indent_unit: String,
     pub comment: Option<String>,
+    /// Block comment markers, for Toggle Comment when there's no line comment.
+    pub block_comment: Option<(String, String)>,
     /// The file's own indentation was detected (otherwise config defaults apply).
     pub indent_detected: bool,
     /// Display width of a tab character.
@@ -357,6 +359,7 @@ impl Buffer {
             hl,
             indent_unit,
             comment,
+            block_comment: None,
             indent_detected,
             tab_size,
             indent_override: false,
@@ -477,6 +480,7 @@ impl Buffer {
 
     pub fn set_path(&mut self, path: PathBuf) {
         self.comment = comment_token(Some(&path)).map(String::from);
+        self.block_comment = None;
         self.lang = None;
         // A new file name (Save As): what was on disk under the old one no longer applies.
         if self.path.as_ref() != Some(&path) {
@@ -495,6 +499,9 @@ impl Buffer {
         self.lang = lang.map(|l| l.name.clone());
         if let Some(c) = lang.and_then(|l| l.comment.clone()) {
             self.comment = Some(c);
+        }
+        if let Some(b) = lang.and_then(|l| l.block_comment.clone()) {
+            self.block_comment = Some(b);
         }
         let size = lang
             .and_then(|l| l.tab_size)
@@ -1993,7 +2000,10 @@ impl Buffer {
             return false;
         }
         let Some(tok) = self.comment.clone() else {
-            return false;
+            return match self.block_comment.clone() {
+                Some((open, close)) => self.toggle_block_comment_lines(&open, &close),
+                None => false,
+            };
         };
         let before = self.begin();
         let (s, e) = self.sel_lines();
@@ -2032,6 +2042,65 @@ impl Buffer {
                 .unwrap_or(0);
             let ins = format!("{tok} ");
             for &l in &nonempty {
+                self.insert(Pos::new(l, min_ws), &ins);
+                if self.cursor.line == l && self.cursor.col >= min_ws {
+                    self.cursor.col += char_len(&ins);
+                }
+            }
+        }
+        if let Some(a) = self.anchor {
+            self.anchor = Some(self.clamp(a));
+        }
+        self.cursor = self.clamp(self.cursor);
+        self.commit(before, false);
+        true
+    }
+
+    /// Toggle Comment for a language with only block comments: each non-empty line of
+    /// the selection becomes `<!-- line -->`, or loses them when every one has them.
+    fn toggle_block_comment_lines(&mut self, open: &str, close: &str) -> bool {
+        let before = self.begin();
+        let (s, e) = self.sel_lines();
+        let nonempty: Vec<usize> = (s..=e)
+            .filter(|&l| !self.lines[l].trim().is_empty())
+            .collect();
+        if nonempty.is_empty() {
+            return true;
+        }
+        let wrapped = |line: &str| {
+            let t = line.trim();
+            t.len() >= open.len() + close.len() && t.starts_with(open) && t.ends_with(close)
+        };
+        if nonempty.iter().all(|&l| wrapped(&self.lines[l])) {
+            for &l in &nonempty {
+                let line = self.lines[l].clone();
+                let ws = line.chars().take_while(|c| c.is_whitespace()).count();
+                let end = char_len(line.trim_end());
+                // The closing marker first, so the opening one's columns stay put.
+                let mut cs = end - char_len(close);
+                if cs > ws + char_len(open) && line.chars().nth(cs - 1) == Some(' ') {
+                    cs -= 1;
+                }
+                self.delete(Pos::new(l, cs), Pos::new(l, end));
+                let mut n = char_len(open);
+                if line.chars().nth(ws + n) == Some(' ') && ws + n < cs {
+                    n += 1;
+                }
+                self.delete(Pos::new(l, ws), Pos::new(l, ws + n));
+                if self.cursor.line == l && self.cursor.col > ws {
+                    self.cursor.col = self.cursor.col.saturating_sub(n).max(ws);
+                }
+            }
+        } else {
+            let min_ws = nonempty
+                .iter()
+                .map(|&l| self.lines[l].chars().take_while(|c| c.is_whitespace()).count())
+                .min()
+                .unwrap_or(0);
+            let ins = format!("{open} ");
+            for &l in &nonempty {
+                let end = char_len(self.lines[l].trim_end());
+                self.insert(Pos::new(l, end), &format!(" {close}"));
                 self.insert(Pos::new(l, min_ws), &ins);
                 if self.cursor.line == l && self.cursor.col >= min_ws {
                     self.cursor.col += char_len(&ins);
@@ -2388,6 +2457,46 @@ mod tests {
         b.select_all();
         b.toggle_comment();
         assert_eq!(b.text(), "  x\n  y");
+    }
+
+    /// A language with only block comments wraps each line, and unwraps it again.
+    #[test]
+    fn block_comment_toggle() {
+        let mut b = buf("<ul>\n  <li>a</li>\n\n    <li>b</li>  \n</ul>");
+        b.comment = None;
+        b.block_comment = Some(("<!--".into(), "-->".into()));
+        b.goto(Pos::new(1, 4));
+        b.toggle_comment();
+        assert_eq!(b.text(), "<ul>\n  <!-- <li>a</li> -->\n\n    <li>b</li>  \n</ul>");
+        assert_eq!(b.cursor, Pos::new(1, 9), "the cursor stays on its character");
+        b.toggle_comment();
+        assert_eq!(b.text(), "<ul>\n  <li>a</li>\n\n    <li>b</li>  \n</ul>");
+        assert_eq!(b.cursor, Pos::new(1, 4));
+        // Several lines: one indentation column, blank lines left alone, `<!--x-->` counts.
+        b.select_all();
+        b.toggle_comment();
+        assert_eq!(
+            b.text(),
+            "<!-- <ul> -->\n<!--   <li>a</li> -->\n\n<!--     <li>b</li> -->  \n<!-- </ul> -->"
+        );
+        b.select_all();
+        b.toggle_comment();
+        assert_eq!(b.text(), "<ul>\n  <li>a</li>\n\n    <li>b</li>  \n</ul>");
+        let mut c = buf("<!--x-->");
+        c.comment = None;
+        c.block_comment = Some(("<!--".into(), "-->".into()));
+        c.toggle_comment();
+        assert_eq!(c.text(), "x");
+    }
+
+    /// The built-in block-comment languages have their markers.
+    #[test]
+    fn block_comment_languages() {
+        let langs = crate::config::Config::builtin().languages;
+        for (name, open) in [("html", "<!--"), ("css", "/*"), ("ocaml", "(*"), ("markdown", "<!--")] {
+            let l = langs.iter().find(|l| l.name == name).unwrap();
+            assert_eq!(l.block_comment.as_ref().map(|b| b.0.as_str()), Some(open), "{name}");
+        }
     }
 
     #[test]
