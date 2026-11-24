@@ -1,7 +1,7 @@
 %YAML 1.2
 ---
-# Bundled with farsub. LakeScript (.lks), until it has a tree-sitter grammar.
-# Follows LakeScript 0.7.1's lexical syntax.
+# Bundled with FarSub. LakeScript (.lks), until it has a tree-sitter grammar.
+# Follows LakeScript 0.10's lexical syntax.
 name: LakeScript
 file_extensions: [lks]
 first_line_match: '^#!.*\blks\b'
@@ -9,7 +9,7 @@ scope: source.lakescript
 
 variables:
   name: '[A-Za-z_][A-Za-z0-9_]*'
-  builtin_types: '\b(?:void|any|never|string|number|bool|symbol|list|map|range|regex|result|command)\b'
+  builtin_types: '\b(?:void|any|never|string|number|bool|list|map|range|regex|result|command)\b'
   builtin_classes: '\b(?:IEquals|IOrdered|IAdd|ISub|IMul|IDiv|IMod|IPow|INeg|IIndex|ISetIndex|IContains|Exception|IOError|FileNotFound|PermissionDenied|ValueError|UsageError|TypeError|IndexError|ArithmeticError|CommandFailed|NetworkError|AssertionError)\b'
   # PascalCase: a capital first and at least one lowercase letter (SCREAMING_CASE is
   # an enum value).
@@ -205,8 +205,6 @@ contexts:
     # A named argument: `name: value`.
     - match: '\b{{name}}(?=\s*:(?!:))'
       scope: variable.parameter.lakescript
-    - match: '(?<![:\w]):{{name}}'
-      scope: constant.other.symbol.lakescript
     # Test operators: a `-` directly followed by the word.
     - match: '(?<!-)-(?:notlike|notmatch|notin|like|match|in|f|d|x|r|w)\b'
       scope: keyword.operator.word.lakescript
@@ -366,8 +364,8 @@ contexts:
           scope: constant.character.escape.lakescript
         - match: '"[imsx]*'
           pop: true
-    # %w[…] words, %i[…] symbols.
-    - match: '%[wi]\['
+    # %w[…] words.
+    - match: '%w\['
       push:
         - meta_scope: string.unquoted.list.lakescript
         - match: '\]'

@@ -116,7 +116,7 @@
   there. Block-comment support is still to do.
 - **LakeScript** (`.lks`, `#!…lks` scripts; decided 2026-11-18, temporary until it has a
   tree-sitter grammar): a built-in language with a bundled regex grammar
-  (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.8.0's lexical
+  (`runtime/syntaxes/LakeScript.sublime-syntax`) following LakeScript 0.10's lexical
   syntax (updated 2026-11-21: `assert`, `NetworkError`, `AssertionError`):
   - Names: `$variables` (also `Self::$count`), `@field`, `@method()`, a lone `@` and
     `@super`, calls and declarations (`bool empty?(…)`, `pub static Point origin()`),
@@ -131,8 +131,10 @@
   - `//`, `/* */` and `///` doc comments (the `comment.documentation` color).
   - Literals: `'…'` and `"…"` (single-line), `"""…"""`, raw `r"…"` / `r#"…"#`, `f"…"`
     with `{…}` interpolation (`{{` / `}}` literal), `%x"…"` commands (interpolated, may
-    span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` / `%i[…]` lists,
-    `:symbols`, numbers (hex, octal, binary, `_`), named arguments (`name: value`).
+    span lines), `%r"…"imsx` regexes (only `\"` is an escape), `%w[…]` word lists,
+    numbers (hex, octal, binary, `_`), named arguments (`name: value`). LakeScript 0.10
+    dropped symbols (`:name`, `%i[…]`, the `symbol` type), so a `:` before a name is just
+    `:` (updated 2026-11-24).
   - Test operators (`-f`, `-like`, `-notin`…: a `-` directly followed by the word) and
     the other operators. Postfix `!` (non-null assertion, right after a value with no
     space: `$x!`, `$list[0]!`, `@part2!`) is an operator like prefix `!`; `$x!=null` is

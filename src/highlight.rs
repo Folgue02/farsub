@@ -1018,7 +1018,7 @@ mod coverage {
         // The other literals, from lakescript's own example.
         let text: Vec<String> = [
             r#"if ($w -match %r"^\d+\"x"i) outln(%x"cat {$p}");"#,
-            r##"const $raw = r#"C:\p "q""#; const $s = :active;"##,
+            r##"const $raw = r#"C:\p "q""#; const $s = $ok ? $a :active(); %w[a b] %i[c];"##,
             "let $x = f\"{{literal}} {$y}\"; paths::load();",
             "let $q = 'unclosed",
             "let $after = 1;",
@@ -1047,7 +1047,11 @@ mod coverage {
         let line1 = &text[1];
         assert_eq!(at(1, col(line1, "\"q") + 1), Some(style("string")), "raw string");
         assert_ne!(at(1, col(line1, "const $s")), Some(style("string")), "raw string ends");
-        assert!(at(1, col(line1, ":active") + 1).is_some(), "symbol");
+        // No symbols since LakeScript 0.10: `:active` is `:` then a name; `%i[` isn't a list.
+        assert_eq!(at(1, col(line1, ":active")), Some(style("operator")), "`:` before a name");
+        assert_eq!(at(1, col(line1, ":active") + 1), Some(style("function.call")), "a call, not a symbol");
+        assert_eq!(at(1, col(line1, "a b")), Some(style("string")), "%w[…] words");
+        assert_ne!(at(1, col(line1, "c]")), Some(style("string")), "%i[…] is gone");
         let line2 = &text[2];
         assert_ne!(at(2, col(line2, "{{")), at(2, col(line2, "$y")), "{{{{ is literal");
         assert!(at(2, col(line2, "paths")).is_some(), "module path");
