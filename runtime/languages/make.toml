@@ -5,3 +5,6 @@ extensions = ["mk", "mak", "make"]
 filenames = ["Makefile", "makefile", "GNUmakefile"]
 comment = "#"
 use_tabs = true
+# The regex grammar colors recipe lines as shell commands; the tree-sitter one leaves
+# them plain (it would need language injections for that).
+highlighter = "regex"

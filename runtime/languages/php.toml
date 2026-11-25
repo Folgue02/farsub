@@ -4,3 +4,6 @@ extensions = ["php", "phtml", "php3", "php4", "php5", "phpt"]
 first_line = '^#!.*\bphp'
 comment = "//"
 servers = ["intelephense"]
+# The regex grammar colors the HTML, CSS and JavaScript around <?php ?>; the tree-sitter
+# one would need language injections for those.
+highlighter = "regex"

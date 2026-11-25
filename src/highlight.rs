@@ -964,6 +964,58 @@ mod tests {
         }
     }
 
+    /// The regex grammars of PHP, HTML, Svelte and Vue color the CSS in `<style>` and
+    /// the JavaScript in `<script>` (the tree-sitter ones leave them plain), and PHP's
+    /// the HTML around `<?php ?>`.
+    #[test]
+    fn embedded_css_and_js_are_colored() {
+        let mut s = Syntax::load("Monokai Extended");
+        s.set_languages(&crate::config::Config::builtin().languages);
+        let keyword = s.theme.style_for("keyword");
+        let page = "<div class=\"a\">X</div>\n<style>p { color: red; }</style>\n<script>let n = 1;</script>\n";
+        for (lang, title) in [("php", "PHP"), ("html", "HTML"), ("svelte", "Svelte"), ("vue", "Vue")] {
+            let src = if lang == "php" { page.replace('X', "<?php echo $name; ?>") } else { page.into() };
+            let text = lines(&src);
+            let mut hl = HlCache::new(lang.into());
+            hl.reset(lang.into(), None);
+            let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            assert!(hl.ensure(&s, &text, 0, text.len(), far), "{lang}");
+            let at = |ln: usize, col: usize| {
+                hl.line(ln).unwrap().iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2)
+            };
+            let all = || (0..3).map(|l| hl.line(l).cloned()).collect::<Vec<_>>();
+            assert!(hl.fallback_name().is_some_and(|n| n.starts_with(title)), "{lang}: {:?}", hl.fallback_name());
+            assert!(at(0, 1).is_some(), "{lang}: tag name {:?}", all());
+            assert!(at(1, 18).is_some(), "{lang}: CSS value `red` {:?}", all());
+            assert_eq!(at(2, 8), keyword, "{lang}: JS `let` {:?}", all());
+            if lang == "php" {
+                assert!(at(0, 21).is_some(), "php: echo {:?}", all());
+            }
+        }
+    }
+
+    /// Makefile recipe lines are colored as shell commands (by the regex grammar; the
+    /// tree-sitter one leaves them plain).
+    #[test]
+    fn makefile_recipes_are_colored_as_shell() {
+        let mut s = Syntax::load("Monokai Extended");
+        s.set_languages(&crate::config::Config::builtin().languages);
+        let keyword = s.theme.style_for("keyword");
+        let text = lines("build:\n\tif [ -f x ]; then echo \"yes $$HOME\"; fi\n");
+        let mut hl = HlCache::new("make".into());
+        hl.reset("make".into(), None);
+        let far = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(hl.ensure(&s, &text, 0, text.len(), far));
+        assert_eq!(hl.fallback_name(), Some("Makefile"));
+        let at = |ln: usize, col: usize| {
+            hl.line(ln).unwrap().iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2)
+        };
+        assert!(at(0, 0).is_some(), "target");
+        assert_eq!(at(1, 1), keyword, "if");
+        assert_eq!(at(1, 14), keyword, "then");
+        assert!(at(1, 25).is_some(), "string");
+    }
+
     /// Queries use the capture names themes style (not nvim-treesitter's old `@text.*`).
     #[test]
     fn queries_use_current_capture_names() {
@@ -1525,4 +1577,3 @@ bytes $png = %b"\x89PNG\r\n"; type<User> $t = type<User>;"#
         );
     }
 }
-

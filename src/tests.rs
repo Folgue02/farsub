@@ -2784,6 +2784,13 @@ fn install_a_grammar_from_a_folder() {
         &[("App.vue", "<template><p>{{ msg }}</p></template>\n")],
     );
     let mut h = harness(&d);
+    // Vue uses the regex grammar by default; this is about its tree-sitter one.
+    h.state_mut()
+        .app
+        .config
+        .editor
+        .highlighter
+        .insert("vue".into(), crate::config::Highlighter::TreeSitter);
     h.state_mut().app.open_file(&d.join("App.vue"), true);
     steps(&mut h, 2);
     assert_eq!(h.state().app.buf().unwrap().hl.grammar, None);
@@ -4085,6 +4092,50 @@ fn completion_kinds_have_codicons() {
     steps(&mut h, 3);
     assert!(h.state().app.completion.is_some());
     shot(&mut h, "completion_kind_icons");
+}
+
+/// PHP and HTML files color the CSS in `<style>` and the JavaScript in `<script>`, a PHP
+/// file its HTML, and a Makefile its recipes as shell: they use the regex grammars,
+/// which have those built in.
+#[test]
+fn embedded_languages_are_colored() {
+    let php = "<!DOCTYPE html>\n<html>\n<head>\n  <style>\n    body { color: red; }\n  </style>\n</head>\n<body>\n  <h1 class=\"t\"><?php echo $title; ?></h1>\n  <script>\n    const n = 1;\n  </script>\n</body>\n</html>\n";
+    let html = php.replace("<?php echo $title; ?>", "Title");
+    let make = "build:\n\tif [ -f x ]; then echo \"yes\"; fi\n\tcargo build --release\n";
+    let d = project("phphl", &[("index.php", php), ("index.html", &html), ("Makefile", make)]);
+    let mut h = harness(&d);
+    let at = |g: &Gui, ln: usize, col: usize| {
+        let b = g.app.buf().unwrap();
+        b.hl.line(ln)
+            .and_then(|l| l.iter().find(|sp| sp.0 <= col && col < sp.1).map(|sp| sp.2))
+    };
+    for file in ["index.html", "index.php"] {
+        h.state_mut().app.open_file(&d.join(file), true);
+        let keyword = h.state().app.syn.theme.style_for("keyword");
+        let ok = wait(&mut h, 5, |g| {
+            at(g, 1, 1).is_some() // html
+                && at(g, 4, 18).is_some() // red
+                && at(g, 10, 4) == keyword // const
+                && (file == "index.html" || at(g, 8, 22).is_some()) // echo
+        });
+        let b = h.state().app.buf().unwrap();
+        assert!(
+            ok,
+            "{file}: grammar {:?} fallback {:?}: {:#?}",
+            b.hl.grammar,
+            b.hl.fallback_name(),
+            (0..14).map(|l| b.hl.line(l).cloned()).collect::<Vec<_>>()
+        );
+        assert_eq!(b.hl.grammar, None, "{file}: regex, not tree-sitter");
+        shot(&mut h, file);
+    }
+    // Makefile recipes are colored as shell.
+    h.state_mut().app.open_file(&d.join("Makefile"), true);
+    let keyword = h.state().app.syn.theme.style_for("keyword");
+    let ok = wait(&mut h, 5, |g| at(g, 1, 1) == keyword && at(g, 1, 14) == keyword);
+    assert!(ok, "Makefile: {:?}", h.state().app.buf().unwrap().hl.line(1));
+    assert_eq!(h.state().app.buf().unwrap().hl.grammar, None, "Makefile: regex");
+    shot(&mut h, "Makefile");
 }
 
 /// Markdown uses the regex grammar by default (it colors inline markup and fenced code by

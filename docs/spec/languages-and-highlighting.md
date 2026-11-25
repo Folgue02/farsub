@@ -42,7 +42,7 @@
   every theme. Highlight queries use the `markup.*` names themes style, not
   nvim-treesitter's old `@text.*` ones (a test checks). Tree-sitter grammars don't
   get language injections yet (Markdown's inline grammar, code in HTML/Svelte/Vue), which
-  is why Markdown uses the regex highlighter by default (see below). 29 of the bundled themes were converted once
+  is why Markdown, PHP, HTML, Svelte, Vue and Makefiles use the regex highlighter by default (see below). 29 of the bundled themes were converted once
   from the color schemes FarSub used before. "Tsoding" was converted from the MIT-licensed
   [Tsoding Color Theme](https://github.com/JoaoAJMatos/Tsoding-Color-Theme) for VS Code;
   a theme taken from elsewhere carries its source and license notice in a comment at the
@@ -106,8 +106,16 @@
   file: `highlighter = { markdown = "tree-sitter" }`; open files switch when it's saved.
   Markdown defaults to `"regex"`: bat's Markdown grammar colors bold, italic, inline
   code, links and fenced code by its language, which tree-sitter would need injections
-  for. Nothing else depends on the tree-sitter parse, so regex mode loses nothing but
-  its precision. No per-file switch: the setting applies live.
+  for. PHP, HTML, Svelte and Vue default to `"regex"` too (decided 2026-11-25): their
+  regex grammars color the CSS in `<style>` and the JavaScript in `<script>` (and PHP's
+  the HTML around `<?php ?>`), which the tree-sitter ones leave plain without
+  injections (`highlighter = { html = "tree-sitter" }` brings one back). Makefiles too:
+  the regex grammar colors recipe lines as shell commands. Checked and left on
+  tree-sitter, where the regex grammar does no better: XML/SVG (neither colors
+  `<style>`/`<script>`), JavaScript tagged template strings (html, css, sql), Nix and YAML
+  (shell in strings), Dockerfile `RUN` lines. Ruby's regex grammar colors SQL/HTML
+  heredocs, but not worth Ruby's tree-sitter precision. Nothing else depends on the
+  tree-sitter parse, so regex mode loses nothing but its precision. No per-file switch: the setting applies live.
 - 37 recipes ship: Batch, C#, CMake, CUDA, Dart, Dockerfile, Elixir, Elm, Erlang, Fish,
   F#, Gleam, GLSL, Groovy, Haskell, Julia, KDL, Kotlin, Less, nginx, Nix, OCaml, Odin, PowerShell, Prisma,
   Protocol Buffers, R, Scala, SCSS, Solidity, SQL, Starlark, Svelte, Swift, Vim script,

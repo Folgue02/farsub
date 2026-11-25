@@ -4,3 +4,6 @@ extensions = ["html", "htm", "xhtml", "shtml"]
 block_comment = ["<!--", "-->"]
 tab_size = 2
 servers = ["html_ls"]
+# The regex grammar colors the CSS in <style> and the JavaScript in <script>; the
+# tree-sitter one would need language injections for those.
+highlighter = "regex"

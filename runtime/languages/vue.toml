@@ -3,3 +3,6 @@ title = "Vue"
 extensions = ["vue"]
 block_comment = ["<!--", "-->"]
 tab_size = 2
+# The regex grammar colors the CSS in <style> and the JavaScript in <script>; the
+# tree-sitter one would need language injections for those.
+highlighter = "regex"
