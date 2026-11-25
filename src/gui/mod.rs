@@ -403,6 +403,12 @@ impl Gui {
                 m.surrender_focus(id);
             }
         });
+        // egui's own keyboard zoom (Ctrl/Cmd+0, +, -) would take FarSub's keys: Ctrl+0
+        // is Focus Sidebar, Ctrl+= / Ctrl+- are View: Zoom In / Out. The whole-UI scale is
+        // `ui_scale`.
+        if ctx.options(|o| o.zoom_with_keyboard) {
+            ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        }
         // Whole-UI zoom from the config (egui scales every font and widget together).
         let scale = self.app.config.editor.ui_scale;
         let scale = if scale.is_finite() {

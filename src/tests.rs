@@ -101,6 +101,32 @@ fn wait(h: &mut Harness<'static, Gui>, secs: u64, f: impl Fn(&Gui) -> bool) -> b
     f(h.state())
 }
 
+/// Cmd/Ctrl+0, Cmd/Ctrl+= and Cmd/Ctrl+- are FarSub's (Focus Sidebar, Zoom In/Out),
+/// not egui's own whole-window zoom, which left the window at another scale.
+#[test]
+fn zoom_keys_are_farsubs() {
+    let d = project("zoomkeys", &[("a.txt", "x\n")]);
+    let mut h = harness(&d);
+    h.state_mut().app.config.editor.ui_scale = 1.25;
+    h.state_mut().app.open_file(&d.join("a.txt"), true);
+    steps(&mut h, 2);
+    assert!(!h.ctx.options(|o| o.zoom_with_keyboard));
+    let font = h.state().app.font_size;
+    for (k, what) in [(Key::Num0, "Cmd+0"), (Key::Equals, "Cmd+="), (Key::Minus, "Cmd+-")] {
+        h.key_press_modifiers(CMD, k);
+        h.step();
+        assert_eq!(h.ctx.zoom_factor(), 1.25, "{what} zoomed the window");
+        steps(&mut h, 1);
+        if k == Key::Num0 {
+            assert_eq!(h.state().app.focus, Focus::Sidebar, "Cmd+0 focuses the sidebar");
+        }
+        if k == Key::Equals {
+            assert_eq!(h.state().app.font_size, font + 1.0, "Cmd+= is View: Zoom In");
+        }
+    }
+    assert_eq!(h.state().app.font_size, font, "Cmd+- is View: Zoom Out");
+}
+
 #[test]
 fn sidebar_file_operations_by_keyboard() {
     let d = project(

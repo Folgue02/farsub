@@ -64,6 +64,9 @@
   Zoom In/Out (Cmd+= / Cmd+-), which size only the editor text. Changing it
   in the settings file applies immediately. The macOS menu bar is drawn by the OS and isn't
   scaled.
+- No other whole-window zoom (fixed 2026-11-25): the UI toolkit's built-in keyboard zoom
+  (Ctrl/Cmd+0, +, -) is off. It took those keys as well as FarSub, so on Linux and Windows
+  Ctrl+0 (Focus Sidebar) and Ctrl+= / Ctrl+- zoomed the whole window.
 - **Editor groups** (View › Layout): 1–4 columns side by side, each with its own
   tab strip; every file is in exactly one group. Layout: Single / 2 / 3 / 4 Columns
   (macOS Cmd+Alt+1–4; Windows/Linux Alt+Shift+1–4). Focus Group N: Ctrl+1–4. Move File
