@@ -13,6 +13,17 @@
   request to the drive: entry types come with the listing (only symlinks are looked up,
   to see whether they point at a folder), and the .gitignore files are read from the
   listed folder and its parents. A folder whose listing fails closes.
+- **Changes made outside FarSub show up by themselves** (decided 2026-11-25): files and
+  folders created, renamed or deleted by another program (a terminal, including FarSub's
+  own, git, a build) appear in the open folders without a refresh, about 150 ms later;
+  a burst of changes (a checkout, a build) lists each folder once. Only open folders are
+  listed again; the old entries stay on screen until the new listing is in. A changed
+  `.gitignore` refreshes the whole tree (what's dimmed can change below it). On macOS and
+  Windows each project folder is watched as a whole; on Linux each open folder is
+  watched on its own (watching a whole tree there costs one watch per subfolder).
+  Folders that can't be watched (network drives often report nothing; the system's
+  watch limit) still refresh when the window **regains focus**, and with Sidebar:
+  Refresh (F5 or Shift+R in the sidebar).
 
 - Every project folder is a top-level node. Keyboard: arrows/hjkl move and fold, Enter
   opens, Space marks, `a` new file, `A` new folder, `r` rename/move, `c`/`x`/`p`

@@ -185,6 +185,8 @@ pub struct Gui {
     /// whether the window had focus last frame.
     pub instance: Option<(crate::instance::Instance, std::sync::mpsc::Receiver<crate::instance::Request>)>,
     was_focused: bool,
+    /// The window had focus last frame (the sidebar re-reads its folders on regaining it).
+    had_focus: bool,
     /// The tab (buffer id) being dragged to another place or group.
     tab_drag: Option<usize>,
     /// This frame's tabs (group, buffer id, rect) and groups (tab strip, column), where a
@@ -271,6 +273,7 @@ impl Gui {
             close_press: None,
             instance: None,
             was_focused: false,
+            had_focus: true,
             tab_drag: None,
             tab_hits: Vec::new(),
             group_cols: Vec::new(),
@@ -627,9 +630,16 @@ impl Gui {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         // Check open files against the disk about once a second while the window is in use.
-        if ctx.input(|i| i.focused) {
+        let focused = ctx.input(|i| i.focused);
+        if focused {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
+        // Back from another program: catch what the folder watcher can't see (network
+        // drives, folders it couldn't watch).
+        if focused && !self.had_focus {
+            self.app.tree.refresh();
+        }
+        self.had_focus = focused;
         self.app.tick();
     }
 

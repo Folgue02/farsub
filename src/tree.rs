@@ -6,6 +6,9 @@
 //! window: the tree waits a moment for each listing (a local folder is done by then, so it
 //! shows at once) and otherwise marks the folder "loading…" and fills it in when it
 //! arrives. Refreshing keeps showing the old listing until the new one is in.
+//!
+//! A file-system watcher (`FolderWatch`) reports changes made outside FarSub (a
+//! terminal, git, a build): the listed folders they touch are listed again.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -62,6 +65,14 @@ pub struct Tree {
     pub anims: HashMap<PathBuf, (Instant, bool)>,
     /// Animation length; zero disables animations.
     pub anim: Duration,
+    /// Folders changed while they were being listed: that listing may predate the
+    /// change, so it's shown but listed once more.
+    relist: HashSet<PathBuf>,
+    /// The folders walked by the last rebuild (the ones whose listings are shown).
+    shown: HashSet<PathBuf>,
+    /// Reports folders changed on disk (None until the first rebuild, or if the
+    /// platform has no watcher).
+    watch: Option<FolderWatch>,
 }
 
 fn ease(t: f32) -> f32 {
@@ -101,6 +112,9 @@ impl Tree {
             show_hidden: false,
             anims: HashMap::new(),
             anim: Duration::from_millis(160),
+            relist: HashSet::new(),
+            shown: HashSet::new(),
+            watch: None,
         }
     }
 
@@ -134,6 +148,7 @@ impl Tree {
         self.generation += 1;
         self.loading.clear();
         self.cache.clear();
+        self.relist.clear();
     }
 
     pub fn is_root(&self, p: &Path) -> bool {
@@ -187,6 +202,13 @@ impl Tree {
             return;
         }
         self.loading.remove(&dir);
+        if self.relist.remove(&dir) {
+            // Started before the folder changed: show it, but list it again.
+            if let Some(v) = v {
+                self.stale.insert(dir, v);
+            }
+            return;
+        }
         self.stale.remove(&dir);
         if v.is_none() && !self.is_root(&dir) {
             // Gone (or unreadable): don't keep it open.
@@ -201,6 +223,10 @@ impl Tree {
         while let Ok(r) = self.listed_rx.try_recv() {
             got |= r.0 == self.generation;
             self.store(r);
+        }
+        let changed: Vec<PathBuf> = self.watch.as_ref().map_or(vec![], |w| w.changed());
+        if !changed.is_empty() && self.disk_changed(&changed) {
+            got = true;
         }
         if got {
             self.rebuild();
@@ -246,8 +272,57 @@ impl Tree {
         }
     }
 
+    /// Paths changed on disk: list the shown folders they're in (or are) again, keeping
+    /// the old entries on screen meanwhile. True if any of them is shown.
+    fn disk_changed(&mut self, paths: &[PathBuf]) -> bool {
+        let mut dirs = HashSet::new();
+        for p in paths {
+            let parent = p.parent().map(Path::to_path_buf);
+            if p.file_name().is_some_and(|n| n == ".gitignore")
+                && parent.as_ref().is_some_and(|d| self.shown.contains(d))
+            {
+                // What's dimmed can change anywhere below it.
+                self.refresh();
+                return true;
+            }
+            for d in parent.into_iter().chain([p.clone()]) {
+                if self.shown.contains(&d) {
+                    dirs.insert(d);
+                }
+            }
+        }
+        if dirs.is_empty() {
+            return false;
+        }
+        for d in dirs {
+            if self.loading.contains(&d) {
+                self.relist.insert(d);
+            } else if let Some(v) = self.cache.remove(&d) {
+                self.stale.insert(d, v);
+            }
+        }
+        self.rebuild();
+        true
+    }
+
+    /// Point the watcher at what's shown: the project folders (recursively, where that's
+    /// one cheap watch) or each open folder.
+    fn sync_watch(&mut self) {
+        if self.watch.is_none() {
+            self.watch = FolderWatch::start(self.waker.clone());
+        }
+        let Some(w) = &self.watch else { return };
+        let want: HashSet<PathBuf> = if FolderWatch::RECURSIVE {
+            self.roots.iter().map(|r| r.path.clone()).collect()
+        } else {
+            self.shown.clone()
+        };
+        w.set(want);
+    }
+
     fn rebuild_nodes(&mut self) {
         let keep = self.selected_path().map(Path::to_path_buf);
+        self.shown.clear();
         let mut out = vec![];
         for r in self.roots.clone() {
             out.push(Node {
@@ -269,6 +344,7 @@ impl Tree {
             }
         }
         self.sel = self.sel.min(self.nodes.len().saturating_sub(1));
+        self.sync_watch();
     }
 
     fn walk(&mut self, dir: &Path, depth: usize, out: &mut Vec<Node>) {
@@ -277,6 +353,7 @@ impl Tree {
             .rev()
             .find(|n| n.path == dir)
             .is_some_and(|n| n.ignored);
+        self.shown.insert(dir.to_path_buf());
         let kids = self.children(dir);
         for (name, is_dir, ignored) in kids {
             let path = dir.join(&name);
@@ -651,6 +728,62 @@ mod tests {
         assert_eq!(t.nodes.len(), 1);
     }
 
+    /// Files created, renamed and deleted by another program show up without a refresh,
+    /// in open folders; a closed folder isn't listed.
+    #[test]
+    fn changes_on_disk_show_up() {
+        let d = tmp("watch");
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::create_dir_all(d.join("closed")).unwrap();
+        let mut t = Tree::new();
+        t.anim = Duration::ZERO;
+        t.set_roots(vec![Folder::plain(d.clone())], false);
+        t.sel = t.nodes.iter().position(|n| n.name == "src").unwrap();
+        t.expand();
+        let wait_for = |t: &mut Tree, what: &str, ok: &dyn Fn(&[String]) -> bool| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while !ok(&names(t)) {
+                assert!(Instant::now() < until, "{what}: {:?}", names(t));
+                std::thread::sleep(Duration::from_millis(20));
+                t.poll();
+            }
+        };
+        // Watches start on their own thread; give them a moment before changing things.
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::write(d.join("new.txt"), "").unwrap();
+        std::fs::write(d.join("src/lib.rs"), "").unwrap();
+        wait_for(&mut t, "created", &|n| n.iter().any(|n| n == "  new.txt") && n.iter().any(|n| n == "    lib.rs"));
+        std::fs::rename(d.join("new.txt"), d.join("renamed.txt")).unwrap();
+        wait_for(&mut t, "renamed", &|n| n.iter().any(|n| n == "  renamed.txt") && !n.iter().any(|n| n == "  new.txt"));
+        std::fs::remove_file(d.join("src/lib.rs")).unwrap();
+        wait_for(&mut t, "deleted", &|n| !n.iter().any(|n| n == "    lib.rs"));
+        assert!(!t.shown.contains(&d.join("closed")), "a closed folder isn't listed");
+    }
+
+    /// A change to a folder that's still being listed lists it once more: the listing
+    /// that was running may be from before the change.
+    #[test]
+    fn a_change_while_listing_lists_again() {
+        let d = tmp("relist");
+        let mut t = Tree::new();
+        t.anim = Duration::ZERO;
+        t.watch = None;
+        t.set_roots(vec![Folder::plain(d.clone())], false);
+        t.quick = Duration::ZERO;
+        t.list_delay = Duration::from_millis(200);
+        t.refresh(); // listing in the background now
+        assert!(t.is_loading(&d));
+        std::fs::write(d.join("late.txt"), "").unwrap();
+        assert!(t.disk_changed(&[d.join("late.txt")]));
+        t.list_delay = Duration::ZERO;
+        let until = Instant::now() + Duration::from_secs(5);
+        while !names(&t).iter().any(|n| n == "  late.txt") {
+            assert!(Instant::now() < until, "{:?}", names(&t));
+            std::thread::sleep(Duration::from_millis(20));
+            t.poll();
+        }
+    }
+
     #[test]
     fn multiple_folders_and_excludes() {
         let a = tmp("multi-a");
@@ -792,5 +925,94 @@ impl Ignores {
             }
         }
         false
+    }
+}
+
+/// Watches folders for changes made outside FarSub and reports the changed paths in
+/// batches. Watching (which can wait on a slow drive) happens on a thread of its own, and
+/// changes are gathered for a moment so a build or a checkout lists each folder once.
+/// Folders that can't be watched (network drives, the system's watch limit) are simply
+/// not watched: Sidebar: Refresh and regaining focus still catch their changes.
+struct FolderWatch {
+    want_tx: Sender<HashSet<PathBuf>>,
+    sent: std::cell::RefCell<HashSet<PathBuf>>,
+    changed_rx: Receiver<Vec<PathBuf>>,
+}
+
+impl FolderWatch {
+    /// One recursive watch per project folder is cheap with macOS' FSEvents (which also
+    /// allows only a few watches per process) and Windows; inotify would add a watch per
+    /// subfolder (`target/`, `node_modules/`), so elsewhere each open folder is watched.
+    const RECURSIVE: bool = cfg!(any(target_os = "macos", windows));
+    /// How long changes are gathered before the sidebar hears of them.
+    const GATHER: Duration = Duration::from_millis(150);
+
+    fn start(wake: Option<Arc<dyn Fn() + Send + Sync>>) -> Option<FolderWatch> {
+        use notify::{EventKind, RecursiveMode, Watcher, event::ModifyKind};
+        let (event_tx, event_rx) = channel::<PathBuf>();
+        let mut watcher = notify::recommended_watcher(move |r: notify::Result<notify::Event>| {
+            let Ok(e) = r else { return };
+            // A file's contents (or reading it) don't change a listing; a .gitignore's do.
+            let content = matches!(e.kind, EventKind::Access(_) | EventKind::Modify(ModifyKind::Data(_)));
+            for p in e.paths {
+                if !content || p.file_name().is_some_and(|n| n == ".gitignore") {
+                    let _ = event_tx.send(p);
+                }
+            }
+        })
+        .ok()?;
+        let (want_tx, want_rx) = channel::<HashSet<PathBuf>>();
+        let (changed_tx, changed_rx) = channel();
+        std::thread::spawn(move || {
+            let mode = if Self::RECURSIVE { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            let mut watched: HashSet<PathBuf> = HashSet::new();
+            // Ends when the tree (and its sender) is gone.
+            while let Ok(mut want) = want_rx.recv() {
+                while let Ok(w) = want_rx.try_recv() {
+                    want = w;
+                }
+                for p in watched.difference(&want) {
+                    let _ = watcher.unwatch(p);
+                }
+                watched.retain(|p| want.contains(p));
+                for p in want {
+                    if !watched.contains(&p) && watcher.watch(&p, mode).is_ok() {
+                        watched.insert(p);
+                    }
+                }
+            }
+        });
+        std::thread::spawn(move || {
+            // Ends when the watcher (and its event sender) is dropped.
+            while let Ok(first) = event_rx.recv() {
+                let mut batch = vec![first];
+                let until = Instant::now() + Self::GATHER;
+                while let Ok(p) = event_rx.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    batch.push(p);
+                }
+                batch.sort();
+                batch.dedup();
+                if changed_tx.send(batch).is_err() {
+                    break;
+                }
+                if let Some(w) = &wake {
+                    w();
+                }
+            }
+        });
+        Some(FolderWatch { want_tx, sent: Default::default(), changed_rx })
+    }
+
+    /// Watch these folders (and stop watching the rest).
+    fn set(&self, want: HashSet<PathBuf>) {
+        if *self.sent.borrow() != want {
+            let _ = self.want_tx.send(want.clone());
+            *self.sent.borrow_mut() = want;
+        }
+    }
+
+    /// Paths changed since the last call.
+    fn changed(&self) -> Vec<PathBuf> {
+        self.changed_rx.try_iter().flatten().collect()
     }
 }
